@@ -4,11 +4,14 @@ services/analyzer.py — Analyse du site web d'un prospect.
 Pour chaque prospect avec un site web, ce module :
   1. Charge la page principale (GET HTTP)
   2. Passe BeautifulSoup dessus pour inspecter le HTML
-  3. Lance 10 checks (HTTPS, mobile, SEO, tracking, formulaire…)
+  3. Lance 9 checks (HTTPS, mobile, SEO, tracking, formulaire…)
   4. Scrape l'email de contact (mailto + page /contact)
-  5. Calcule un score sur 100 (100 = parfait, 0 = aucun site)
+  5. Calcule un score pondéré sur 100 (100 = parfait, 0 = aucun site)
 
-Score = 100 - (nb_problèmes × 10)
+Score = 100 − Σ(poids de chaque problème détecté)
+  Critique (−15 pts) : HTTPS manquant, site non mobile, tracking absent, formulaire absent
+  Important (−10 pts) : chargement lent, builder gratuit, titre absent
+  Mineur   (−5 pts)  : meta description absente, réseaux sociaux absents
 Plus le score est bas, plus il y a d'opportunités commerciales.
 """
 
@@ -32,7 +35,13 @@ from services.google_maps import Prospect
 
 SLOW_RESPONSE_THRESHOLD_S = 3.0  # Au-delà de 3s → signalé comme lent
 MAX_SCORE = 100
-POINTS_PER_ISSUE = 10            # Chaque problème détecté retire 10 points
+
+CRITICAL_WEIGHT = 15   # Problèmes bloquants pour l'activité commerciale
+MAJOR_WEIGHT    = 10   # Problèmes importants mais non bloquants
+MINOR_WEIGHT    = 5    # Défauts mineurs, à améliorer si possible
+
+# Type interne : liste de (message, poids)
+_IssueList = List[Tuple[str, int]]
 
 # Constructeurs de sites gratuits — leur présence = opportunité de refonte pro
 _FREE_BUILDERS = (
@@ -86,91 +95,93 @@ def _fetch(url: str) -> Tuple[requests.Response | None, float]:
 
 
 # ---------------------------------------------------------------------------
-# Checks individuels — chacun ajoute un message dans la liste `issues`
+# Checks individuels — chacun ajoute un tuple (message, poids) dans `issues`
 # ---------------------------------------------------------------------------
 
-def _check_https(url: str, issues: List[str]) -> None:
-    """Le site doit être en HTTPS. HTTP = pénalité SEO + alerte navigateur."""
+def _check_https(url: str, issues: _IssueList) -> None:
+    """HTTPS absent = pénalité SEO + alerte navigateur + signal de méfiance."""
     if not url.startswith("https://"):
-        issues.append("Site sans HTTPS (connexion non sécurisée, pénalité SEO Google)")
+        issues.append((
+            "Site sans HTTPS (connexion non sécurisée, pénalité SEO Google)",
+            CRITICAL_WEIGHT,
+        ))
 
 
-def _check_response_time(elapsed: float, issues: List[str]) -> None:
+def _check_response_time(elapsed: float, issues: _IssueList) -> None:
     """Temps de réponse > 3s = mauvaise expérience utilisateur + pénalité SEO."""
     if elapsed > SLOW_RESPONSE_THRESHOLD_S:
-        issues.append(
+        issues.append((
             f"Temps de chargement élevé ({elapsed:.1f}s > {SLOW_RESPONSE_THRESHOLD_S}s) "
-            "→ impact SEO et expérience utilisateur"
-        )
+            "→ impact SEO et expérience utilisateur",
+            MAJOR_WEIGHT,
+        ))
 
 
-def _check_viewport(soup: BeautifulSoup, issues: List[str]) -> None:
-    """Meta viewport absente = site non responsive = mauvaise expérience mobile."""
+def _check_viewport(soup: BeautifulSoup, issues: _IssueList) -> None:
+    """Meta viewport absente = site non responsive = perte de ~60 % du trafic mobile."""
     if not soup.find("meta", attrs={"name": "viewport"}):
-        issues.append("Absence de meta viewport → site probablement non responsive (mobile)")
+        issues.append((
+            "Absence de meta viewport → site probablement non responsive (mobile)",
+            CRITICAL_WEIGHT,
+        ))
 
 
-def _check_title(soup: BeautifulSoup, issues: List[str]) -> None:
+def _check_title(soup: BeautifulSoup, issues: _IssueList) -> None:
     """Balise <title> obligatoire pour le SEO on-page."""
     title = soup.find("title")
     if not title or not title.get_text(strip=True):
-        issues.append("Absence de balise <title> → SEO on-page défaillant")
+        issues.append((
+            "Absence de balise <title> → SEO on-page défaillant",
+            MAJOR_WEIGHT,
+        ))
 
 
-def _check_meta_description(soup: BeautifulSoup, issues: List[str]) -> None:
+def _check_meta_description(soup: BeautifulSoup, issues: _IssueList) -> None:
     """Meta description = snippet affiché dans Google. Son absence réduit le CTR."""
     meta_desc = soup.find("meta", attrs={"name": "description"})
     if not meta_desc or not meta_desc.get("content", "").strip():
-        issues.append("Absence de meta description → snippet Google non optimisé")
+        issues.append((
+            "Absence de meta description → snippet Google non optimisé",
+            MINOR_WEIGHT,
+        ))
 
 
-def _check_favicon(soup: BeautifulSoup, issues: List[str]) -> None:
-    """Favicon absente = manque de soin dans les détails, image moins pro."""
-    # lxml peut retourner rel comme liste ['icon'] ou chaîne 'icon' selon le tag
-    def _has_icon(rel):
-        if not rel:
-            return False
-        rel_str = " ".join(rel).lower() if isinstance(rel, list) else str(rel).lower()
-        return "icon" in rel_str
-
-    favicon = soup.find("link", rel=_has_icon)
-    if not favicon:
-        issues.append("Absence de favicon → manque de professionnalisme perçu")
-
-
-def _check_tracking(html: str, issues: List[str]) -> None:
+def _check_tracking(html: str, issues: _IssueList) -> None:
     """Sans tracking (GA, GTM, Pixel…), impossible de mesurer les performances."""
     if not any(sig in html for sig in _TRACKING_SIGNATURES):
-        issues.append(
+        issues.append((
             "Aucun pixel de tracking détecté (Google Analytics, GTM, Facebook Pixel) "
-            "→ impossible de mesurer les conversions"
-        )
+            "→ impossible de mesurer les conversions",
+            CRITICAL_WEIGHT,
+        ))
 
 
-def _check_lead_form(soup: BeautifulSoup, issues: List[str]) -> None:
+def _check_lead_form(soup: BeautifulSoup, issues: _IssueList) -> None:
     """Formulaire de contact absent = les visiteurs n'ont pas de moyen facile de convertir."""
     forms = soup.find_all("form")
     inputs_email = soup.find_all("input", {"type": "email"})
     if not forms and not inputs_email:
-        issues.append(
+        issues.append((
             "Aucun formulaire de contact / capture de lead visible "
-            "→ les visiteurs n'ont pas de moyen simple de se convertir"
-        )
+            "→ les visiteurs n'ont pas de moyen simple de se convertir",
+            CRITICAL_WEIGHT,
+        ))
 
 
-def _check_free_builder(url: str, html: str, issues: List[str]) -> None:
+def _check_free_builder(url: str, html: str, issues: _IssueList) -> None:
     """Sites construits sur Wix, Jimdo… = limitations SEO + image non professionnelle."""
     combined = url.lower() + html.lower()
     for builder in _FREE_BUILDERS:
         if builder in combined:
-            issues.append(
+            issues.append((
                 f"Site construit avec un outil gratuit ({builder}) "
-                "→ limitations techniques, SEO restreint, image non professionnelle"
-            )
+                "→ limitations techniques, SEO restreint, image non professionnelle",
+                MAJOR_WEIGHT,
+            ))
             return
 
 
-def _check_social_links(soup: BeautifulSoup, issues: List[str]) -> None:
+def _check_social_links(soup: BeautifulSoup, issues: _IssueList) -> None:
     """Absence de liens réseaux sociaux = présence digitale limitée."""
     links = soup.find_all("a", href=True)
     has_social = any(
@@ -179,10 +190,11 @@ def _check_social_links(soup: BeautifulSoup, issues: List[str]) -> None:
         for domain in _SOCIAL_DOMAINS
     )
     if not has_social:
-        issues.append(
+        issues.append((
             "Aucun lien vers des réseaux sociaux détecté "
-            "→ présence digitale limitée, opportunité de stratégie social media"
-        )
+            "→ présence digitale limitée, opportunité de stratégie social media",
+            MINOR_WEIGHT,
+        ))
 
 
 # ---------------------------------------------------------------------------
@@ -251,7 +263,7 @@ def analyze_prospect(prospect: Prospect) -> Prospect:
     Cas particuliers gérés :
     - Pas de site → score 0, problème unique "pas de site web"
     - Site inaccessible → score 5, problème unique "site down"
-    - Site normal → 10 checks + scraping email + calcul du score
+    - Site normal → 9 checks pondérés + scraping email + calcul du score
 
     Retourne le prospect enrichi (issues, score, email).
     """
@@ -280,19 +292,18 @@ def analyze_prospect(prospect: Prospect) -> Prospect:
 
     html = resp.text
     soup = BeautifulSoup(html, "lxml")
-    issues: List[str] = []
+    weighted_issues: _IssueList = []
 
-    # Cas 3 : site accessible → lancement des 10 checks
-    _check_https(url, issues)
-    _check_response_time(elapsed, issues)
-    _check_viewport(soup, issues)
-    _check_title(soup, issues)
-    _check_meta_description(soup, issues)
-    _check_favicon(soup, issues)
-    _check_tracking(html, issues)
-    _check_lead_form(soup, issues)
-    _check_free_builder(url, html, issues)
-    _check_social_links(soup, issues)
+    # Cas 3 : site accessible → lancement des 9 checks pondérés
+    _check_https(url, weighted_issues)
+    _check_response_time(elapsed, weighted_issues)
+    _check_viewport(soup, weighted_issues)
+    _check_title(soup, weighted_issues)
+    _check_meta_description(soup, weighted_issues)
+    _check_tracking(html, weighted_issues)
+    _check_lead_form(soup, weighted_issues)
+    _check_free_builder(url, html, weighted_issues)
+    _check_social_links(soup, weighted_issues)
 
     # Scraping de l'email de contact
     email = _scrape_email(url, soup)
@@ -302,16 +313,16 @@ def analyze_prospect(prospect: Prospect) -> Prospect:
     else:
         logger.debug("  📭 Aucun email trouvé pour %s", prospect.name)
 
-    # Score final
-    prospect.issues = issues
-    prospect.score = max(0, MAX_SCORE - len(issues) * POINTS_PER_ISSUE)
+    # Score final pondéré : critique = −15, important = −10, mineur = −5
+    prospect.issues = [msg for msg, _ in weighted_issues]
+    prospect.score = max(0, MAX_SCORE - sum(w for _, w in weighted_issues))
 
     level = "🟢" if prospect.score >= 70 else ("🟡" if prospect.score >= 40 else "🔴")
     logger.info(
         "  %s %s → score %d/100 | %d problème(s)",
-        level, prospect.name, prospect.score, len(issues),
+        level, prospect.name, prospect.score, len(weighted_issues),
     )
-    for i, issue in enumerate(issues, 1):
-        logger.debug("      %d. %s", i, issue)
+    for i, (msg, weight) in enumerate(weighted_issues, 1):
+        logger.debug("      %d. [-%d pts] %s", i, weight, msg)
 
     return prospect
