@@ -37,6 +37,7 @@ from services.google_maps import Prospect
 
 SLOW_RESPONSE_THRESHOLD_S = 3.0  # Au-delà de 3s → signalé comme lent
 MAX_SCORE = 100
+_FETCH_MAX_RETRIES = 2           # Nombre de tentatives supplémentaires si timeout/erreur réseau
 
 CRITICAL_WEIGHT = 15   # Problèmes bloquants pour l'activité commerciale
 MAJOR_WEIGHT    = 10   # Problèmes importants mais non bloquants
@@ -101,24 +102,37 @@ _EMAIL_BLACKLIST = (
 
 def _fetch(url: str) -> Tuple[requests.Response | None, float]:
     """
-    Charge une URL et retourne (response, temps_en_secondes).
-    Retourne (None, 0.0) si la requête échoue — le prospect est marqué inaccessible.
+    Charge une URL avec retry exponentiel (2 tentatives supplémentaires : 2s, 4s).
+    Retourne (None, 0.0) si toutes les tentatives échouent.
     """
     if not url.startswith("http"):
         url = "https://" + url
-    try:
-        start = time.perf_counter()
-        resp = requests.get(
-            url,
-            timeout=config.request_timeout,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; ProspectBot/1.0)"},
-            allow_redirects=True,
-        )
-        elapsed = time.perf_counter() - start
-        return resp, elapsed
-    except requests.RequestException as exc:
-        logger.warning("    ⚠️  Impossible de charger %s : %s", url, exc)
-        return None, 0.0
+    last_exc: Exception | None = None
+    for attempt in range(_FETCH_MAX_RETRIES + 1):
+        try:
+            start = time.perf_counter()
+            resp = requests.get(
+                url,
+                timeout=config.request_timeout,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; ProspectBot/1.0)"},
+                allow_redirects=True,
+            )
+            elapsed = time.perf_counter() - start
+            return resp, elapsed
+        except requests.RequestException as exc:
+            last_exc = exc
+            if attempt < _FETCH_MAX_RETRIES:
+                delay = 2 ** (attempt + 1)  # 2s, puis 4s
+                logger.debug(
+                    "    ↩️  %s — tentative %d/%d dans %ds…",
+                    url, attempt + 1, _FETCH_MAX_RETRIES, delay,
+                )
+                time.sleep(delay)
+    logger.warning(
+        "    ⚠️  Impossible de charger %s après %d tentatives : %s",
+        url, _FETCH_MAX_RETRIES + 1, last_exc,
+    )
+    return None, 0.0
 
 
 # ---------------------------------------------------------------------------
