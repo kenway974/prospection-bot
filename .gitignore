@@ -1,0 +1,33 @@
+# Variables d'environnement — NE JAMAIS COMMITER
+.env
+
+# Résultats de prospection — données personnelles
+output/
+
+# Profils custom sauvegardés localement
+profiles_custom.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Environnements virtuels
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
