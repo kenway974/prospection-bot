@@ -370,8 +370,26 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
 
         log_q.put(f"[--] 📋 {len(all_prospects)} prospect(s) collecté(s)")
 
-        # 2. Analyse
-        all_prospects = [analyze_prospect(p) for p in all_prospects]
+        # 1b. Déduplication
+        from history_manager import load_contacted_ids, mark_as_contacted
+        already_contacted = load_contacted_ids()
+        before_dedup = len(all_prospects)
+        all_prospects = [p for p in all_prospects if p.place_id not in already_contacted]
+        skipped = before_dedup - len(all_prospects)
+        if skipped:
+            log_q.put(f"[--] ⏭️  {skipped} prospect(s) déjà contacté(s) ignoré(s).")
+
+        # 2. Analyse (avec poids spécifiques au profil actif)
+        weight_overrides = params.get("weight_overrides", {})
+        all_prospects = [analyze_prospect(p, weight_overrides) for p in all_prospects]
+
+        # 2b. Filtrage par seuil de score
+        threshold = params.get("contact_score_threshold", 70)
+        contactable = [p for p in all_prospects if p.score <= threshold]
+        filtered_out = len(all_prospects) - len(contactable)
+        if filtered_out:
+            log_q.put(f"[--] 🚫 {filtered_out} prospect(s) ignoré(s) (score > {threshold}/100).")
+        all_prospects = contactable
 
         # 3. Emails
         all_prospects = [enrich_with_email(p) for p in all_prospects]
@@ -399,7 +417,10 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             from services.sms import send_all_sms
             send_all_sms(all_prospects)
 
-        # 9. Historique
+        # 9. Marquage des prospects contactés
+        mark_as_contacted([p.place_id for p in all_prospects])
+
+        # 10. Historique
         from history_manager import save_run
         emails_found = sum(1 for p in all_prospects if p.email)
         mobiles_found = sum(1 for p in all_prospects if p.phone and (
@@ -467,6 +488,8 @@ if launch and not st.session_state.running:
         "sms_hook": sms_hook,
         "profile_id": selected_profile.id,
         "profile_name": f"{selected_profile.emoji} {selected_profile.name}",
+        "weight_overrides": selected_profile.check_weight_overrides,
+        "contact_score_threshold": int(os.getenv("CONTACT_SCORE_THRESHOLD", "70")),
         "send_emails": send_emails,
         "gmail_address": gmail_address,
         "gmail_password": gmail_password,

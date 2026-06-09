@@ -32,6 +32,7 @@ from services.analyzer import analyze_prospect
 from services.mailer import enrich_with_email
 from services.notion_sync import sync_all
 from services.sms import send_all_sms
+from history_manager import load_contacted_ids, mark_as_contacted
 
 
 # ---------------------------------------------------------------------------
@@ -134,10 +135,40 @@ def run() -> None:
         logger.warning("Aucun prospect trouvé. Vérifiez vos critères de recherche.")
         sys.exit(0)
 
+    # 1b. DÉDUPLICATION — exclure les prospects déjà contactés lors de sessions précédentes
+    already_contacted = load_contacted_ids()
+    before_dedup = len(all_prospects)
+    all_prospects = [p for p in all_prospects if p.place_id not in already_contacted]
+    skipped = before_dedup - len(all_prospects)
+    if skipped:
+        logger.info("⏭️  %d prospect(s) déjà contacté(s) ignoré(s).", skipped)
+
+    if not all_prospects:
+        logger.warning("Tous les prospects ont déjà été contactés. Élargissez votre recherche.")
+        sys.exit(0)
+
     # 2. ANALYSE — inspection du site web + scraping email
     logger.info("")
     logger.info("🔬 Analyse des sites web…")
     all_prospects = [analyze_prospect(p) for p in all_prospects]
+
+    # 2b. FILTRAGE PAR SEUIL — on ne contacte que les prospects avec assez d'opportunités
+    threshold = config.contact_score_threshold
+    contactable = [p for p in all_prospects if p.score <= threshold]
+    filtered_out = len(all_prospects) - len(contactable)
+    if filtered_out:
+        logger.info(
+            "🚫 %d prospect(s) ignoré(s) (score > %d/100 — site trop bon pour notre offre).",
+            filtered_out, threshold,
+        )
+    all_prospects = contactable
+
+    if not all_prospects:
+        logger.warning(
+            "Aucun prospect sous le seuil de %d/100. "
+            "Réduisez CONTACT_SCORE_THRESHOLD ou changez de zone/mots-clés.", threshold,
+        )
+        sys.exit(0)
 
     # 3. EMAILS — génération des brouillons personnalisés
     logger.info("")
@@ -160,6 +191,9 @@ def run() -> None:
     # 7. SMS BREVO — envoie un SMS aux numéros mobiles (ignoré si clé absente)
     if config.brevo_api_key:
         send_all_sms(all_prospects)
+
+    # 8. MARQUAGE — enregistre les place_id pour éviter les doublons aux prochains runs
+    mark_as_contacted([p.place_id for p in all_prospects])
 
     # Résumé final
     no_site  = sum(1 for p in all_prospects if not p.has_website())

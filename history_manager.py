@@ -17,7 +17,8 @@ import os
 from datetime import datetime
 from typing import List
 
-HISTORY_FILE = os.path.join("output", "history.json")
+HISTORY_FILE    = os.path.join("output", "history.json")
+CONTACTED_FILE  = os.path.join("output", "contacted_place_ids.json")
 
 
 def _ensure_output() -> None:
@@ -38,6 +39,33 @@ def load_history() -> List[dict]:
             return json.load(f)
     except Exception:
         return []
+
+
+def load_contacted_ids() -> set:
+    """
+    Charge l'ensemble des place_id déjà traités lors des sessions précédentes.
+    Retourne un set vide si aucun historique n'existe encore.
+    """
+    _ensure_output()
+    if not os.path.exists(CONTACTED_FILE):
+        return set()
+    try:
+        with open(CONTACTED_FILE, "r", encoding="utf-8") as f:
+            return set(json.load(f))
+    except Exception:
+        return set()
+
+
+def mark_as_contacted(place_ids: List[str]) -> None:
+    """
+    Ajoute les place_id fournis à la liste des prospects déjà contactés.
+    Les doublons sont automatiquement ignorés (structure set).
+    """
+    _ensure_output()
+    existing = load_contacted_ids()
+    existing.update(place_ids)
+    with open(CONTACTED_FILE, "w", encoding="utf-8") as f:
+        json.dump(sorted(existing), f, ensure_ascii=False, indent=2)
 
 
 def save_run(

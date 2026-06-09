@@ -23,12 +23,14 @@ from services.analyzer import (
     _check_free_builder,
     _check_social_links,
     _check_response_time,
+    _check_outdated_site,
     _scrape_email,
     analyze_prospect,
     SLOW_RESPONSE_THRESHOLD_S,
     CRITICAL_WEIGHT,
     MAJOR_WEIGHT,
     MINOR_WEIGHT,
+    CHECK_SOCIAL_LINKS,
 )
 from services.google_maps import Prospect
 
@@ -209,6 +211,33 @@ class TestCheckFreeBuilder(unittest.TestCase):
         self.assertEqual(len(issues), 0)
 
 
+class TestCheckOutdatedSite(unittest.TestCase):
+
+    def test_copyright_ancien_detecte(self):
+        issues = []
+        _check_outdated_site("© Copyright 2019 Mon Site", issues)
+        self.assertEqual(len(issues), 1)
+        self.assertIn("2019", issues[0][0])
+        self.assertEqual(issues[0][1], MAJOR_WEIGHT)
+
+    def test_copyright_recents_ignore(self):
+        from datetime import datetime
+        current_year = datetime.now().year
+        issues = []
+        _check_outdated_site(f"© {current_year} Mon Site", issues)
+        self.assertEqual(len(issues), 0)
+
+    def test_sans_copyright_ignore(self):
+        issues = []
+        _check_outdated_site("<html><body>Aucune date</body></html>", issues)
+        self.assertEqual(len(issues), 0)
+
+    def test_copyright_html_entity(self):
+        issues = []
+        _check_outdated_site("&copy; 2018 Mon entreprise", issues)
+        self.assertEqual(len(issues), 1)
+
+
 class TestCheckSocialLinks(unittest.TestCase):
 
     def test_pas_de_social(self):
@@ -318,6 +347,16 @@ class TestAnalyzeProspect(unittest.TestCase):
 
         self.assertLess(result.score, 100)
         self.assertGreater(len(result.issues), 0)
+
+    def test_weight_override_applique(self):
+        """weight_overrides doit surcharger le poids d'un check spécifique."""
+        soup = make_soup("<html><body><a href='/contact'>Contact</a></body></html>")
+        issues_default = []
+        issues_override = []
+        _check_social_links(soup, issues_default)
+        _check_social_links(soup, issues_override, weight=CRITICAL_WEIGHT)
+        self.assertEqual(issues_default[0][1], MINOR_WEIGHT)
+        self.assertEqual(issues_override[0][1], CRITICAL_WEIGHT)
 
     def test_score_ponderation_critique_plus_fort(self):
         """Un site avec des problèmes critiques doit avoir un score plus bas qu'un site avec des problèmes mineurs."""

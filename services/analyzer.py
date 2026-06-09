@@ -4,23 +4,25 @@ services/analyzer.py — Analyse du site web d'un prospect.
 Pour chaque prospect avec un site web, ce module :
   1. Charge la page principale (GET HTTP)
   2. Passe BeautifulSoup dessus pour inspecter le HTML
-  3. Lance 9 checks (HTTPS, mobile, SEO, tracking, formulaire…)
+  3. Lance 10 checks pondérés (HTTPS, mobile, SEO, tracking, obsolescence…)
   4. Scrape l'email de contact (mailto + page /contact)
   5. Calcule un score pondéré sur 100 (100 = parfait, 0 = aucun site)
 
 Score = 100 − Σ(poids de chaque problème détecté)
   Critique (−15 pts) : HTTPS manquant, site non mobile, tracking absent, formulaire absent
-  Important (−10 pts) : chargement lent, builder gratuit, titre absent
+  Important (−10 pts) : chargement lent, builder gratuit, titre absent, site obsolète
   Mineur   (−5 pts)  : meta description absente, réseaux sociaux absents
-Plus le score est bas, plus il y a d'opportunités commerciales.
+
+Les poids peuvent être surchargés par profil via weight_overrides dans analyze_prospect().
 """
 
 from __future__ import annotations
 
 import re
 import time
-from typing import List, Optional, Tuple
-from urllib.parse import urljoin, urlparse
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -39,6 +41,31 @@ MAX_SCORE = 100
 CRITICAL_WEIGHT = 15   # Problèmes bloquants pour l'activité commerciale
 MAJOR_WEIGHT    = 10   # Problèmes importants mais non bloquants
 MINOR_WEIGHT    = 5    # Défauts mineurs, à améliorer si possible
+
+# Noms de checks — utilisés comme clés dans check_weight_overrides des profils
+CHECK_HTTPS          = "https"
+CHECK_RESPONSE_TIME  = "response_time"
+CHECK_VIEWPORT       = "viewport"
+CHECK_TITLE          = "title"
+CHECK_META_DESC      = "meta_description"
+CHECK_TRACKING       = "tracking"
+CHECK_LEAD_FORM      = "lead_form"
+CHECK_FREE_BUILDER   = "free_builder"
+CHECK_SOCIAL_LINKS   = "social_links"
+CHECK_OUTDATED       = "outdated"
+
+_DEFAULT_WEIGHTS: Dict[str, int] = {
+    CHECK_HTTPS:         CRITICAL_WEIGHT,
+    CHECK_RESPONSE_TIME: MAJOR_WEIGHT,
+    CHECK_VIEWPORT:      CRITICAL_WEIGHT,
+    CHECK_TITLE:         MAJOR_WEIGHT,
+    CHECK_META_DESC:     MINOR_WEIGHT,
+    CHECK_TRACKING:      CRITICAL_WEIGHT,
+    CHECK_LEAD_FORM:     CRITICAL_WEIGHT,
+    CHECK_FREE_BUILDER:  MAJOR_WEIGHT,
+    CHECK_SOCIAL_LINKS:  MINOR_WEIGHT,
+    CHECK_OUTDATED:      MAJOR_WEIGHT,
+}
 
 # Type interne : liste de (message, poids)
 _IssueList = List[Tuple[str, int]]
@@ -98,65 +125,65 @@ def _fetch(url: str) -> Tuple[requests.Response | None, float]:
 # Checks individuels — chacun ajoute un tuple (message, poids) dans `issues`
 # ---------------------------------------------------------------------------
 
-def _check_https(url: str, issues: _IssueList) -> None:
+def _check_https(url: str, issues: _IssueList, weight: int = CRITICAL_WEIGHT) -> None:
     """HTTPS absent = pénalité SEO + alerte navigateur + signal de méfiance."""
     if not url.startswith("https://"):
         issues.append((
             "Site sans HTTPS (connexion non sécurisée, pénalité SEO Google)",
-            CRITICAL_WEIGHT,
+            weight,
         ))
 
 
-def _check_response_time(elapsed: float, issues: _IssueList) -> None:
+def _check_response_time(elapsed: float, issues: _IssueList, weight: int = MAJOR_WEIGHT) -> None:
     """Temps de réponse > 3s = mauvaise expérience utilisateur + pénalité SEO."""
     if elapsed > SLOW_RESPONSE_THRESHOLD_S:
         issues.append((
             f"Temps de chargement élevé ({elapsed:.1f}s > {SLOW_RESPONSE_THRESHOLD_S}s) "
             "→ impact SEO et expérience utilisateur",
-            MAJOR_WEIGHT,
+            weight,
         ))
 
 
-def _check_viewport(soup: BeautifulSoup, issues: _IssueList) -> None:
+def _check_viewport(soup: BeautifulSoup, issues: _IssueList, weight: int = CRITICAL_WEIGHT) -> None:
     """Meta viewport absente = site non responsive = perte de ~60 % du trafic mobile."""
     if not soup.find("meta", attrs={"name": "viewport"}):
         issues.append((
             "Absence de meta viewport → site probablement non responsive (mobile)",
-            CRITICAL_WEIGHT,
+            weight,
         ))
 
 
-def _check_title(soup: BeautifulSoup, issues: _IssueList) -> None:
+def _check_title(soup: BeautifulSoup, issues: _IssueList, weight: int = MAJOR_WEIGHT) -> None:
     """Balise <title> obligatoire pour le SEO on-page."""
     title = soup.find("title")
     if not title or not title.get_text(strip=True):
         issues.append((
             "Absence de balise <title> → SEO on-page défaillant",
-            MAJOR_WEIGHT,
+            weight,
         ))
 
 
-def _check_meta_description(soup: BeautifulSoup, issues: _IssueList) -> None:
+def _check_meta_description(soup: BeautifulSoup, issues: _IssueList, weight: int = MINOR_WEIGHT) -> None:
     """Meta description = snippet affiché dans Google. Son absence réduit le CTR."""
     meta_desc = soup.find("meta", attrs={"name": "description"})
     if not meta_desc or not meta_desc.get("content", "").strip():
         issues.append((
             "Absence de meta description → snippet Google non optimisé",
-            MINOR_WEIGHT,
+            weight,
         ))
 
 
-def _check_tracking(html: str, issues: _IssueList) -> None:
+def _check_tracking(html: str, issues: _IssueList, weight: int = CRITICAL_WEIGHT) -> None:
     """Sans tracking (GA, GTM, Pixel…), impossible de mesurer les performances."""
     if not any(sig in html for sig in _TRACKING_SIGNATURES):
         issues.append((
             "Aucun pixel de tracking détecté (Google Analytics, GTM, Facebook Pixel) "
             "→ impossible de mesurer les conversions",
-            CRITICAL_WEIGHT,
+            weight,
         ))
 
 
-def _check_lead_form(soup: BeautifulSoup, issues: _IssueList) -> None:
+def _check_lead_form(soup: BeautifulSoup, issues: _IssueList, weight: int = CRITICAL_WEIGHT) -> None:
     """Formulaire de contact absent = les visiteurs n'ont pas de moyen facile de convertir."""
     forms = soup.find_all("form")
     inputs_email = soup.find_all("input", {"type": "email"})
@@ -164,11 +191,11 @@ def _check_lead_form(soup: BeautifulSoup, issues: _IssueList) -> None:
         issues.append((
             "Aucun formulaire de contact / capture de lead visible "
             "→ les visiteurs n'ont pas de moyen simple de se convertir",
-            CRITICAL_WEIGHT,
+            weight,
         ))
 
 
-def _check_free_builder(url: str, html: str, issues: _IssueList) -> None:
+def _check_free_builder(url: str, html: str, issues: _IssueList, weight: int = MAJOR_WEIGHT) -> None:
     """Sites construits sur Wix, Jimdo… = limitations SEO + image non professionnelle."""
     combined = url.lower() + html.lower()
     for builder in _FREE_BUILDERS:
@@ -176,12 +203,12 @@ def _check_free_builder(url: str, html: str, issues: _IssueList) -> None:
             issues.append((
                 f"Site construit avec un outil gratuit ({builder}) "
                 "→ limitations techniques, SEO restreint, image non professionnelle",
-                MAJOR_WEIGHT,
+                weight,
             ))
             return
 
 
-def _check_social_links(soup: BeautifulSoup, issues: _IssueList) -> None:
+def _check_social_links(soup: BeautifulSoup, issues: _IssueList, weight: int = MINOR_WEIGHT) -> None:
     """Absence de liens réseaux sociaux = présence digitale limitée."""
     links = soup.find_all("a", href=True)
     has_social = any(
@@ -193,8 +220,22 @@ def _check_social_links(soup: BeautifulSoup, issues: _IssueList) -> None:
         issues.append((
             "Aucun lien vers des réseaux sociaux détecté "
             "→ présence digitale limitée, opportunité de stratégie social media",
-            MINOR_WEIGHT,
+            weight,
         ))
+
+
+def _check_outdated_site(html: str, issues: _IssueList, weight: int = MAJOR_WEIGHT) -> None:
+    """Copyright trop ancien = site non maintenu → opportunité de refonte."""
+    current_year = datetime.now().year
+    matches = re.findall(r'(?:©|&copy;|copyright)\s*(\d{4})', html, re.IGNORECASE)
+    if matches:
+        years = [int(y) for y in matches if 2000 <= int(y) <= current_year]
+        if years and current_year - max(years) >= 3:
+            issues.append((
+                f"Site non mis à jour depuis {max(years)} "
+                "→ risque d'obsolescence technique et de contenu",
+                weight,
+            ))
 
 
 # ---------------------------------------------------------------------------
@@ -256,17 +297,28 @@ def _scrape_email(url: str, soup: BeautifulSoup) -> Optional[str]:
 # Fonction principale exportée
 # ---------------------------------------------------------------------------
 
-def analyze_prospect(prospect: Prospect) -> Prospect:
+def analyze_prospect(
+    prospect: Prospect,
+    weight_overrides: Dict[str, int] | None = None,
+) -> Prospect:
     """
     Analyse complète du prospect.
 
     Cas particuliers gérés :
     - Pas de site → score 0, problème unique "pas de site web"
     - Site inaccessible → score 5, problème unique "site down"
-    - Site normal → 9 checks pondérés + scraping email + calcul du score
+    - Site normal → 10 checks pondérés + scraping email + calcul du score
+
+    weight_overrides : dict optionnel pour surcharger les poids par défaut.
+    Exemple : {"social_links": 15} pour rendre ce check critique.
 
     Retourne le prospect enrichi (issues, score, email).
     """
+    # Construction du dict de poids (défauts + surcharges du profil)
+    weights = dict(_DEFAULT_WEIGHTS)
+    if weight_overrides:
+        weights.update(weight_overrides)
+
     # Cas 1 : pas de site web du tout → opportunité maximale
     if not prospect.has_website():
         prospect.issues = [
@@ -294,16 +346,17 @@ def analyze_prospect(prospect: Prospect) -> Prospect:
     soup = BeautifulSoup(html, "lxml")
     weighted_issues: _IssueList = []
 
-    # Cas 3 : site accessible → lancement des 9 checks pondérés
-    _check_https(url, weighted_issues)
-    _check_response_time(elapsed, weighted_issues)
-    _check_viewport(soup, weighted_issues)
-    _check_title(soup, weighted_issues)
-    _check_meta_description(soup, weighted_issues)
-    _check_tracking(html, weighted_issues)
-    _check_lead_form(soup, weighted_issues)
-    _check_free_builder(url, html, weighted_issues)
-    _check_social_links(soup, weighted_issues)
+    # Cas 3 : site accessible → lancement des 10 checks pondérés
+    _check_https(url, weighted_issues,           weights[CHECK_HTTPS])
+    _check_response_time(elapsed, weighted_issues, weights[CHECK_RESPONSE_TIME])
+    _check_viewport(soup, weighted_issues,        weights[CHECK_VIEWPORT])
+    _check_title(soup, weighted_issues,           weights[CHECK_TITLE])
+    _check_meta_description(soup, weighted_issues, weights[CHECK_META_DESC])
+    _check_tracking(html, weighted_issues,        weights[CHECK_TRACKING])
+    _check_lead_form(soup, weighted_issues,       weights[CHECK_LEAD_FORM])
+    _check_free_builder(url, html, weighted_issues, weights[CHECK_FREE_BUILDER])
+    _check_social_links(soup, weighted_issues,    weights[CHECK_SOCIAL_LINKS])
+    _check_outdated_site(html, weighted_issues,   weights[CHECK_OUTDATED])
 
     # Scraping de l'email de contact
     email = _scrape_email(url, soup)

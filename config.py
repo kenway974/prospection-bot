@@ -96,6 +96,9 @@ class Config:
     # --- Paramètres techniques ---
     request_timeout: int = 10   # timeout HTTP en secondes pour toutes les requêtes
     output_dir: str = "output"  # dossier où sont sauvegardés les résultats
+    contact_score_threshold: int = field(
+        default_factory=lambda: int(os.getenv("CONTACT_SCORE_THRESHOLD", "70"))
+    )
 
     def validate(self) -> None:
         """Vérifie que la config minimale est présente. Lève ValueError sinon."""

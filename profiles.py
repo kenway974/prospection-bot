@@ -25,6 +25,7 @@ class Profile:
     email_hook: str                # Accroche personnalisée pour le mail
     sms_hook: str                  # Accroche courte pour le SMS (max 100 chars)
     qualification_criteria: List[str]   # Ce qu'on cherche chez le prospect
+    check_weight_overrides: dict = field(default_factory=dict)  # Poids spécifiques à ce profil
     radius: int = 10000
     max_results: int = 5
 
@@ -164,6 +165,7 @@ PROFILES: List[Profile] = [
             "Compte inactif ou inexistant",
             "Secteur grand public (B2C)",
         ],
+        check_weight_overrides={"social_links": 15},  # critère principal pour ce profil
     ),
 
     Profile(
