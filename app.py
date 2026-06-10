@@ -383,22 +383,36 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         for kw in params["keywords"]:
             log_q.put(f"[--] 🔍 Recherche '{kw}' — objectif {target_per_kw} qualifiés…")
             raw_candidates = fetch_raw_candidates(kw)
+
+            if not raw_candidates:
+                log_q.put(f"[--] ❌ Aucun résultat Google pour '{kw}' — vérifiez le mot-clé ou la zone.")
+                continue
+
             kw_qualified: list = []
+            skip_contacted = skip_seen = skip_api = skip_rating = skip_score = 0
 
             for raw in raw_candidates:
                 if len(kw_qualified) >= target_per_kw:
                     break
 
                 place_id = raw.get("place_id", "")
-                if not place_id or place_id in seen or place_id in already_contacted:
+                if not place_id:
+                    continue
+                if place_id in seen:
+                    skip_seen += 1
+                    continue
+                if place_id in already_contacted:
+                    skip_contacted += 1
                     continue
                 seen.add(place_id)
 
                 prospect = build_prospect(raw, kw)
                 if not prospect:
+                    skip_api += 1
                     continue
 
                 if prospect.rating is not None and prospect.rating < min_rating:
+                    skip_rating += 1
                     continue
 
                 analyzed = analyze_prospect(prospect, weight_overrides)
@@ -409,10 +423,19 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                         f"[--] ✅ [{len(kw_qualified)}/{target_per_kw}] {prospect.name}"
                         f" — score {analyzed.score}/100"
                     )
+                else:
+                    skip_score += 1
 
             found = len(kw_qualified)
             if found < target_per_kw:
-                log_q.put(f"[--] ⚠️  {found}/{target_per_kw} qualifiés pour '{kw}' (Google épuisé ou critères trop stricts).")
+                reasons = []
+                if skip_contacted: reasons.append(f"{skip_contacted} déjà contacté(s)")
+                if skip_score:     reasons.append(f"{skip_score} site(s) trop bon(s) pour le seuil ({threshold}/100)")
+                if skip_rating:    reasons.append(f"{skip_rating} note(s) Google trop basse(s) (< {min_rating}⭐)")
+                if skip_api:       reasons.append(f"{skip_api} erreur(s) API Google")
+                if skip_seen:      reasons.append(f"{skip_seen} doublon(s) inter-mots-clés")
+                reason_str = " | ".join(reasons) if reasons else "Google épuisé"
+                log_q.put(f"[--] ⚠️  {found}/{target_per_kw} qualifiés pour '{kw}' → {reason_str}.")
             else:
                 log_q.put(f"[--] ✅ {found}/{target_per_kw} qualifiés pour '{kw}'.")
             all_qualified.extend(kw_qualified)
