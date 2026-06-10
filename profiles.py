@@ -63,33 +63,34 @@ PROFILES: List[Profile] = [
     Profile(
         id="coursier",
         emoji="🚚",
-        name="Coursier / Livreur",
-        description="Cible les commerces locaux sans solution de livraison externe (score haut = bonne opportunité).",
-        keywords=["épicerie", "pharmacie", "restaurant", "traiteur", "boucherie", "fleuriste"],
+        name="Coursier High Ticket",
+        description="Cible les professionnels et commerces haut de gamme sans solution de course dédiée.",
+        keywords=["notaire", "avocat", "bijouterie", "galerie d'art", "boutique mode", "mobilier design", "architecte", "expert-comptable"],
         location="Paris, France",
-        your_title="Service de livraison express",
-        your_offer="Livraison de vos commandes en moins de 2h dans toute la ville",
+        your_title="Service de course express haut de gamme",
+        your_offer="Livraison sécurisée et discrète de vos documents et colis sensibles en moins de 2h",
         email_hook=(
-            "Je suis coursier indépendant basé près de chez vous. "
-            "De nombreux commerces comme {name} externalisent désormais leurs livraisons "
-            "pour se concentrer sur leur cœur de métier — et économiser sur la logistique."
+            "Je gère un service de course express spécialisé dans les envois sensibles et haut de gamme. "
+            "Pour des professionnels comme {name}, la rapidité et la discrétion ne sont pas négociables — "
+            "c'est exactement ce que nous proposons, sans les contraintes d'un prestataire généraliste."
         ),
-        sms_hook="Coursier indépendant disponible pour vos livraisons express. Tarifs compétitifs. Intéressé ?",
+        sms_hook="Course express discrète pour docs et colis sensibles. Intervention en 2h. Dispo pour en parler ?",
         qualification_criteria=[
-            "Commerce de proximité sans livraison déjà en place",
-            "Pas de référencement sur UberEats/Deliveroo/JustEat",
-            "Activité suffisante (>30 avis Google)",
+            "Professionnel ou commerce haut de gamme",
+            "Pas de service de course dédié en place",
+            "Besoins en envois de documents ou colis de valeur",
         ],
         score_direction="desc",
         score_threshold_default=70,
         check_weight_overrides={
-            # Désactiver tous les checks web dev (non pertinents pour un coursier)
+            # Désactiver tous les checks web dev
             "https": 0, "response_time": 0, "viewport": 0, "title": 0,
             "meta_description": 0, "tracking": 0, "lead_form": 0,
             "free_builder": 0, "social_links": 0, "outdated": 0,
-            # Activer les checks coursier
+            # Livraison déjà couverte = moins d'opportunité
             "delivery_covered": 15,
-            "low_volume": 10,
+            # low_volume désactivé : un petit cabinet d'avocats a peu d'avis mais reste bon client
+            "low_volume": 0,
         },
     ),
 
