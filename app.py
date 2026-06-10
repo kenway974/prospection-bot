@@ -140,17 +140,36 @@ with st.sidebar:
         label_visibility="collapsed",
     )
 
-    st.markdown(
-        "**Notion API Key** "
-        "— [Créer une intégration ↗](https://www.notion.so/my-integrations)"
-    )
-    notion_key = st.text_input(
-        "Notion API Key",
-        type="password",
-        value=os.getenv("NOTION_API_KEY", ""),
-        placeholder="secret_...",
+    st.markdown("**CRM**")
+    crm_type = st.selectbox(
+        "CRM", options=["Aucun", "Notion", "HubSpot"],
         label_visibility="collapsed",
-    )
+    ).lower()
+    if crm_type == "notion":
+        crm_key = st.text_input(
+            "Notion API Key", type="password",
+            value=os.getenv("NOTION_API_KEY", ""), placeholder="secret_...",
+            label_visibility="collapsed",
+        )
+        crm_extra = {
+            "database_id": st.text_input(
+                "Notion Database ID", value=os.getenv("NOTION_DATABASE_ID", ""),
+                placeholder="c2507703-...", label_visibility="collapsed",
+            )
+        }
+    elif crm_type == "hubspot":
+        crm_key = st.text_input(
+            "HubSpot Private App Token", type="password",
+            value=os.getenv("HUBSPOT_API_KEY", ""), placeholder="pat-eu1-...",
+            label_visibility="collapsed",
+        )
+        crm_extra = {}
+    else:
+        crm_key  = ""
+        crm_extra = {}
+
+    # Garder notion_key pour compat avec les sections historique/relances
+    notion_key = crm_key if crm_type == "notion" else ""
 
     st.markdown(
         "**Brevo API Key** "
@@ -374,7 +393,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         from services.google_maps import fetch_raw_candidates, build_prospect
         from services.analyzer import analyze_prospect
         from services.mailer import enrich_with_email
-        from services.notion_sync import sync_all
+        from services.crm import get_exporter
         from history_manager import load_contacted_ids, mark_as_contacted
 
         os.makedirs(c.output_dir, exist_ok=True)
@@ -474,9 +493,14 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump([p.to_dict() for p in all_prospects], f, ensure_ascii=False, indent=2)
 
-        # 6. Notion
-        if params["notion_key"]:
-            sync_all(all_prospects)
+        # 6. Export CRM
+        crm_exporter = get_exporter(
+            params.get("crm_type", "aucun"),
+            params.get("crm_key", ""),
+            **params.get("crm_extra", {}),
+        )
+        if crm_exporter:
+            crm_exporter.export(all_prospects)
 
         # 7. Gmail
         if params["send_emails"] and params["gmail_address"] and params["gmail_password"]:
@@ -545,6 +569,9 @@ if launch and not st.session_state.running:
     params = {
         "google_key": google_key,
         "notion_key": notion_key,
+        "crm_type":   crm_type,
+        "crm_key":    crm_key,
+        "crm_extra":  crm_extra,
         "brevo_key": brevo_key,
         "location": location,
         "keywords": keywords,
