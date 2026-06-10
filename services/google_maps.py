@@ -2,7 +2,7 @@
 services/google_maps.py — Recherche de prospects via l'API Google Places.
 
 Flux :
-  1. Text Search  → liste brute de lieux correspondant au mot-clé + ville
+  1. Text Search  → liste brute de lieux (jusqu'à 60 résultats, 3 pages Google)
   2. Place Details → détails complets de chaque lieu (tel, site, note…)
   3. Retourne une liste d'objets Prospect typés
 
@@ -70,18 +70,19 @@ class Prospect:
 # ---------------------------------------------------------------------------
 
 BASE_URL = "https://maps.googleapis.com/maps/api"
+# Google Places Text Search renvoie max 3 pages × 20 = 60 résultats par requête
+GOOGLE_MAX_RESULTS = 60
 
 
-def _text_search(keyword: str, location: str, radius: int, limit: int) -> List[dict]:
+def fetch_raw_candidates(keyword: str, max_raw: int = GOOGLE_MAX_RESULTS) -> List[dict]:
     """
-    Lance une Text Search Google Places.
+    Récupère jusqu'à `max_raw` résultats bruts via Google Places Text Search.
     Gère la pagination automatiquement (next_page_token).
-    Retourne jusqu'à `limit` résultats bruts.
     """
     url = f"{BASE_URL}/place/textsearch/json"
     params = {
-        "query": f"{keyword} {location}",
-        "radius": radius,
+        "query": f"{keyword} {config.search_location}",
+        "radius": config.search_radius,
         "key": config.google_api_key,
         "language": "fr",
     }
@@ -104,21 +105,25 @@ def _text_search(keyword: str, location: str, radius: int, limit: int) -> List[d
         results.extend(data.get("results", []))
 
         next_token = data.get("next_page_token")
-        if not next_token or len(results) >= limit:
+        if not next_token or len(results) >= max_raw:
             break
 
         # Google impose un délai de ~2s avant d'utiliser le next_page_token
         time.sleep(2)
         params = {"pagetoken": next_token, "key": config.google_api_key}
 
-    return results[:limit]
+    return results[:max_raw]
 
 
-def _get_place_details(place_id: str) -> dict:
+def build_prospect(raw: dict, keyword: str) -> Optional[Prospect]:
     """
-    Récupère les détails complets d'un lieu via son place_id.
-    Retourne un dict vide en cas d'erreur (le prospect sera ignoré).
+    Appelle Place Details pour un résultat brut Text Search et construit un Prospect.
+    Retourne None si l'appel échoue.
     """
+    place_id = raw.get("place_id", "")
+    if not place_id:
+        return None
+
     url = f"{BASE_URL}/place/details/json"
     params = {
         "place_id": place_id,
@@ -129,29 +134,36 @@ def _get_place_details(place_id: str) -> dict:
     try:
         resp = requests.get(url, params=params, timeout=config.request_timeout)
         resp.raise_for_status()
-        return resp.json().get("result", {})
+        details = resp.json().get("result", {})
     except requests.RequestException as exc:
         logger.error("Erreur Place Details (%s) : %s", place_id, exc)
-        return {}
+        return None
 
+    if not details:
+        return None
 
-# ---------------------------------------------------------------------------
-# Fonction principale exportée
-# ---------------------------------------------------------------------------
+    return Prospect(
+        place_id=place_id,
+        name=details.get("name", raw.get("name", "Inconnu")),
+        address=details.get("formatted_address", raw.get("formatted_address", "")),
+        phone=details.get("formatted_phone_number"),
+        website=details.get("website"),
+        rating=details.get("rating"),
+        user_ratings_total=details.get("user_ratings_total", 0),
+        keyword=keyword,
+        maps_url=details.get("url", ""),
+    )
+
 
 def search_prospects(keyword: str) -> List[Prospect]:
     """
-    Recherche des prospects locaux pour un mot-clé donné.
-    Garantit jusqu'à max_results_per_keyword prospects CONFIRMÉS en fetchant
-    un buffer 5× pour absorber les échecs Place Details silencieux.
+    Compatibilité main.py — recherche N prospects confirmés pour un mot-clé.
+    Utilise fetch_raw_candidates + build_prospect en interne.
     """
     target = config.max_results_per_keyword
-    # Buffer 5× pour compenser les appels Place Details qui échouent
-    raw_limit = target * 5
-
     logger.info("🔍 Recherche : '%s' autour de %s", keyword, config.search_location)
-    raw_results = _text_search(keyword, config.search_location, config.search_radius, limit=raw_limit)
 
+    raw_results = fetch_raw_candidates(keyword, max_raw=GOOGLE_MAX_RESULTS)
     if not raw_results:
         logger.warning("Aucun résultat pour '%s'.", keyword)
         return []
@@ -160,33 +172,12 @@ def search_prospects(keyword: str) -> List[Prospect]:
     for raw in raw_results:
         if len(prospects) >= target:
             break
-
-        place_id = raw.get("place_id", "")
-        if not place_id:
+        prospect = build_prospect(raw, keyword)
+        if not prospect:
             continue
-
-        details = _get_place_details(place_id)
-        if not details:
-            continue
-
-        prospect = Prospect(
-            place_id=place_id,
-            name=details.get("name", raw.get("name", "Inconnu")),
-            address=details.get("formatted_address", raw.get("formatted_address", "")),
-            phone=details.get("formatted_phone_number"),
-            website=details.get("website"),
-            rating=details.get("rating"),
-            user_ratings_total=details.get("user_ratings_total", 0),
-            keyword=keyword,
-            maps_url=details.get("url", ""),
-        )
         prospects.append(prospect)
-        logger.debug(
-            "  ✅ %s | site=%s | tél=%s",
-            prospect.name,
-            prospect.website or "AUCUN",
-            prospect.phone or "AUCUN",
-        )
+        logger.debug("  ✅ %s | site=%s | tél=%s",
+                     prospect.name, prospect.website or "AUCUN", prospect.phone or "AUCUN")
 
     logger.info("  → %d/%d prospect(s) confirmé(s) pour '%s'.", len(prospects), target, keyword)
     return prospects

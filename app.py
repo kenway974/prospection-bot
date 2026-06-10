@@ -362,64 +362,65 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         an_mod.config = c
         no_mod.config = c
 
-        from services.google_maps import search_prospects
+        from services.google_maps import fetch_raw_candidates, build_prospect
         from services.analyzer import analyze_prospect
         from services.mailer import enrich_with_email
         from services.notion_sync import sync_all
+        from history_manager import load_contacted_ids, mark_as_contacted
 
         os.makedirs(c.output_dir, exist_ok=True)
 
-        # 1. Collecte
-        all_prospects = []
-        seen = set()
-        for kw in params["keywords"]:
-            for p in search_prospects(kw):
-                if p.place_id not in seen:
-                    seen.add(p.place_id)
-                    all_prospects.append(p)
-
-        log_q.put(f"[--] 📋 {len(all_prospects)} prospect(s) collecté(s)")
-
-        # 1b. Filtre note Google
-        min_rating = params.get("min_rating", 3.0)
-        before_rating = len(all_prospects)
-        all_prospects = [p for p in all_prospects if p.rating is None or p.rating >= min_rating]
-        excluded = before_rating - len(all_prospects)
-        if excluded:
-            log_q.put(f"[--] ⭐ {excluded} prospect(s) exclus (note < {min_rating}/5).")
-
-        # 1c. Déduplication inter-sessions
-        from history_manager import load_contacted_ids, mark_as_contacted
-        already_contacted = load_contacted_ids()
-        before_dedup = len(all_prospects)
-        all_prospects = [p for p in all_prospects if p.place_id not in already_contacted]
-        skipped = before_dedup - len(all_prospects)
-        if skipped:
-            log_q.put(f"[--] ⏭️  {skipped} prospect(s) déjà contacté(s) ignoré(s).")
-
-        # 2. Analyse parallèle (avec poids spécifiques au profil actif)
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        target_per_kw = params["max_results"]
+        min_rating    = params.get("min_rating", 3.0)
+        threshold     = params.get("contact_score_threshold", 100)
         weight_overrides = params.get("weight_overrides", {})
-        workers = params.get("analysis_workers", 5)
-        analyzed = []
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(analyze_prospect, p, weight_overrides): p for p in all_prospects}
-            for future in as_completed(futures):
-                try:
-                    analyzed.append(future.result())
-                except Exception as exc:
-                    log_q.put(f"[--] ❌ Erreur analyse : {exc}")
-        all_prospects = analyzed
+        already_contacted = load_contacted_ids()
 
-        # 2b. Filtrage par seuil de score
-        threshold = params.get("contact_score_threshold", 70)
-        contactable = [p for p in all_prospects if p.score <= threshold]
-        filtered_out = len(all_prospects) - len(contactable)
-        if filtered_out:
-            log_q.put(f"[--] 🚫 {filtered_out} prospect(s) ignoré(s) (score > {threshold}/100).")
-        all_prospects = contactable
+        all_qualified: list = []
+        seen: set = set()
 
-        # 3. Emails
+        # Boucle principale : pour chaque mot-clé, cherche jusqu'à target_per_kw qualifiés
+        for kw in params["keywords"]:
+            log_q.put(f"[--] 🔍 Recherche '{kw}' — objectif {target_per_kw} qualifiés…")
+            raw_candidates = fetch_raw_candidates(kw)
+            kw_qualified: list = []
+
+            for raw in raw_candidates:
+                if len(kw_qualified) >= target_per_kw:
+                    break
+
+                place_id = raw.get("place_id", "")
+                if not place_id or place_id in seen or place_id in already_contacted:
+                    continue
+                seen.add(place_id)
+
+                prospect = build_prospect(raw, kw)
+                if not prospect:
+                    continue
+
+                if prospect.rating is not None and prospect.rating < min_rating:
+                    continue
+
+                analyzed = analyze_prospect(prospect, weight_overrides)
+
+                if analyzed.score <= threshold:
+                    kw_qualified.append(analyzed)
+                    log_q.put(
+                        f"[--] ✅ [{len(kw_qualified)}/{target_per_kw}] {prospect.name}"
+                        f" — score {analyzed.score}/100"
+                    )
+
+            found = len(kw_qualified)
+            if found < target_per_kw:
+                log_q.put(f"[--] ⚠️  {found}/{target_per_kw} qualifiés pour '{kw}' (Google épuisé ou critères trop stricts).")
+            else:
+                log_q.put(f"[--] ✅ {found}/{target_per_kw} qualifiés pour '{kw}'.")
+            all_qualified.extend(kw_qualified)
+
+        all_prospects = all_qualified
+        log_q.put(f"[--] 📋 {len(all_prospects)} prospect(s) qualifiés au total.")
+
+        # Emails
         all_prospects = [enrich_with_email(p) for p in all_prospects]
 
         # 4. Tri
