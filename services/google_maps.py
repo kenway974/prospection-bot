@@ -72,11 +72,11 @@ class Prospect:
 BASE_URL = "https://maps.googleapis.com/maps/api"
 
 
-def _text_search(keyword: str, location: str, radius: int) -> List[dict]:
+def _text_search(keyword: str, location: str, radius: int, limit: int) -> List[dict]:
     """
     Lance une Text Search Google Places.
     Gère la pagination automatiquement (next_page_token).
-    Retourne les résultats bruts jusqu'à max_results_per_keyword.
+    Retourne jusqu'à `limit` résultats bruts.
     """
     url = f"{BASE_URL}/place/textsearch/json"
     params = {
@@ -103,16 +103,15 @@ def _text_search(keyword: str, location: str, radius: int) -> List[dict]:
 
         results.extend(data.get("results", []))
 
-        # Arrêt si on a atteint la limite ou s'il n'y a plus de pages
         next_token = data.get("next_page_token")
-        if not next_token or len(results) >= config.max_results_per_keyword:
+        if not next_token or len(results) >= limit:
             break
 
         # Google impose un délai de ~2s avant d'utiliser le next_page_token
         time.sleep(2)
         params = {"pagetoken": next_token, "key": config.google_api_key}
 
-    return results[: config.max_results_per_keyword]
+    return results[:limit]
 
 
 def _get_place_details(place_id: str) -> dict:
@@ -143,14 +142,15 @@ def _get_place_details(place_id: str) -> dict:
 def search_prospects(keyword: str) -> List[Prospect]:
     """
     Recherche des prospects locaux pour un mot-clé donné.
-
-    - Les entreprises sans site web sont incluses (opportunité de création).
-    - Les doublons inter-mots-clés sont gérés dans main.py via place_id.
-
-    Retourne une liste de Prospect enrichis avec leurs coordonnées complètes.
+    Garantit jusqu'à max_results_per_keyword prospects CONFIRMÉS en fetchant
+    un buffer 5× pour absorber les échecs Place Details silencieux.
     """
+    target = config.max_results_per_keyword
+    # Buffer 5× pour compenser les appels Place Details qui échouent
+    raw_limit = target * 5
+
     logger.info("🔍 Recherche : '%s' autour de %s", keyword, config.search_location)
-    raw_results = _text_search(keyword, config.search_location, config.search_radius)
+    raw_results = _text_search(keyword, config.search_location, config.search_radius, limit=raw_limit)
 
     if not raw_results:
         logger.warning("Aucun résultat pour '%s'.", keyword)
@@ -158,6 +158,9 @@ def search_prospects(keyword: str) -> List[Prospect]:
 
     prospects: List[Prospect] = []
     for raw in raw_results:
+        if len(prospects) >= target:
+            break
+
         place_id = raw.get("place_id", "")
         if not place_id:
             continue
@@ -185,5 +188,5 @@ def search_prospects(keyword: str) -> List[Prospect]:
             prospect.phone or "AUCUN",
         )
 
-    logger.info("  → %d prospect(s) trouvé(s) pour '%s'.", len(prospects), keyword)
+    logger.info("  → %d/%d prospect(s) confirmé(s) pour '%s'.", len(prospects), target, keyword)
     return prospects
