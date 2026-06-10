@@ -277,6 +277,11 @@ with col2:
         min_value=1.0, max_value=5.0, value=3.0, step=0.5,
         help="Les établissements en dessous de cette note sont ignorés (probablement en difficulté)",
     )
+    score_threshold = st.slider(
+        "Score max à contacter",
+        min_value=0, max_value=100, value=100,
+        help="100 = tous les prospects. Baisse pour ne garder que les sites avec beaucoup de problèmes.",
+    )
     radius = st.select_slider(
         "Rayon de recherche",
         options=[1000, 2000, 5000, 10000, 20000, 50000],
@@ -513,7 +518,7 @@ if launch and not st.session_state.running:
         "profile_name": f"{selected_profile.emoji} {selected_profile.name}",
         "weight_overrides": selected_profile.check_weight_overrides,
         "min_rating": min_rating,
-        "contact_score_threshold": int(os.getenv("CONTACT_SCORE_THRESHOLD", "70")),
+        "contact_score_threshold": score_threshold,
         "analysis_workers": int(os.getenv("ANALYSIS_WORKERS", "5")),
         "send_emails": send_emails,
         "gmail_address": gmail_address,
