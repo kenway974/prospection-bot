@@ -99,7 +99,11 @@ def fetch_raw_candidates(keyword: str, max_raw: int = GOOGLE_MAX_RESULTS) -> Lis
 
         status = data.get("status")
         if status not in ("OK", "ZERO_RESULTS"):
-            logger.warning("Statut API inattendu (%s) pour '%s'", status, keyword)
+            # INVALID_REQUEST sur next_page_token = token expiré, non critique si on a déjà des résultats
+            if results:
+                logger.debug("Pagination interrompue (%s) pour '%s' — %d résultats conservés.", status, keyword, len(results))
+            else:
+                logger.warning("Statut API inattendu (%s) pour '%s'", status, keyword)
             break
 
         results.extend(data.get("results", []))
@@ -108,8 +112,8 @@ def fetch_raw_candidates(keyword: str, max_raw: int = GOOGLE_MAX_RESULTS) -> Lis
         if not next_token or len(results) >= max_raw:
             break
 
-        # Google impose un délai de ~2s avant d'utiliser le next_page_token
-        time.sleep(2)
+        # Google impose un délai avant d'utiliser le next_page_token (2s minimum, 3s plus fiable)
+        time.sleep(3)
         params = {"pagetoken": next_token, "key": config.google_api_key}
 
     return results[:max_raw]
