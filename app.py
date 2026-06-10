@@ -788,6 +788,23 @@ with st.expander("🕐 Historique des campagnes"):
             st.divider()
 
 # ---------------------------------------------------------------------------
+# Historique
+# ---------------------------------------------------------------------------
+st.markdown("---")
+with st.expander("🗂️ Historique des contacts"):
+    from history_manager import load_contacted_ids
+    contacted = load_contacted_ids()
+    st.write(f"**{len(contacted)}** établissement(s) déjà contacté(s) (ignorés aux prochains runs).")
+    if contacted:
+        if st.button("🗑️ Réinitialiser l'historique", type="secondary"):
+            import json as _json
+            history_path = os.path.join("output", "contacted_place_ids.json")
+            if os.path.exists(history_path):
+                os.remove(history_path)
+            st.success("Historique effacé. Le prochain run reprospecttra depuis zéro.")
+            st.rerun()
+
+# ---------------------------------------------------------------------------
 # Relances
 # ---------------------------------------------------------------------------
 st.markdown("---")
