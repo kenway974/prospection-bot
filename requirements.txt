@@ -1,6 +1,6 @@
-requests==2.31.0
-beautifulsoup4==4.12.3
-python-dotenv==1.0.1
-lxml==5.4.0
-colorlog==6.8.2
-streamlit==1.35.0
+requests>=2.31.0
+beautifulsoup4>=4.12.3
+python-dotenv>=1.0.1
+lxml>=5.0.0
+colorlog>=6.8.0
+streamlit>=1.35.0

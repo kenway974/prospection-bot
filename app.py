@@ -272,6 +272,11 @@ with col2:
         help="Décrivez votre offre en 1-2 phrases",
     )
     max_results = st.slider("Prospects par mot-clé", 1, 20, 5)
+    min_rating = st.slider(
+        "Note Google minimum ⭐",
+        min_value=1.0, max_value=5.0, value=3.0, step=0.5,
+        help="Les établissements en dessous de cette note sont ignorés (probablement en difficulté)",
+    )
     radius = st.select_slider(
         "Rayon de recherche",
         options=[1000, 2000, 5000, 10000, 20000, 50000],
@@ -370,8 +375,44 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
 
         log_q.put(f"[--] 📋 {len(all_prospects)} prospect(s) collecté(s)")
 
-        # 2. Analyse
-        all_prospects = [analyze_prospect(p) for p in all_prospects]
+        # 1b. Filtre note Google
+        min_rating = params.get("min_rating", 3.0)
+        before_rating = len(all_prospects)
+        all_prospects = [p for p in all_prospects if p.rating is None or p.rating >= min_rating]
+        excluded = before_rating - len(all_prospects)
+        if excluded:
+            log_q.put(f"[--] ⭐ {excluded} prospect(s) exclus (note < {min_rating}/5).")
+
+        # 1c. Déduplication inter-sessions
+        from history_manager import load_contacted_ids, mark_as_contacted
+        already_contacted = load_contacted_ids()
+        before_dedup = len(all_prospects)
+        all_prospects = [p for p in all_prospects if p.place_id not in already_contacted]
+        skipped = before_dedup - len(all_prospects)
+        if skipped:
+            log_q.put(f"[--] ⏭️  {skipped} prospect(s) déjà contacté(s) ignoré(s).")
+
+        # 2. Analyse parallèle (avec poids spécifiques au profil actif)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        weight_overrides = params.get("weight_overrides", {})
+        workers = params.get("analysis_workers", 5)
+        analyzed = []
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(analyze_prospect, p, weight_overrides): p for p in all_prospects}
+            for future in as_completed(futures):
+                try:
+                    analyzed.append(future.result())
+                except Exception as exc:
+                    log_q.put(f"[--] ❌ Erreur analyse : {exc}")
+        all_prospects = analyzed
+
+        # 2b. Filtrage par seuil de score
+        threshold = params.get("contact_score_threshold", 70)
+        contactable = [p for p in all_prospects if p.score <= threshold]
+        filtered_out = len(all_prospects) - len(contactable)
+        if filtered_out:
+            log_q.put(f"[--] 🚫 {filtered_out} prospect(s) ignoré(s) (score > {threshold}/100).")
+        all_prospects = contactable
 
         # 3. Emails
         all_prospects = [enrich_with_email(p) for p in all_prospects]
@@ -399,7 +440,10 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             from services.sms import send_all_sms
             send_all_sms(all_prospects)
 
-        # 9. Historique
+        # 9. Marquage des prospects contactés (avec infos complètes pour les relances)
+        mark_as_contacted(all_prospects)
+
+        # 10. Historique
         from history_manager import save_run
         emails_found = sum(1 for p in all_prospects if p.email)
         mobiles_found = sum(1 for p in all_prospects if p.phone and (
@@ -467,6 +511,10 @@ if launch and not st.session_state.running:
         "sms_hook": sms_hook,
         "profile_id": selected_profile.id,
         "profile_name": f"{selected_profile.emoji} {selected_profile.name}",
+        "weight_overrides": selected_profile.check_weight_overrides,
+        "min_rating": min_rating,
+        "contact_score_threshold": int(os.getenv("CONTACT_SCORE_THRESHOLD", "70")),
+        "analysis_workers": int(os.getenv("ANALYSIS_WORKERS", "5")),
         "send_emails": send_emails,
         "gmail_address": gmail_address,
         "gmail_password": gmail_password,
@@ -732,3 +780,71 @@ with st.expander("🕐 Historique des campagnes"):
                 f"📱 {run['mobiles_trouvés']} mobiles"
             )
             st.divider()
+
+# ---------------------------------------------------------------------------
+# Relances
+# ---------------------------------------------------------------------------
+st.markdown("---")
+with st.expander("🔄 Relances — contacts sans réponse"):
+    from history_manager import get_due_followups, mark_as_responded, mark_followup_sent
+    followup_delay = int(os.getenv("FOLLOWUP_DELAY_DAYS", "5"))
+    due = get_due_followups(followup_delay)
+
+    if not due:
+        st.success(f"✅ Aucun contact à relancer (seuil : {followup_delay} jours sans réponse).")
+    else:
+        st.info(f"**{len(due)} contact(s)** à relancer — contactés il y a plus de {followup_delay} jours sans réponse.")
+
+        # Bouton pour générer tous les emails de relance d'un coup
+        if st.button("📝 Générer tous les emails de relance", key="gen_followup"):
+            from services.google_maps import Prospect as P
+            from services.mailer import draft_followup_email
+            drafts = []
+            for contact in due:
+                p = P(
+                    place_id=contact["place_id"],
+                    name=contact["name"],
+                    address="",
+                    phone=None,
+                    website=None,
+                    rating=None,
+                    user_ratings_total=0,
+                    keyword="",
+                    email=contact.get("email") or None,
+                )
+                drafts.append((p.name, draft_followup_email(p), contact["place_id"]))
+                mark_followup_sent(contact["place_id"])
+            st.session_state["followup_drafts"] = drafts
+            st.success(f"✅ {len(drafts)} email(s) de relance générés.")
+            st.rerun()
+
+        # Affichage des drafts générés
+        if st.session_state.get("followup_drafts"):
+            for name, draft, _ in st.session_state["followup_drafts"]:
+                st.markdown(f"**{name}**")
+                st.code(draft, language=None)
+            import io
+            zip_content = "\n\n" + ("=" * 60 + "\n\n").join(
+                f"{name}\n{draft}" for name, draft, _ in st.session_state["followup_drafts"]
+            )
+            st.download_button(
+                "⬇️ Télécharger tous les emails de relance (.txt)",
+                data=zip_content.encode("utf-8"),
+                file_name=f"relances_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                mime="text/plain",
+                use_container_width=True,
+            )
+
+        # Liste individuelle avec bouton "A répondu"
+        st.markdown("---")
+        st.markdown("**Marquer comme répondu :**")
+        for contact in due:
+            col_name, col_btn = st.columns([4, 1])
+            with col_name:
+                date_str = contact.get("first_contact_date", "?")
+                email_str = contact.get("email", "—")
+                st.markdown(f"**{contact['name']}** — contacté le {date_str} — `{email_str}`")
+            with col_btn:
+                if st.button("✅ Répondu", key=f"responded_{contact['place_id']}"):
+                    mark_as_responded(contact["place_id"])
+                    st.rerun()

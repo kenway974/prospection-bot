@@ -93,9 +93,23 @@ class Config:
     your_email: str = field(default_factory=lambda: os.getenv("YOUR_EMAIL", ""))
     your_website: str = field(default_factory=lambda: os.getenv("YOUR_WEBSITE", ""))
 
+    # --- Paramètres de filtrage ---
+    min_rating: float = field(
+        default_factory=lambda: float(os.getenv("MIN_RATING", "3.0"))
+    )
+    contact_score_threshold: int = field(
+        default_factory=lambda: int(os.getenv("CONTACT_SCORE_THRESHOLD", "70"))
+    )
+
     # --- Paramètres techniques ---
-    request_timeout: int = 10   # timeout HTTP en secondes pour toutes les requêtes
-    output_dir: str = "output"  # dossier où sont sauvegardés les résultats
+    request_timeout: int = 10
+    output_dir: str = "output"
+    analysis_workers: int = field(
+        default_factory=lambda: int(os.getenv("ANALYSIS_WORKERS", "5"))
+    )
+    followup_delay_days: int = field(
+        default_factory=lambda: int(os.getenv("FOLLOWUP_DELAY_DAYS", "5"))
+    )
 
     def validate(self) -> None:
         """Vérifie que la config minimale est présente. Lève ValueError sinon."""

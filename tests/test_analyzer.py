@@ -18,15 +18,19 @@ from services.analyzer import (
     _check_viewport,
     _check_title,
     _check_meta_description,
-    _check_favicon,
     _check_tracking,
     _check_lead_form,
     _check_free_builder,
     _check_social_links,
     _check_response_time,
+    _check_outdated_site,
     _scrape_email,
     analyze_prospect,
     SLOW_RESPONSE_THRESHOLD_S,
+    CRITICAL_WEIGHT,
+    MAJOR_WEIGHT,
+    MINOR_WEIGHT,
+    CHECK_SOCIAL_LINKS,
 )
 from services.google_maps import Prospect
 
@@ -62,7 +66,8 @@ class TestCheckHttps(unittest.TestCase):
         issues = []
         _check_https("http://example.com", issues)
         self.assertEqual(len(issues), 1)
-        self.assertIn("HTTPS", issues[0])
+        self.assertIn("HTTPS", issues[0][0])
+        self.assertEqual(issues[0][1], CRITICAL_WEIGHT)
 
     def test_https_ok(self):
         issues = []
@@ -76,7 +81,8 @@ class TestCheckResponseTime(unittest.TestCase):
         issues = []
         _check_response_time(SLOW_RESPONSE_THRESHOLD_S + 1, issues)
         self.assertEqual(len(issues), 1)
-        self.assertIn("chargement", issues[0])
+        self.assertIn("chargement", issues[0][0])
+        self.assertEqual(issues[0][1], MAJOR_WEIGHT)
 
     def test_rapide_ok(self):
         issues = []
@@ -91,7 +97,8 @@ class TestCheckViewport(unittest.TestCase):
         issues = []
         _check_viewport(soup, issues)
         self.assertEqual(len(issues), 1)
-        self.assertIn("viewport", issues[0])
+        self.assertIn("viewport", issues[0][0])
+        self.assertEqual(issues[0][1], CRITICAL_WEIGHT)
 
     def test_viewport_present(self):
         soup = make_soup('<html><head><meta name="viewport" content="width=device-width"/></head></html>')
@@ -107,6 +114,7 @@ class TestCheckTitle(unittest.TestCase):
         issues = []
         _check_title(soup, issues)
         self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0][1], MAJOR_WEIGHT)
 
     def test_title_vide(self):
         soup = make_soup("<html><head><title>   </title></head></html>")
@@ -128,26 +136,12 @@ class TestCheckMetaDescription(unittest.TestCase):
         issues = []
         _check_meta_description(soup, issues)
         self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0][1], MINOR_WEIGHT)
 
     def test_meta_desc_presente(self):
         soup = make_soup('<html><head><meta name="description" content="Super description"/></head></html>')
         issues = []
         _check_meta_description(soup, issues)
-        self.assertEqual(len(issues), 0)
-
-
-class TestCheckFavicon(unittest.TestCase):
-
-    def test_favicon_absente(self):
-        soup = make_soup("<html><head></head></html>")
-        issues = []
-        _check_favicon(soup, issues)
-        self.assertEqual(len(issues), 1)
-
-    def test_favicon_presente(self):
-        soup = make_soup('<html><head><link rel="icon" href="/favicon.ico"/></head></html>')
-        issues = []
-        _check_favicon(soup, issues)
         self.assertEqual(len(issues), 0)
 
 
@@ -157,6 +151,7 @@ class TestCheckTracking(unittest.TestCase):
         issues = []
         _check_tracking("<html><body>Bonjour</body></html>", issues)
         self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0][1], CRITICAL_WEIGHT)
 
     def test_gtag_detecte(self):
         issues = []
@@ -181,6 +176,7 @@ class TestCheckLeadForm(unittest.TestCase):
         issues = []
         _check_lead_form(soup, issues)
         self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0][1], CRITICAL_WEIGHT)
 
     def test_formulaire_present(self):
         soup = make_soup('<html><body><form><input type="text"/></form></body></html>')
@@ -201,7 +197,8 @@ class TestCheckFreeBuilder(unittest.TestCase):
         issues = []
         _check_free_builder("https://monsite.wix.com", "", issues)
         self.assertEqual(len(issues), 1)
-        self.assertIn("wix.com", issues[0])
+        self.assertIn("wix.com", issues[0][0])
+        self.assertEqual(issues[0][1], MAJOR_WEIGHT)
 
     def test_wix_dans_html(self):
         issues = []
@@ -214,6 +211,33 @@ class TestCheckFreeBuilder(unittest.TestCase):
         self.assertEqual(len(issues), 0)
 
 
+class TestCheckOutdatedSite(unittest.TestCase):
+
+    def test_copyright_ancien_detecte(self):
+        issues = []
+        _check_outdated_site("© Copyright 2019 Mon Site", issues)
+        self.assertEqual(len(issues), 1)
+        self.assertIn("2019", issues[0][0])
+        self.assertEqual(issues[0][1], MAJOR_WEIGHT)
+
+    def test_copyright_recents_ignore(self):
+        from datetime import datetime
+        current_year = datetime.now().year
+        issues = []
+        _check_outdated_site(f"© {current_year} Mon Site", issues)
+        self.assertEqual(len(issues), 0)
+
+    def test_sans_copyright_ignore(self):
+        issues = []
+        _check_outdated_site("<html><body>Aucune date</body></html>", issues)
+        self.assertEqual(len(issues), 0)
+
+    def test_copyright_html_entity(self):
+        issues = []
+        _check_outdated_site("&copy; 2018 Mon entreprise", issues)
+        self.assertEqual(len(issues), 1)
+
+
 class TestCheckSocialLinks(unittest.TestCase):
 
     def test_pas_de_social(self):
@@ -221,6 +245,7 @@ class TestCheckSocialLinks(unittest.TestCase):
         issues = []
         _check_social_links(soup, issues)
         self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0][1], MINOR_WEIGHT)
 
     def test_facebook_detecte(self):
         soup = make_soup('<html><body><a href="https://facebook.com/mapage">FB</a></body></html>')
@@ -290,7 +315,6 @@ class TestAnalyzeProspect(unittest.TestCase):
             <title>Mon site parfait</title>
             <meta name="description" content="Super description"/>
             <meta name="viewport" content="width=device-width"/>
-            <link rel="icon" href="/favicon.ico"/>
         </head>
         <body>
             <form><input type="email"/></form>
@@ -311,7 +335,7 @@ class TestAnalyzeProspect(unittest.TestCase):
         self.assertEqual(len(result.issues), 0)
 
     def test_score_diminue_avec_problemes(self):
-        """Chaque problème retire 10 points."""
+        """Les problèmes détectés réduisent le score selon leur poids (critique/important/mineur)."""
         html = "<html><head></head><body></body></html>"  # Plein de problèmes
         mock_resp = MagicMock()
         mock_resp.text = html
@@ -323,6 +347,60 @@ class TestAnalyzeProspect(unittest.TestCase):
 
         self.assertLess(result.score, 100)
         self.assertGreater(len(result.issues), 0)
+
+    def test_weight_override_applique(self):
+        """weight_overrides doit surcharger le poids d'un check spécifique."""
+        soup = make_soup("<html><body><a href='/contact'>Contact</a></body></html>")
+        issues_default = []
+        issues_override = []
+        _check_social_links(soup, issues_default)
+        _check_social_links(soup, issues_override, weight=CRITICAL_WEIGHT)
+        self.assertEqual(issues_default[0][1], MINOR_WEIGHT)
+        self.assertEqual(issues_override[0][1], CRITICAL_WEIGHT)
+
+    def test_score_ponderation_critique_plus_fort(self):
+        """Un site avec des problèmes critiques doit avoir un score plus bas qu'un site avec des problèmes mineurs."""
+        # Site avec seulement des problèmes mineurs (meta desc + social)
+        html_mineur = """
+        <html>
+        <head>
+            <title>Mon site</title>
+            <meta name="viewport" content="width=device-width"/>
+        </head>
+        <body>
+            <form><input type="email"/></form>
+            <script>gtag('config', 'UA-XXXXX')</script>
+        </body>
+        </html>
+        """
+        # Site avec seulement un problème critique (pas de tracking)
+        html_critique = """
+        <html>
+        <head>
+            <title>Mon site</title>
+            <meta name="description" content="Description"/>
+            <meta name="viewport" content="width=device-width"/>
+        </head>
+        <body>
+            <form><input type="email"/></form>
+            <a href="https://facebook.com/page">FB</a>
+        </body>
+        </html>
+        """
+        mock_mineur = MagicMock()
+        mock_mineur.text = html_mineur
+        mock_critique = MagicMock()
+        mock_critique.text = html_critique
+
+        p1 = make_prospect(website="https://site-mineur.fr")
+        p2 = make_prospect(website="https://site-critique.fr")
+
+        with patch("services.analyzer._fetch", return_value=(mock_mineur, 0.5)):
+            result_mineur = analyze_prospect(p1)
+        with patch("services.analyzer._fetch", return_value=(mock_critique, 0.5)):
+            result_critique = analyze_prospect(p2)
+
+        self.assertLess(result_critique.score, result_mineur.score)
 
 
 if __name__ == "__main__":

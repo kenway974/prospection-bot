@@ -216,3 +216,55 @@ def enrich_with_email(prospect: Prospect) -> Prospect:
     prospect.email_draft = draft_email(prospect)
     logger.debug("  ✉️  Brouillon généré pour %s.", prospect.name)
     return prospect
+
+
+# ---------------------------------------------------------------------------
+# Email de relance
+# ---------------------------------------------------------------------------
+
+def draft_followup_email(prospect: Prospect) -> str:
+    """
+    Email de relance court envoyé ~5 jours après le premier contact sans réponse.
+    Ton plus direct, recentré sur le problème principal.
+    """
+    name = prospect.name
+
+    if not prospect.has_website():
+        issue_context = "l'absence de site web pour votre établissement"
+    elif prospect.issues:
+        issue_context = prospect.issues[0].split("→")[0].strip().lower()
+    else:
+        issue_context = "votre présence en ligne"
+
+    subject = f"{name} — suite à mon message"
+
+    signature_parts = [config.your_name, config.your_title]
+    if config.your_email:
+        signature_parts.append(config.your_email)
+    signature = "\n".join(filter(None, signature_parts))
+
+    parts = [
+        f"OBJET : {subject}",
+        "",
+        "Bonjour,",
+        "",
+        f"Je me permets de revenir vers vous suite à mon message de la semaine dernière "
+        f"concernant {issue_context}.",
+        "",
+        "Je sais que votre agenda est chargé — si vous n'êtes pas intéressé(e), "
+        "un simple retour suffit et je n'insisterai pas.",
+        "",
+        "Sinon, 15 minutes suffisent pour faire le point ensemble, sans engagement.",
+        "",
+        "Bonne journée,",
+        "",
+        signature,
+    ]
+    return "\n".join(parts).strip()
+
+
+def enrich_with_followup(prospect: Prospect) -> Prospect:
+    """Remplace le brouillon existant par un email de relance."""
+    prospect.email_draft = draft_followup_email(prospect)
+    logger.debug("  🔄 Email de relance généré pour %s.", prospect.name)
+    return prospect
