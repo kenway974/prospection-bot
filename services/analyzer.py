@@ -54,6 +54,9 @@ CHECK_LEAD_FORM      = "lead_form"
 CHECK_FREE_BUILDER   = "free_builder"
 CHECK_SOCIAL_LINKS   = "social_links"
 CHECK_OUTDATED       = "outdated"
+# Checks métier — coursier/livreur
+CHECK_DELIVERY_COVERED = "delivery_covered"  # livraison déjà gérée → opportunité réduite
+CHECK_LOW_VOLUME       = "low_volume"         # peu d'avis → activité faible
 
 _DEFAULT_WEIGHTS: Dict[str, int] = {
     CHECK_HTTPS:         CRITICAL_WEIGHT,
@@ -66,6 +69,9 @@ _DEFAULT_WEIGHTS: Dict[str, int] = {
     CHECK_FREE_BUILDER:  MAJOR_WEIGHT,
     CHECK_SOCIAL_LINKS:  MINOR_WEIGHT,
     CHECK_OUTDATED:      MAJOR_WEIGHT,
+    # Checks métier inactifs par défaut (activés via check_weight_overrides dans les profils)
+    CHECK_DELIVERY_COVERED: 0,
+    CHECK_LOW_VOLUME:       0,
 }
 
 # Type interne : liste de (message, poids)
@@ -81,6 +87,17 @@ _FREE_BUILDERS = (
 _TRACKING_SIGNATURES = (
     "gtag(", "ga(", "fbq(", "google-analytics",
     "googletagmanager", "GTM-", "hotjar", "clarity.ms",
+)
+
+# Mots-clés et plateformes indiquant que la livraison est déjà couverte
+_DELIVERY_KEYWORDS = (
+    "livraison", "livrer", "nous livrons", "click and collect",
+    "commander en ligne", "commandez en ligne", "order online",
+    "à domicile", "livré chez vous", "livraison gratuite",
+)
+_DELIVERY_PLATFORMS = (
+    "ubereats", "uber eats", "deliveroo", "just-eat", "justeat",
+    "just eat", "glovo", "stuart", "lyveat", "takeaway",
 )
 
 # Domaines des réseaux sociaux principaux
@@ -238,6 +255,24 @@ def _check_social_links(soup: BeautifulSoup, issues: _IssueList, weight: int = M
         ))
 
 
+def _check_delivery_covered(
+    soup: BeautifulSoup, html: str, issues: _IssueList, weight: int = CRITICAL_WEIGHT,
+) -> None:
+    """Détecte si l'établissement propose déjà de la livraison (propre ou via plateforme)."""
+    if weight == 0:
+        return
+    text = soup.get_text().lower()
+    hrefs = " ".join(a.get("href", "").lower() for a in soup.find_all("a", href=True))
+    combined = text + " " + hrefs + " " + html.lower()
+    if any(kw in combined for kw in _DELIVERY_KEYWORDS) or \
+       any(p in combined for p in _DELIVERY_PLATFORMS):
+        issues.append((
+            "Livraison déjà gérée (service propre ou plateforme tierce) "
+            "→ opportunité réduite pour un coursier externe",
+            weight,
+        ))
+
+
 def _check_outdated_site(html: str, issues: _IssueList, weight: int = MAJOR_WEIGHT) -> None:
     """Copyright trop ancien = site non maintenu → opportunité de refonte."""
     current_year = datetime.now().year
@@ -361,16 +396,26 @@ def analyze_prospect(
     weighted_issues: _IssueList = []
 
     # Cas 3 : site accessible → lancement des 10 checks pondérés
-    _check_https(url, weighted_issues,           weights[CHECK_HTTPS])
-    _check_response_time(elapsed, weighted_issues, weights[CHECK_RESPONSE_TIME])
-    _check_viewport(soup, weighted_issues,        weights[CHECK_VIEWPORT])
-    _check_title(soup, weighted_issues,           weights[CHECK_TITLE])
-    _check_meta_description(soup, weighted_issues, weights[CHECK_META_DESC])
-    _check_tracking(html, weighted_issues,        weights[CHECK_TRACKING])
-    _check_lead_form(soup, weighted_issues,       weights[CHECK_LEAD_FORM])
+    _check_https(url, weighted_issues,              weights[CHECK_HTTPS])
+    _check_response_time(elapsed, weighted_issues,  weights[CHECK_RESPONSE_TIME])
+    _check_viewport(soup, weighted_issues,          weights[CHECK_VIEWPORT])
+    _check_title(soup, weighted_issues,             weights[CHECK_TITLE])
+    _check_meta_description(soup, weighted_issues,  weights[CHECK_META_DESC])
+    _check_tracking(html, weighted_issues,          weights[CHECK_TRACKING])
+    _check_lead_form(soup, weighted_issues,         weights[CHECK_LEAD_FORM])
     _check_free_builder(url, html, weighted_issues, weights[CHECK_FREE_BUILDER])
-    _check_social_links(soup, weighted_issues,    weights[CHECK_SOCIAL_LINKS])
-    _check_outdated_site(html, weighted_issues,   weights[CHECK_OUTDATED])
+    _check_social_links(soup, weighted_issues,      weights[CHECK_SOCIAL_LINKS])
+    _check_outdated_site(html, weighted_issues,     weights[CHECK_OUTDATED])
+    _check_delivery_covered(soup, html, weighted_issues, weights[CHECK_DELIVERY_COVERED])
+
+    # Check volume d'activité (données Google, pas HTML)
+    low_vol_weight = weights.get(CHECK_LOW_VOLUME, 0)
+    if low_vol_weight > 0 and prospect.user_ratings_total < 30:
+        weighted_issues.append((
+            f"Peu d'avis Google ({prospect.user_ratings_total}) "
+            "→ activité faible, retour sur investissement incertain",
+            low_vol_weight,
+        ))
 
     # Scraping de l'email de contact
     email = _scrape_email(url, soup)

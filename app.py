@@ -277,11 +277,20 @@ with col2:
         min_value=1.0, max_value=5.0, value=3.0, step=0.5,
         help="Les établissements en dessous de cette note sont ignorés (probablement en difficulté)",
     )
-    score_threshold = st.slider(
-        "Score max à contacter",
-        min_value=0, max_value=100, value=100,
-        help="100 = tous les prospects. Baisse pour ne garder que les sites avec beaucoup de problèmes.",
-    )
+    _score_dir = selected_profile.score_direction
+    _score_default = selected_profile.score_threshold_default
+    if _score_dir == "desc":
+        score_threshold = st.slider(
+            "Score min requis",
+            min_value=0, max_value=100, value=_score_default,
+            help="Score élevé = bonne opportunité. Ex coursier : 70 = exclure les établissements déjà bien couverts en livraison.",
+        )
+    else:
+        score_threshold = st.slider(
+            "Score max à contacter",
+            min_value=0, max_value=100, value=_score_default,
+            help="100 = tous les prospects. Baisse pour ne garder que les sites avec beaucoup de problèmes.",
+        )
     radius = st.select_slider(
         "Rayon de recherche",
         options=[1000, 2000, 5000, 10000, 20000, 50000],
@@ -370,9 +379,10 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
 
         os.makedirs(c.output_dir, exist_ok=True)
 
-        target_per_kw = params["max_results"]
-        min_rating    = params.get("min_rating", 3.0)
-        threshold     = params.get("contact_score_threshold", 100)
+        target_per_kw   = params["max_results"]
+        min_rating      = params.get("min_rating", 3.0)
+        threshold       = params.get("contact_score_threshold", 100)
+        score_direction = params.get("score_direction", "asc")
         weight_overrides = params.get("weight_overrides", {})
         already_contacted = load_contacted_ids()
 
@@ -417,7 +427,11 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
 
                 analyzed = analyze_prospect(prospect, weight_overrides)
 
-                if analyzed.score <= threshold:
+                qualifies = (
+                    analyzed.score >= threshold if score_direction == "desc"
+                    else analyzed.score <= threshold
+                )
+                if qualifies:
                     kw_qualified.append(analyzed)
                     log_q.put(
                         f"[--] ✅ [{len(kw_qualified)}/{target_per_kw}] {prospect.name}"
@@ -430,7 +444,11 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             if found < target_per_kw:
                 reasons = []
                 if skip_contacted: reasons.append(f"{skip_contacted} déjà contacté(s)")
-                if skip_score:     reasons.append(f"{skip_score} site(s) trop bon(s) pour le seuil ({threshold}/100)")
+                if skip_score:
+                    if score_direction == "desc":
+                        reasons.append(f"{skip_score} établissement(s) déjà couverts (score < {threshold}/100)")
+                    else:
+                        reasons.append(f"{skip_score} site(s) trop bon(s) pour le seuil ({threshold}/100)")
                 if skip_rating:    reasons.append(f"{skip_rating} note(s) Google trop basse(s) (< {min_rating}⭐)")
                 if skip_api:       reasons.append(f"{skip_api} erreur(s) API Google")
                 if skip_seen:      reasons.append(f"{skip_seen} doublon(s) inter-mots-clés")
@@ -447,7 +465,8 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         all_prospects = [enrich_with_email(p) for p in all_prospects]
 
         # 4. Tri
-        all_prospects.sort(key=lambda p: p.score)
+        reverse_sort = (score_direction == "desc")
+        all_prospects.sort(key=lambda p: p.score, reverse=reverse_sort)
 
         # 5. Sauvegarde locale
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -541,6 +560,7 @@ if launch and not st.session_state.running:
         "profile_id": selected_profile.id,
         "profile_name": f"{selected_profile.emoji} {selected_profile.name}",
         "weight_overrides": selected_profile.check_weight_overrides,
+        "score_direction": selected_profile.score_direction,
         "min_rating": min_rating,
         "contact_score_threshold": score_threshold,
         "analysis_workers": int(os.getenv("ANALYSIS_WORKERS", "5")),

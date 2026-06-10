@@ -28,6 +28,10 @@ class Profile:
     check_weight_overrides: dict = field(default_factory=dict)  # Poids spécifiques à ce profil
     radius: int = 10000
     max_results: int = 5
+    # "asc" = score bas = bon prospect (défaut, web dev)
+    # "desc" = score haut = bon prospect (ex: coursier — score 100 = pas de livraison = opportunité)
+    score_direction: str = "asc"
+    score_threshold_default: int = 100
 
 
 PROFILES: List[Profile] = [
@@ -60,7 +64,7 @@ PROFILES: List[Profile] = [
         id="coursier",
         emoji="🚚",
         name="Coursier / Livreur",
-        description="Cible les commerces locaux qui pourraient externaliser leur livraison.",
+        description="Cible les commerces locaux sans solution de livraison externe (score haut = bonne opportunité).",
         keywords=["épicerie", "pharmacie", "restaurant", "traiteur", "boucherie", "fleuriste"],
         location="Paris, France",
         your_title="Service de livraison express",
@@ -72,10 +76,21 @@ PROFILES: List[Profile] = [
         ),
         sms_hook="Coursier indépendant disponible pour vos livraisons express. Tarifs compétitifs. Intéressé ?",
         qualification_criteria=[
-            "Commerce de proximité",
-            "Pas de mention de livraison sur le site",
-            "Présence d'une boutique physique",
+            "Commerce de proximité sans livraison déjà en place",
+            "Pas de référencement sur UberEats/Deliveroo/JustEat",
+            "Activité suffisante (>30 avis Google)",
         ],
+        score_direction="desc",
+        score_threshold_default=70,
+        check_weight_overrides={
+            # Désactiver tous les checks web dev (non pertinents pour un coursier)
+            "https": 0, "response_time": 0, "viewport": 0, "title": 0,
+            "meta_description": 0, "tracking": 0, "lead_form": 0,
+            "free_builder": 0, "social_links": 0, "outdated": 0,
+            # Activer les checks coursier
+            "delivery_covered": 15,
+            "low_volume": 10,
+        },
     ),
 
     Profile(
