@@ -288,6 +288,21 @@ def _check_outdated_site(html: str, issues: _IssueList, weight: int = MAJOR_WEIG
 
 
 # ---------------------------------------------------------------------------
+# Vérification MX d'email
+# ---------------------------------------------------------------------------
+
+def _verify_email_mx(email: str) -> bool:
+    """Retourne True si le domaine email a au moins un enregistrement MX valide."""
+    try:
+        import dns.resolver
+        domain = email.split("@", 1)[1]
+        dns.resolver.resolve(domain, "MX")
+        return True
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Scraping d'email
 # ---------------------------------------------------------------------------
 
@@ -319,7 +334,7 @@ def _scrape_email(url: str, soup: BeautifulSoup) -> Optional[str]:
 
     # Tentative 1 : page principale
     email = _extract(str(soup))
-    if email:
+    if email and _verify_email_mx(email):
         return email
 
     # Tentative 2 : pages de contact courantes
@@ -334,7 +349,7 @@ def _scrape_email(url: str, soup: BeautifulSoup) -> Optional[str]:
             )
             if resp.ok:
                 email = _extract(resp.text)
-                if email:
+                if email and _verify_email_mx(email):
                     return email
         except requests.RequestException:
             continue
