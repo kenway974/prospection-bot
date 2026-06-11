@@ -57,6 +57,8 @@ CHECK_OUTDATED       = "outdated"
 # Checks métier — coursier/livreur
 CHECK_DELIVERY_COVERED = "delivery_covered"  # livraison déjà gérée → opportunité réduite
 CHECK_LOW_VOLUME       = "low_volume"         # peu d'avis → activité faible
+# Check performance mobile via Lighthouse
+CHECK_PAGESPEED        = "pagespeed"
 
 _DEFAULT_WEIGHTS: Dict[str, int] = {
     CHECK_HTTPS:         CRITICAL_WEIGHT,
@@ -72,6 +74,8 @@ _DEFAULT_WEIGHTS: Dict[str, int] = {
     # Checks métier inactifs par défaut (activés via check_weight_overrides dans les profils)
     CHECK_DELIVERY_COVERED: 0,
     CHECK_LOW_VOLUME:       0,
+    # PageSpeed actif par défaut (nécessite GOOGLE_PLACES_API_KEY, skip si absente)
+    CHECK_PAGESPEED: MAJOR_WEIGHT,
 }
 
 # Type interne : liste de (message, poids)
@@ -255,6 +259,39 @@ def _check_social_links(soup: BeautifulSoup, issues: _IssueList, weight: int = M
         ))
 
 
+def _check_pagespeed(url: str, issues: _IssueList, weight: int = MAJOR_WEIGHT) -> None:
+    """Score Lighthouse mobile via l'API Google PageSpeed Insights.
+    Skip silencieusement si la clé API est absente ou si l'API répond mal."""
+    if weight == 0 or not config.google_api_key:
+        return
+    try:
+        resp = requests.get(
+            "https://www.googleapis.com/pagespeedonline/v5/runPagespeed",
+            params={"url": url, "strategy": "mobile", "key": config.google_api_key},
+            timeout=30,
+        )
+        if not resp.ok:
+            logger.debug("    ⚠️  PageSpeed API HTTP %d pour %s", resp.status_code, url)
+            return
+        score = int(resp.json()["lighthouseResult"]["categories"]["performance"]["score"] * 100)
+        if score < 50:
+            issues.append((
+                f"Performance mobile mauvaise (PageSpeed : {score}/100) "
+                "→ site très lent sur smartphone, pénalité SEO Core Web Vitals",
+                weight,
+            ))
+        elif score < 70:
+            issues.append((
+                f"Performance mobile moyenne (PageSpeed : {score}/100) "
+                "→ optimisations nécessaires (images, JS, CSS)",
+                MINOR_WEIGHT,
+            ))
+        else:
+            logger.debug("    ✅ PageSpeed mobile OK : %d/100 pour %s", score, url)
+    except (requests.RequestException, KeyError, ValueError, TypeError) as exc:
+        logger.debug("    ⚠️  PageSpeed API indisponible pour %s : %s", url, exc)
+
+
 def _check_delivery_covered(
     soup: BeautifulSoup, html: str, issues: _IssueList, weight: int = CRITICAL_WEIGHT,
 ) -> None:
@@ -422,6 +459,7 @@ def analyze_prospect(
     _check_social_links(soup, weighted_issues,      weights[CHECK_SOCIAL_LINKS])
     _check_outdated_site(html, weighted_issues,     weights[CHECK_OUTDATED])
     _check_delivery_covered(soup, html, weighted_issues, weights[CHECK_DELIVERY_COVERED])
+    _check_pagespeed(url, weighted_issues,          weights[CHECK_PAGESPEED])
 
     # Check volume d'activité (données Google, pas HTML)
     low_vol_weight = weights.get(CHECK_LOW_VOLUME, 0)
