@@ -29,6 +29,7 @@ from bs4 import BeautifulSoup
 
 from config import config, logger
 from services.google_maps import Prospect
+from services import cache as _cache
 
 
 # ---------------------------------------------------------------------------
@@ -430,6 +431,16 @@ def analyze_prospect(
         return prospect
 
     url = prospect.website
+
+    # Cache hit — évite de refaire fetch + checks pour un site déjà analysé (<30 j)
+    cached = _cache.get_cached(url)
+    if cached:
+        prospect.issues = cached["issues"]
+        prospect.score  = cached["score"]
+        prospect.email  = cached.get("email")
+        logger.info("  ⚡ %s — résultat en cache (score %d/100)", prospect.name, prospect.score)
+        return prospect
+
     logger.info("  🔬 Analyse de %s (%s)…", prospect.name, url)
 
     resp, elapsed = _fetch(url)
@@ -489,5 +500,8 @@ def analyze_prospect(
     )
     for i, (msg, weight) in enumerate(weighted_issues, 1):
         logger.debug("      %d. [-%d pts] %s", i, weight, msg)
+
+    # Mise en cache du résultat (évite de refaire l'analyse dans les 30 prochains jours)
+    _cache.set_cached(url, prospect.issues, prospect.score, prospect.email)
 
     return prospect
