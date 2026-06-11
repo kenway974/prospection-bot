@@ -322,6 +322,10 @@ with col2:
     send_sms_toggle = st.toggle("📱 Envoyer les SMS auto", value=False)
     if send_sms_toggle:
         st.warning("⚠️ Seuls les numéros mobiles (06/07) recevront un SMS.")
+    cache_ttl_days = st.slider(
+        "⚡ Cache analyses (jours)", 1, 90, 30,
+        help="Durée de validité : un site analysé il y a moins de X jours ne sera pas réanalysé.",
+    )
 
 st.markdown("---")
 
@@ -395,6 +399,8 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         from services.mailer import enrich_with_email
         from services.crm import get_exporter
         from history_manager import load_contacted_ids, mark_as_contacted
+        from services import cache as _cache_mod
+        _cache_mod.set_ttl(params.get("cache_ttl_days", 30))
 
         os.makedirs(c.output_dir, exist_ok=True)
 
@@ -595,6 +601,7 @@ if launch and not st.session_state.running:
         "gmail_address": gmail_address,
         "gmail_password": gmail_password,
         "send_sms": send_sms_toggle,
+        "cache_ttl_days": cache_ttl_days,
     }
 
     thread = threading.Thread(
@@ -872,6 +879,26 @@ with st.expander("🗂️ Historique des contacts"):
             if os.path.exists(history_path):
                 os.remove(history_path)
             st.success("Historique effacé. Le prochain run reprospecttra depuis zéro.")
+            st.rerun()
+
+# ---------------------------------------------------------------------------
+# Cache d'analyse
+# ---------------------------------------------------------------------------
+st.markdown("---")
+with st.expander("⚡ Cache d'analyse (performances)"):
+    from services import cache as _analysis_cache
+    st.caption(
+        "Les analyses récentes sont mises en cache pour éviter de refaire "
+        "les appels HTTP et PageSpeed pour les mêmes sites."
+    )
+    n_cached = _analysis_cache.count()
+    col_c1, col_c2 = st.columns([3, 1])
+    with col_c1:
+        st.write(f"**{n_cached}** site(s) actuellement en cache.")
+    with col_c2:
+        if st.button("🗑️ Vider", key="clear_cache", use_container_width=True, disabled=(n_cached == 0)):
+            deleted = _analysis_cache.clear_all()
+            st.success(f"✅ {deleted} entrée(s) supprimée(s).")
             st.rerun()
 
 # ---------------------------------------------------------------------------
