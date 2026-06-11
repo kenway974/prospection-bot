@@ -70,6 +70,21 @@ class Prospect:
 # ---------------------------------------------------------------------------
 
 BASE_URL = "https://maps.googleapis.com/maps/api"
+
+
+def _normalize_phone(raw: Optional[str]) -> Optional[str]:
+    """Normalise un numéro au format national français (0X XX XX XX XX).
+    Fallback silencieux sur la valeur brute si phonenumbers est indisponible ou invalide."""
+    if not raw:
+        return None
+    try:
+        import phonenumbers
+        parsed = phonenumbers.parse(raw, "FR")
+        if phonenumbers.is_valid_number(parsed):
+            return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.NATIONAL)
+    except Exception:
+        pass
+    return raw
 # Google Places Text Search renvoie max 3 pages × 20 = 60 résultats par requête
 GOOGLE_MAX_RESULTS = 60
 
@@ -150,7 +165,7 @@ def build_prospect(raw: dict, keyword: str) -> Optional[Prospect]:
         place_id=place_id,
         name=details.get("name", raw.get("name", "Inconnu")),
         address=details.get("formatted_address", raw.get("formatted_address", "")),
-        phone=details.get("formatted_phone_number"),
+        phone=_normalize_phone(details.get("formatted_phone_number")),
         website=details.get("website"),
         rating=details.get("rating"),
         user_ratings_total=details.get("user_ratings_total", 0),
