@@ -8,7 +8,9 @@ import os
 import queue
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from functools import partial
 from typing import Optional
 
 import streamlit as st
@@ -414,6 +416,8 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         all_qualified: list = []
         seen: set = set()
 
+        workers = params.get("analysis_workers", 5)
+
         # Boucle principale : pour chaque mot-clé, cherche jusqu'à target_per_kw qualifiés
         for kw in params["keywords"]:
             log_q.put(f"[--] 🔍 Recherche '{kw}' — objectif {target_per_kw} qualifiés…")
@@ -423,13 +427,13 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                 log_q.put(f"[--] ❌ Aucun résultat Google pour '{kw}' — vérifiez le mot-clé ou la zone.")
                 continue
 
-            kw_qualified: list = []
             skip_contacted = skip_seen = skip_api = skip_rating = skip_score = 0
 
+            # Phase 1 — pré-filtre : dédup + collecte des bruts (buffer = 4× quota)
+            raw_to_build: list = []
             for raw in raw_candidates:
-                if len(kw_qualified) >= target_per_kw:
+                if len(raw_to_build) >= target_per_kw * 4:
                     break
-
                 place_id = raw.get("place_id", "")
                 if not place_id:
                     continue
@@ -440,26 +444,53 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                     skip_contacted += 1
                     continue
                 seen.add(place_id)
+                raw_to_build.append(raw)
 
-                prospect = build_prospect(raw, kw)
-                if not prospect:
+            if not raw_to_build:
+                log_q.put(f"[--] ⚠️  0/{target_per_kw} qualifiés pour '{kw}' → tous déjà contactés ou vus.")
+                continue
+
+            # Phase 2 — Place Details en parallèle
+            n_workers = min(workers, len(raw_to_build))
+            with ThreadPoolExecutor(max_workers=n_workers) as ex:
+                built_list = list(ex.map(partial(build_prospect, keyword=kw), raw_to_build))
+
+            candidates: list = []
+            for p in built_list:
+                if p is None:
                     skip_api += 1
-                    continue
-
-                if prospect.rating is not None and prospect.rating < min_rating:
+                elif p.rating is not None and p.rating < min_rating:
                     skip_rating += 1
-                    continue
+                else:
+                    candidates.append(p)
 
-                analyzed = analyze_prospect(prospect, weight_overrides)
+            if not candidates:
+                reasons = []
+                if skip_api:     reasons.append(f"{skip_api} erreur(s) API")
+                if skip_rating:  reasons.append(f"{skip_rating} note(s) trop basse(s)")
+                reason_str = " | ".join(reasons) if reasons else "Google épuisé"
+                log_q.put(f"[--] ⚠️  0/{target_per_kw} qualifiés pour '{kw}' → {reason_str}.")
+                continue
 
+            # Phase 3 — Analyse des sites en parallèle (fetch + PageSpeed + email)
+            candidates = candidates[:target_per_kw * 3]
+            with ThreadPoolExecutor(max_workers=min(workers, len(candidates))) as ex:
+                analyzed_list = list(ex.map(
+                    partial(analyze_prospect, weight_overrides=weight_overrides),
+                    candidates,
+                ))
+
+            # Phase 4 — filtre par score
+            kw_qualified: list = []
+            for analyzed in analyzed_list:
                 qualifies = (
                     analyzed.score >= threshold if score_direction == "desc"
                     else analyzed.score <= threshold
                 )
-                if qualifies:
+                if qualifies and len(kw_qualified) < target_per_kw:
                     kw_qualified.append(analyzed)
                     log_q.put(
-                        f"[--] ✅ [{len(kw_qualified)}/{target_per_kw}] {prospect.name}"
+                        f"[--] ✅ [{len(kw_qualified)}/{target_per_kw}] {analyzed.name}"
                         f" — score {analyzed.score}/100"
                     )
                 else:
