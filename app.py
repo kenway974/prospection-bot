@@ -218,6 +218,20 @@ with st.sidebar:
         placeholder="xsmtpsib-...",
         label_visibility="collapsed",
     )
+    with st.expander("ℹ️ Comment créer cette clé ?"):
+        st.markdown("""
+1. Connecte-toi sur [app.brevo.com](https://app.brevo.com)
+2. Clique sur ton **avatar** en haut à droite → **SMTP & API**
+3. Onglet **API Keys** → **Générer une nouvelle clé API**
+4. Donne-lui un nom → copie la clé (`xsmtpsib-…`)
+""")
+    with st.expander("ℹ️ Comment créer cette clé ?"):
+        st.markdown("""
+1. Connecte-toi sur [app.brevo.com](https://app.brevo.com)
+2. Clique sur ton **avatar** en haut à droite → **SMTP & API**
+3. Onglet **API Keys** → **Générer une nouvelle clé API**
+4. Donne-lui un nom → copie la clé (`xsmtpsib-…`)
+""")
 
     st.markdown("---")
     st.markdown("### 📧 Gmail (optionnel)")
@@ -241,6 +255,15 @@ with st.sidebar:
         placeholder="xxxx xxxx xxxx xxxx",
         label_visibility="collapsed",
     )
+    with st.expander("ℹ️ Comment créer un mot de passe d'application ?"):
+        st.markdown("""
+1. Va sur [myaccount.google.com/security](https://myaccount.google.com/security)
+2. Active la **Validation en 2 étapes** si ce n'est pas déjà fait
+3. Recherche **"Mots de passe des applications"** dans la barre de recherche de ton compte Google
+4. Sélectionne **Autre (nom personnalisé)** → entre "ProspectionBot" → **Générer**
+5. Copie le mot de passe à 16 caractères (`xxxx xxxx xxxx xxxx`)
+6. ⚠️ Entre TON adresse Gmail dans le champ "Adresse Gmail" ci-dessus
+""")
 
     st.markdown("---")
     st.markdown("### 👤 Ta signature")
