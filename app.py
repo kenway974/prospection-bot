@@ -124,6 +124,8 @@ _init_state()
 from services import scheduler as _scheduler
 _scheduler.ensure_running()
 
+# Démarrage du suivi de réponses IMAP (démarré plus tard après lecture des credentials)
+
 # Chargement des paramètres sauvegardés (fallback sur env vars, puis "")
 from settings_manager import load_settings as _load_settings, save_settings as _save_settings
 _saved = _load_settings()
@@ -274,6 +276,14 @@ with st.sidebar:
     your_website = st.text_input("Ton site", value=_get("your_website", "YOUR_WEBSITE"))
 
     st.markdown("---")
+
+    # Démarrage auto du suivi de réponses si credentials présents
+    _rt_addr = _get("gmail_address", "GMAIL_ADDRESS")
+    _rt_pwd  = os.getenv("GMAIL_APP_PASSWORD", "")
+    if _rt_addr and _rt_pwd:
+        from services import reply_tracker as _rt
+        _rt.ensure_running(_rt_addr, _rt_pwd)
+
     st.caption("🔒 Tes clés restent sur ta machine. Rien n'est envoyé à l'extérieur.")
 
 
@@ -1058,6 +1068,29 @@ with st.expander("📬 Emails programmés"):
         st.info(f"⏰ {_stats['pending']} email(s) en attente d'envoi — le thread vérifie toutes les 60 secondes.")
     elif _stats["total"] == 0:
         st.caption("Aucun email programmé pour l'instant.")
+
+# ---------------------------------------------------------------------------
+# Suivi de réponses
+# ---------------------------------------------------------------------------
+st.markdown("---")
+with st.expander("📬 Suivi des réponses (IMAP)"):
+    from services import reply_tracker as _rt_ui
+    _rt_running = _rt_ui.is_running()
+    if _rt_running:
+        st.success("✅ Suivi actif — vérifie les réponses Gmail toutes les 5 minutes.")
+    elif gmail_address and gmail_password:
+        _rt_ui.ensure_running(gmail_address, gmail_password)
+        st.info("⏳ Thread de suivi en cours de démarrage…")
+    else:
+        st.info("💡 Renseigne ton adresse Gmail et ton mot de passe d'application pour activer le suivi automatique des réponses.")
+    from history_manager import _load_contacted_data as _lcd
+    _cdata = _lcd()
+    _responded = sum(1 for v in _cdata.values() if v.get("responded"))
+    _total_c   = len(_cdata)
+    if _total_c:
+        col_rt1, col_rt2 = st.columns(2)
+        col_rt1.metric("Prospects contactés", _total_c)
+        col_rt2.metric("Réponses reçues", _responded)
 
 # ---------------------------------------------------------------------------
 # Cache d'analyse
