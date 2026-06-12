@@ -946,7 +946,7 @@ if st.session_state.prospects:
     st.markdown("### 💾 Export")
 
     import csv, io
-    col_e1, col_e2 = st.columns(2)
+    col_e1, col_e2, col_e3 = st.columns(3)
 
     with col_e1:
         json_data = json.dumps([p.to_dict() for p in filtered], ensure_ascii=False, indent=2)
@@ -961,7 +961,7 @@ if st.session_state.prospects:
     with col_e2:
         csv_buffer = io.StringIO()
         fieldnames = ["name", "keyword", "address", "phone", "email", "website",
-                      "rating", "score", "issues_count", "issues_summary", "maps_url"]
+                      "cms", "rating", "score", "issues_count", "issues_summary", "maps_url"]
         writer = csv.DictWriter(csv_buffer, fieldnames=fieldnames)
         writer.writeheader()
         for p in filtered:
@@ -972,6 +972,7 @@ if st.session_state.prospects:
                 "phone": p.phone or "",
                 "email": p.email or "",
                 "website": p.website or "",
+                "cms": p.cms or "",
                 "rating": p.rating or "",
                 "score": p.score,
                 "issues_count": len(p.issues),
@@ -979,12 +980,77 @@ if st.session_state.prospects:
                 "maps_url": p.maps_url,
             })
         st.download_button(
-            label="⬇️ Télécharger CSV (Excel)",
+            label="⬇️ Télécharger CSV",
             data=csv_buffer.getvalue().encode("utf-8-sig"),
             file_name=f"prospects_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv",
             use_container_width=True,
         )
+
+    with col_e3:
+        try:
+            import openpyxl
+            from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+            from openpyxl.utils import get_column_letter
+
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Prospects"
+
+            headers = ["Nom", "Mot-clé", "Adresse", "Téléphone", "Email",
+                       "Site", "CMS", "Note ⭐", "Score", "Nb problèmes", "Problèmes (top 3)", "Google Maps"]
+            col_widths = [30, 15, 40, 15, 32, 40, 12, 8, 8, 12, 70, 50]
+
+            header_fill = PatternFill(start_color="4F46E5", end_color="4F46E5", fill_type="solid")
+            header_font = Font(color="FFFFFF", bold=True)
+            thin_border = Border(
+                left=Side(style="thin"), right=Side(style="thin"),
+                top=Side(style="thin"), bottom=Side(style="thin"),
+            )
+
+            for ci, (h, w) in enumerate(zip(headers, col_widths), 1):
+                cell = ws.cell(row=1, column=ci, value=h)
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                cell.border = thin_border
+                ws.column_dimensions[get_column_letter(ci)].width = w
+            ws.row_dimensions[1].height = 20
+
+            fill_green  = PatternFill(start_color="D1FAE5", end_color="D1FAE5", fill_type="solid")
+            fill_yellow = PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid")
+            fill_red    = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+
+            for ri, p in enumerate(filtered, 2):
+                score_fill = fill_green if p.score >= 70 else (fill_yellow if p.score >= 40 else fill_red)
+                row_vals = [
+                    p.name, p.keyword, p.address, p.phone or "",
+                    p.email or "", p.website or "", p.cms or "",
+                    p.rating or "", p.score, len(p.issues),
+                    " | ".join(p.issues[:3]), p.maps_url,
+                ]
+                for ci, val in enumerate(row_vals, 1):
+                    cell = ws.cell(row=ri, column=ci, value=val)
+                    cell.border = thin_border
+                    cell.alignment = Alignment(vertical="center", wrap_text=(ci == 11))
+                    if ci == 9:  # Score
+                        cell.fill = score_fill
+                        cell.font = Font(bold=True)
+
+            ws.freeze_panes = "A2"
+
+            _xls_buf = io.BytesIO()
+            wb.save(_xls_buf)
+            st.download_button(
+                label="⬇️ Télécharger Excel",
+                data=_xls_buf.getvalue(),
+                file_name=f"prospects_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+        except ImportError:
+            st.button("⬇️ Excel — installe openpyxl", disabled=True, use_container_width=True)
+            st.caption("`pip install openpyxl`")
 
 # ---------------------------------------------------------------------------
 # Sauvegarde profil custom
