@@ -350,7 +350,7 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # Titre principal
 # ---------------------------------------------------------------------------
-from profiles import PROFILES, get_profile
+from profiles import PROFILES, get_profile, CATEGORY_LABELS, SIZE_LABELS
 
 st.markdown("# 🎯 Prospection B2B Automatisée")
 st.markdown("Trouve des prospects locaux, analyse leur besoin et génère des cold emails/SMS en un clic.")
@@ -361,14 +361,31 @@ st.markdown("---")
 # ---------------------------------------------------------------------------
 st.markdown("### 🧩 Choisissez votre profil")
 
-profile_options = {f"{p.emoji} {p.name}": p for p in PROFILES}
-selected_label = st.selectbox(
+# Trier les profils par catégorie puis par target_size
+_category_order = list(CATEGORY_LABELS.keys())
+_size_order = {"tpe": 0, "pme": 1, "all": 2}
+_sorted_profiles = sorted(
+    PROFILES,
+    key=lambda p: (
+        _category_order.index(p.category) if p.category in _category_order else len(_category_order),
+        _size_order.get(p.target_size, 3),
+        p.name,
+    ),
+)
+
+_profile_ids = [p.id for p in _sorted_profiles]
+_profile_by_id = {p.id: p for p in PROFILES}
+
+selected_profile_id = st.selectbox(
     "Profil de prospection",
-    options=list(profile_options.keys()),
+    options=_profile_ids,
+    format_func=lambda pid: (
+        f"{_profile_by_id[pid].emoji} {_profile_by_id[pid].name}  ·  {SIZE_LABELS[_profile_by_id[pid].target_size]}"
+    ),
     index=0,
     label_visibility="collapsed",
 )
-selected_profile = profile_options[selected_label]
+selected_profile = _profile_by_id[selected_profile_id]
 st.caption(f"*{selected_profile.description}*")
 
 st.markdown("---")

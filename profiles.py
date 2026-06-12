@@ -32,19 +32,40 @@ class Profile:
     # "desc" = score haut = bon prospect (ex: coursier — score 100 = pas de livraison = opportunité)
     score_direction: str = "asc"
     score_threshold_default: int = 100
+    category: str = "autre"     # groupement UI
+    target_size: str = "all"    # "tpe", "pme", "all"
+
+
+CATEGORY_LABELS = {
+    "web_digital":        "🌐 Web & Digital",
+    "creatif":            "🎨 Créatif & Visuel",
+    "conseil":            "💼 Conseil & Services B2B",
+    "sante":              "🏥 Santé & Bien-être",
+    "services_physiques": "🔧 Services Physiques",
+    "special":            "⭐ Spéciaux",
+    "autre":              "📋 Autre",
+}
+
+SIZE_LABELS = {
+    "tpe": "TPE / Artisans",
+    "pme": "PME / Entreprises",
+    "all": "Tous secteurs",
+}
 
 
 PROFILES: List[Profile] = [
 
     Profile(
-        id="dev_web",
+        id="web_tpe",
         emoji="💻",
-        name="Dev Web / Freelance",
-        description="Cible les commerces et PME avec un site absent, vieillissant ou non optimisé.",
+        name="Refonte Web → TPE / Artisans",
+        category="web_digital",
+        target_size="tpe",
+        description="Cible les commerces et TPE avec un site absent, vieillissant ou non optimisé.",
         keywords=["restaurant", "boulangerie", "coiffeur", "garage automobile", "cabinet dentaire"],
         location="Lyon, France",
-        your_title="Développeur Web Freelance",
-        your_offer="Création et refonte de sites web professionnels",
+        your_title="Développeur Web",
+        your_offer="Création et refonte de sites web professionnels pour TPE et artisans",
         email_hook=(
             "En cherchant {name} sur Google, j'ai analysé votre présence en ligne "
             "et identifié plusieurs points qui freinent votre visibilité et vos conversions."
@@ -61,207 +82,55 @@ PROFILES: List[Profile] = [
     ),
 
     Profile(
-        id="coursier",
-        emoji="🚚",
-        name="Coursier High Ticket",
-        description="Cible les professionnels et commerces haut de gamme sans solution de course dédiée.",
-        keywords=["notaire", "avocat", "bijouterie", "galerie d'art", "boutique mode", "mobilier design", "architecte", "expert-comptable"],
+        id="web_pme",
+        emoji="🏢",
+        name="Refonte Web → PME / Entreprises",
+        category="web_digital",
+        target_size="pme",
+        description="Cible les PME, cabinets et hôtels avec un site lent, non mobile ou qui ne convertit pas.",
+        keywords=["cabinet médical", "agence immobilière", "cabinet d'avocats", "clinique", "hôtel", "restaurant gastronomique", "cabinet comptable"],
         location="Paris, France",
-        your_title="Service de course express haut de gamme",
-        your_offer="Livraison sécurisée et discrète de vos documents et colis sensibles en moins de 2h",
+        your_title="Développeur Web",
+        your_offer="Refonte web orientée conversion et performance pour les structures de 10 à 250 salariés",
         email_hook=(
-            "Je gère un service de course express spécialisé dans les envois sensibles et haut de gamme. "
-            "Pour des professionnels comme {name}, la rapidité et la discrétion ne sont pas négociables — "
-            "c'est exactement ce que nous proposons, sans les contraintes d'un prestataire généraliste."
+            "En analysant le site de {name}, j'ai identifié plusieurs points critiques "
+            "qui freinent vos conversions et votre crédibilité en ligne : "
+            "temps de chargement élevé, manque de formulaires de contact efficaces, "
+            "et un design qui ne reflète plus votre niveau d'expertise. "
+            "Un site bien conçu peut augmenter vos demandes entrantes de 30 à 60 %."
         ),
-        sms_hook="Course express discrète pour docs et colis sensibles. Intervention en 2h. Dispo pour en parler ?",
+        sms_hook="Votre site freine vos conversions. J'ai identifié les points à corriger. Échange 15 min ?",
         qualification_criteria=[
-            "Professionnel ou commerce haut de gamme",
-            "Pas de service de course dédié en place",
-            "Besoins en envois de documents ou colis de valeur",
+            "Site lent ou non responsive",
+            "Aucun formulaire de lead visible",
+            "Absence de tracking / analytics",
+            "Design daté pour une structure de cette taille",
         ],
-        score_direction="desc",
-        score_threshold_default=70,
         check_weight_overrides={
-            # Désactiver tous les checks web dev
-            "https": 0, "response_time": 0, "viewport": 0, "title": 0,
-            "meta_description": 0, "tracking": 0, "lead_form": 0,
-            "free_builder": 0, "social_links": 0, "outdated": 0,
-            # Livraison déjà couverte = moins d'opportunité
-            "delivery_covered": 15,
-            # low_volume désactivé : un petit cabinet d'avocats a peu d'avis mais reste bon client
-            "low_volume": 0,
+            "response_time": 20,
+            "viewport": 20,
+            "lead_form": 20,
+            "tracking": 15,
+            "https": 10,
+            "title": 5,
+            "meta_description": 5,
+            "free_builder": 5,
+            "social_links": 0,
+            "outdated": 0,
         },
+        score_threshold_default=55,
     ),
 
     Profile(
-        id="fleuriste",
-        emoji="💐",
-        name="Fleuriste",
-        description="Cible les salles de mariage, hôtels et entreprises pour des collaborations événementielles.",
-        keywords=["salle de mariage", "hôtel", "wedding planner", "organisateur événement", "entreprise"],
-        location="Lyon, France",
-        your_title="Fleuriste événementiel",
-        your_offer="Décoration florale sur mesure pour vos événements et cérémonies",
-        email_hook=(
-            "Je suis fleuriste spécialisé dans la décoration événementielle. "
-            "En consultant le site de {name}, j'ai pensé qu'une collaboration "
-            "pourrait sublimer vos événements et apporter une vraie valeur ajoutée à vos clients."
-        ),
-        sms_hook="Fleuriste événementiel disponible pour vos mariages et événements. Collaboration possible ?",
-        qualification_criteria=[
-            "Établissement organisant des événements",
-            "Hôtel ou salle de réception",
-            "Absence de prestataire floral mentionné",
-        ],
-    ),
-
-    Profile(
-        id="photographe",
-        emoji="📸",
-        name="Photographe",
-        description="Cible les restaurants, hôtels et agences immobilières pour des shootings professionnels.",
-        keywords=["restaurant gastronomique", "hôtel", "agence immobilière", "boutique mode", "spa"],
-        location="Paris, France",
-        your_title="Photographe professionnel",
-        your_offer="Shootings photo professionnels pour valoriser votre établissement",
-        email_hook=(
-            "En visitant le site de {name}, j'ai remarqué que vos visuels actuels "
-            "ne reflètent peut-être pas encore la qualité de ce que vous proposez. "
-            "Des photos professionnelles peuvent augmenter vos réservations de 30% en moyenne."
-        ),
-        sms_hook="Photographe pro disponible pour shooter votre établissement. Tarif découverte ce mois-ci.",
-        qualification_criteria=[
-            "Visuels de faible qualité sur le site",
-            "Absence de galerie photo",
-            "Secteur visuel (resto, hôtel, immo)",
-        ],
-    ),
-
-    Profile(
-        id="coach_sportif",
-        emoji="🏋️",
-        name="Coach Sportif",
-        description="Cible les entreprises et RH pour proposer des sessions bien-être au travail.",
-        keywords=["entreprise", "cabinet RH", "coworking", "startup", "PME", "cabinet médical"],
-        location="Lyon, France",
-        your_title="Coach Sportif & Bien-être en entreprise",
-        your_offer="Sessions sport et bien-être en entreprise pour booster la productivité de vos équipes",
-        email_hook=(
-            "Le bien-être au travail est devenu un levier majeur de performance et de rétention des talents. "
-            "Je propose à {name} des sessions de sport et de relaxation adaptées à vos équipes, "
-            "directement sur votre lieu de travail."
-        ),
-        sms_hook="Coach sportif pro. Sessions bien-être en entreprise. Vos équipes méritent ça. On en parle ?",
-        qualification_criteria=[
-            "Entreprise avec salariés",
-            "Pas de programme bien-être mentionné",
-            "Secteur tertiaire ou bureau",
-        ],
-    ),
-
-    Profile(
-        id="social_media",
-        emoji="📱",
-        name="Social Media Manager",
-        description="Cible les PME et commerces avec une faible présence sur les réseaux sociaux.",
-        keywords=["restaurant", "boutique", "salon de coiffure", "agence", "cabinet"],
-        location="Paris, France",
-        your_title="Social Media Manager Freelance",
-        your_offer="Gestion de vos réseaux sociaux pour attirer plus de clients en ligne",
-        email_hook=(
-            "J'ai regardé la présence de {name} sur les réseaux sociaux "
-            "et j'ai constaté qu'il y a une vraie opportunité à saisir. "
-            "Vos concurrents locaux gagnent des clients chaque jour grâce à Instagram et Facebook — "
-            "je peux vous aider à faire pareil."
-        ),
-        sms_hook="Votre présence sur les réseaux peut être boostée facilement. Je m'en occupe pour vous ?",
-        qualification_criteria=[
-            "Absence de liens réseaux sociaux",
-            "Compte inactif ou inexistant",
-            "Secteur grand public (B2C)",
-        ],
-        check_weight_overrides={"social_links": 15},  # critère principal pour ce profil
-    ),
-
-    Profile(
-        id="nettoyage",
-        emoji="🧹",
-        name="Service de Nettoyage",
-        description="Cible les bureaux, restaurants et hôtels pour des contrats de nettoyage régulier.",
-        keywords=["bureau", "restaurant", "hôtel", "clinique", "cabinet médical", "coworking"],
-        location="Lyon, France",
-        your_title="Service de nettoyage professionnel",
-        your_offer="Nettoyage professionnel de vos locaux, disponible 7j/7",
-        email_hook=(
-            "Je propose aux établissements comme {name} un service de nettoyage professionnel "
-            "fiable et flexible. Intervention en dehors de vos heures d'ouverture, "
-            "produits certifiés, tarifs compétitifs."
-        ),
-        sms_hook="Service nettoyage pro pour vos locaux. Disponible 7j/7. Devis gratuit en 24h.",
-        qualification_criteria=[
-            "Local commercial ou professionnel",
-            "Restaurant ou hôtel",
-            "Bureau ou cabinet",
-        ],
-    ),
-
-    Profile(
-        id="consultant_marketing",
-        emoji="🎯",
-        name="Consultant Marketing",
-        description="Cible les PME et commerces pour un audit et une stratégie marketing.",
-        keywords=["PME", "agence", "commerce", "artisan", "cabinet conseil"],
-        location="Paris, France",
-        your_title="Consultant Marketing Digital",
-        your_offer="Audit et stratégie marketing pour accélérer votre croissance",
-        email_hook=(
-            "En analysant la stratégie digitale de {name}, j'ai identifié plusieurs leviers "
-            "inexploités qui pourraient significativement augmenter votre chiffre d'affaires. "
-            "Un audit rapide suffit pour savoir où concentrer vos efforts."
-        ),
-        sms_hook="Audit marketing offert pour votre entreprise. Je vous dis exactement quoi améliorer en 30 min.",
-        qualification_criteria=[
-            "Absence de stratégie digitale visible",
-            "Pas de blog ou contenu",
-            "Faible présence publicitaire",
-        ],
-    ),
-
-    Profile(
-        id="chercheur_emploi",
-        emoji="🔍",
-        name="Chercheur d'emploi",
-        description="Cible les entreprises susceptibles de recruter pour une candidature spontanée percutante.",
-        keywords=["agence web", "startup", "cabinet conseil", "agence communication", "ESN"],
-        location="Paris, France",
-        your_title="Candidat motivé",
-        your_offer="Candidature spontanée — profil junior polyvalent et motivé",
-        email_hook=(
-            "Je me permets de vous contacter car le projet de {name} m'a particulièrement intéressé. "
-            "Convaincu que je pourrais apporter une vraie valeur à votre équipe, "
-            "je vous adresse ma candidature spontanée."
-        ),
-        sms_hook="Candidature spontanée pour rejoindre votre équipe. Mon profil pourrait vous intéresser ?",
-        qualification_criteria=[
-            "Entreprise en croissance",
-            "Secteur en lien avec mon profil",
-            "Offres d'emploi publiées récemment",
-        ],
-    ),
-
-    # -----------------------------------------------------------------------
-    # Profiles Digital & Web
-    # -----------------------------------------------------------------------
-
-    Profile(
-        id="consultant_seo",
+        id="seo_local",
         emoji="📈",
-        name="Consultant SEO",
-        description="Cible les PME et commerces mal positionnés sur Google — balises absentes, contenu pauvre, site non indexé.",
+        name="SEO Local → Commerces & Artisans",
+        category="web_digital",
+        target_size="tpe",
+        description="Cible les TPE et commerces mal positionnés sur Google — balises absentes, contenu pauvre, site non indexé.",
         keywords=["restaurant", "boulangerie", "pharmacie", "cabinet dentaire", "agence immobilière", "hôtel", "artisan"],
         location="Lyon, France",
-        your_title="Consultant SEO Freelance",
+        your_title="Consultant SEO",
         your_offer="Audit SEO gratuit + plan d'action priorisé pour remonter dans Google",
         email_hook=(
             "En cherchant {name} sur Google, j'ai constaté que votre site n'apparaît pas "
@@ -291,10 +160,12 @@ PROFILES: List[Profile] = [
         id="redacteur_web",
         emoji="✍️",
         name="Rédacteur Web / Copywriter",
+        category="web_digital",
+        target_size="all",
         description="Cible les agences, startups et e-commerces avec un contenu pauvre, des pages vides ou un blog inexistant.",
         keywords=["agence web", "startup", "e-commerce", "cabinet conseil", "coach", "consultant"],
         location="Paris, France",
-        your_title="Rédacteur Web & Copywriter Freelance",
+        your_title="Rédacteur Web & Copywriter",
         your_offer="Rédaction de pages web, articles SEO et emails de vente qui convertissent",
         email_hook=(
             "En parcourant le site de {name}, j'ai remarqué que le contenu de certaines pages "
@@ -320,9 +191,11 @@ PROFILES: List[Profile] = [
     ),
 
     Profile(
-        id="expert_ads",
+        id="ads_btoc",
         emoji="📣",
-        name="Expert Google Ads / Meta Ads",
+        name="Google/Meta Ads → B2C",
+        category="web_digital",
+        target_size="all",
         description="Cible les commerces et professions libérales qui n'utilisent aucun pixel de tracking — zéro pub en place.",
         keywords=["restaurant", "clinique esthétique", "cabinet dentaire", "agence immobilière", "salle de sport", "boutique"],
         location="Paris, France",
@@ -355,13 +228,15 @@ PROFILES: List[Profile] = [
     ),
 
     Profile(
-        id="dev_ecommerce",
+        id="ecommerce",
         emoji="🛒",
-        name="Développeur E-commerce",
+        name="E-commerce → Artisans & Commerces",
+        category="web_digital",
+        target_size="tpe",
         description="Cible les artisans et commerces physiques qui vendent uniquement en boutique, sans solution de vente en ligne.",
         keywords=["artisan", "fromagerie", "confiserie", "bijouterie", "librairie", "producteur local", "cave à vins", "épicerie fine"],
         location="Lyon, France",
-        your_title="Développeur E-commerce Freelance",
+        your_title="Développeur E-commerce",
         your_offer="Boutique en ligne clé en main pour vendre 24h/24 sans effort supplémentaire",
         email_hook=(
             "En visitant le site de {name}, j'ai constaté que vous n'avez pas encore de boutique en ligne. "
@@ -389,9 +264,37 @@ PROFILES: List[Profile] = [
     ),
 
     Profile(
-        id="automatisation_notion",
+        id="social_media",
+        emoji="📱",
+        name="Social Media Manager",
+        category="web_digital",
+        target_size="tpe",
+        description="Cible les TPE et commerces avec une faible présence sur les réseaux sociaux.",
+        keywords=["restaurant", "boutique", "salon de coiffure", "agence", "cabinet"],
+        location="Paris, France",
+        your_title="Social Media Manager",
+        your_offer="Gestion de vos réseaux sociaux pour attirer plus de clients en ligne",
+        email_hook=(
+            "J'ai regardé la présence de {name} sur les réseaux sociaux "
+            "et j'ai constaté qu'il y a une vraie opportunité à saisir. "
+            "Vos concurrents locaux gagnent des clients chaque jour grâce à Instagram et Facebook — "
+            "je peux vous aider à faire pareil."
+        ),
+        sms_hook="Votre présence sur les réseaux peut être boostée facilement. Je m'en occupe pour vous ?",
+        qualification_criteria=[
+            "Absence de liens réseaux sociaux",
+            "Compte inactif ou inexistant",
+            "Secteur grand public (B2C)",
+        ],
+        check_weight_overrides={"social_links": 15},  # critère principal pour ce profil
+    ),
+
+    Profile(
+        id="automatisation",
         emoji="⚡",
-        name="Intégrateur Notion / Automatisation",
+        name="Automatisation & Outils → Agences",
+        category="web_digital",
+        target_size="pme",
         description="Cible les agences, coachs et consultants pour digitaliser et automatiser leurs processus internes.",
         keywords=["agence web", "cabinet conseil", "coach", "consultant", "agence communication", "startup", "freelance"],
         location="Paris, France",
@@ -419,10 +322,12 @@ PROFILES: List[Profile] = [
         id="graphiste",
         emoji="🎨",
         name="Graphiste / Designer",
-        description="Cible les commerces et PME avec une identité visuelle faible, un logo daté ou un site construit avec un outil gratuit.",
+        category="creatif",
+        target_size="tpe",
+        description="Cible les commerces et TPE avec une identité visuelle faible, un logo daté ou un site construit avec un outil gratuit.",
         keywords=["restaurant", "boutique", "coiffeur", "salon de beauté", "artisan", "boulangerie", "commerce"],
         location="Lyon, France",
-        your_title="Graphiste & Designer Freelance",
+        your_title="Graphiste & Designer",
         your_offer="Identité visuelle professionnelle : logo, charte graphique, supports print et web",
         email_hook=(
             "En visitant le site de {name}, j'ai remarqué que votre identité visuelle actuelle "
@@ -448,13 +353,39 @@ PROFILES: List[Profile] = [
     ),
 
     Profile(
+        id="photographe",
+        emoji="📸",
+        name="Photographe",
+        category="creatif",
+        target_size="all",
+        description="Cible les restaurants, hôtels et agences immobilières pour des shootings professionnels.",
+        keywords=["restaurant gastronomique", "hôtel", "agence immobilière", "boutique mode", "spa"],
+        location="Paris, France",
+        your_title="Photographe professionnel",
+        your_offer="Shootings photo professionnels pour valoriser votre établissement",
+        email_hook=(
+            "En visitant le site de {name}, j'ai remarqué que vos visuels actuels "
+            "ne reflètent peut-être pas encore la qualité de ce que vous proposez. "
+            "Des photos professionnelles peuvent augmenter vos réservations de 30% en moyenne."
+        ),
+        sms_hook="Photographe pro disponible pour shooter votre établissement. Tarif découverte ce mois-ci.",
+        qualification_criteria=[
+            "Visuels de faible qualité sur le site",
+            "Absence de galerie photo",
+            "Secteur visuel (resto, hôtel, immo)",
+        ],
+    ),
+
+    Profile(
         id="videaste",
         emoji="🎬",
         name="Vidéaste / Motion Designer",
+        category="creatif",
+        target_size="all",
         description="Cible les restaurants, hôtels et agences immo pour des vidéos de présentation qui convertissent.",
         keywords=["restaurant gastronomique", "hôtel", "agence immobilière", "salle de mariage", "startup", "spa", "cabinet médical"],
         location="Paris, France",
-        your_title="Vidéaste & Motion Designer Freelance",
+        your_title="Vidéaste & Motion Designer",
         your_offer="Vidéos de présentation et spots publicitaires qui valorisent votre établissement",
         email_hook=(
             "En visitant le site de {name}, j'ai constaté l'absence de vidéo de présentation. "
@@ -482,10 +413,12 @@ PROFILES: List[Profile] = [
         id="podcaster",
         emoji="🎙️",
         name="Podcaster / Production Audio",
+        category="creatif",
+        target_size="all",
         description="Cible les coachs, consultants et thérapeutes pour lancer un podcast comme outil d'autorité et de prospection.",
         keywords=["coach", "consultant", "thérapeute", "formateur", "cabinet conseil", "psychologue", "nutritionniste"],
         location="Paris, France",
-        your_title="Producteur de Podcast Freelance",
+        your_title="Producteur de Podcast",
         your_offer="Lancement et production de votre podcast clé en main — de l'idée au premier épisode",
         email_hook=(
             "En regardant la stratégie de contenu de {name}, j'ai pensé qu'un podcast pourrait "
@@ -505,10 +438,12 @@ PROFILES: List[Profile] = [
         id="illustrateur",
         emoji="🖼️",
         name="Illustrateur / BD",
+        category="creatif",
+        target_size="pme",
         description="Cible les maisons d'édition, agences de communication et studios de jeux pour des illustrations originales.",
         keywords=["maison d'édition", "agence communication", "studio jeux vidéo", "agence web", "agence marketing"],
         location="Paris, France",
-        your_title="Illustrateur & Artiste BD Freelance",
+        your_title="Illustrateur & Artiste BD",
         your_offer="Illustrations originales sur mesure pour vos projets éditoriaux, web et marketing",
         email_hook=(
             "En visitant le site de {name}, j'ai remarqué que vos visuels actuels reposent principalement "
@@ -529,25 +464,26 @@ PROFILES: List[Profile] = [
     # -----------------------------------------------------------------------
 
     Profile(
-        id="formateur",
-        emoji="📚",
-        name="Formateur / E-learning",
-        description="Cible les entreprises et associations pour des formations en présentiel ou distanciel.",
-        keywords=["entreprise", "PME", "association", "cabinet médical", "industrie", "coworking", "agence"],
-        location="Lyon, France",
-        your_title="Formateur & Concepteur E-learning",
-        your_offer="Formations sur mesure en présentiel ou en ligne pour monter en compétences vos équipes",
+        id="consultant_marketing",
+        emoji="🎯",
+        name="Consultant Marketing",
+        category="conseil",
+        target_size="pme",
+        description="Cible les PME et commerces pour un audit et une stratégie marketing.",
+        keywords=["PME", "agence", "commerce", "artisan", "cabinet conseil"],
+        location="Paris, France",
+        your_title="Consultant Marketing Digital",
+        your_offer="Audit et stratégie marketing pour accélérer votre croissance",
         email_hook=(
-            "Je propose aux équipes de {name} des formations courtes et opérationnelles "
-            "adaptées à vos enjeux métier. "
-            "Une journée de formation bien ciblée peut générer un retour sur investissement "
-            "immédiat sur la productivité et la qualité de travail de vos collaborateurs."
+            "En analysant la stratégie digitale de {name}, j'ai identifié plusieurs leviers "
+            "inexploités qui pourraient significativement augmenter votre chiffre d'affaires. "
+            "Un audit rapide suffit pour savoir où concentrer vos efforts."
         ),
-        sms_hook="Formations courtes et opérationnelles pour vos équipes. Devis gratuit en 24h. Dispo ?",
+        sms_hook="Audit marketing offert pour votre entreprise. Je vous dis exactement quoi améliorer en 30 min.",
         qualification_criteria=[
-            "Entreprise avec salariés à former",
-            "Pas de section formation ou développement des compétences",
-            "Secteur en évolution rapide",
+            "Absence de stratégie digitale visible",
+            "Pas de blog ou contenu",
+            "Faible présence publicitaire",
         ],
     ),
 
@@ -555,10 +491,12 @@ PROFILES: List[Profile] = [
         id="consultant_rh",
         emoji="👥",
         name="Consultant RH",
+        category="conseil",
+        target_size="pme",
         description="Cible les PME et startups en croissance avec des besoins de recrutement ou d'organisation RH.",
         keywords=["startup", "PME", "agence", "cabinet conseil", "industrie", "ESN", "scale-up"],
         location="Paris, France",
-        your_title="Consultant RH Freelance",
+        your_title="Consultant RH",
         your_offer="Recrutement, onboarding et structuration RH pour les entreprises en croissance",
         email_hook=(
             "J'ai regardé l'activité de {name} et j'ai noté que votre croissance "
@@ -575,9 +513,11 @@ PROFILES: List[Profile] = [
     ),
 
     Profile(
-        id="comptable_freelance",
+        id="comptable",
         emoji="💰",
-        name="Comptable / Expert-comptable",
+        name="Comptabilité → TPE & Indépendants",
+        category="conseil",
+        target_size="tpe",
         description="Cible les auto-entrepreneurs, artisans et petits commerces sans cabinet comptable apparent.",
         keywords=["auto-entrepreneur", "artisan", "coiffeur indépendant", "restaurateur", "commerce indépendant", "micro-entreprise"],
         location="Lyon, France",
@@ -598,13 +538,15 @@ PROFILES: List[Profile] = [
     ),
 
     Profile(
-        id="juriste_freelance",
+        id="juriste",
         emoji="⚖️",
-        name="Juriste / Avocat Freelance",
+        name="Juridique & RGPD → Startups & E-commerce",
+        category="conseil",
+        target_size="pme",
         description="Cible les startups et e-commerces sans mentions légales, CGV ou politique de confidentialité.",
         keywords=["startup", "e-commerce", "agence", "SaaS", "boutique en ligne", "marketplace", "coach en ligne"],
         location="Paris, France",
-        your_title="Juriste Freelance — Droit des affaires & RGPD",
+        your_title="Juriste — Droit des affaires & RGPD",
         your_offer="Contrats, CGV, mentions légales et conformité RGPD pour entreprises digitales",
         email_hook=(
             "En consultant le site de {name}, j'ai constaté que certaines mentions légales "
@@ -635,6 +577,8 @@ PROFILES: List[Profile] = [
         id="consultant_rse",
         emoji="🌱",
         name="Consultant RSE",
+        category="conseil",
+        target_size="pme",
         description="Cible les PME et industries qui n'ont aucune démarche RSE visible — obligation légale pour les +500 salariés.",
         keywords=["PME", "industrie", "logistique", "grande surface", "promoteur immobilier", "cabinet conseil", "collectivité"],
         location="Lyon, France",
@@ -654,92 +598,62 @@ PROFILES: List[Profile] = [
         ],
     ),
 
-    # -----------------------------------------------------------------------
-    # Profils Services aux entreprises (physique)
-    # -----------------------------------------------------------------------
-
     Profile(
-        id="traiteur",
-        emoji="🍽️",
-        name="Traiteur / Chef à domicile",
-        description="Cible les espaces de coworking, hôtels d'affaires et entreprises sans prestataire repas.",
-        keywords=["espace coworking", "hôtel d'affaires", "salle de réunion", "centre de conférences", "entreprise", "PME"],
-        location="Paris, France",
-        your_title="Traiteur & Chef à domicile",
-        your_offer="Plateaux repas et buffets pour vos réunions, séminaires et événements d'entreprise",
-        email_hook=(
-            "Je propose aux équipes de {name} des solutions de restauration sur mesure "
-            "pour vos réunions et événements professionnels. "
-            "Plateaux repas, buffets déjeuner ou cocktails dînatoires — "
-            "je m'occupe de tout pour que votre événement soit mémorable."
-        ),
-        sms_hook="Plateaux repas et buffets pour vos réunions d'entreprise. Devis sous 2h. Disponible ?",
-        qualification_criteria=[
-            "Espace avec salles de réunion",
-            "Pas de prestataire restauration mentionné",
-            "Entreprise avec équipes régulières",
-        ],
-    ),
-
-    Profile(
-        id="artisan_batiment",
-        emoji="🔧",
-        name="Plombier / Électricien",
-        description="Cible les agences immobilières, syndics et hôtels pour des contrats de maintenance récurrente.",
-        keywords=["agence immobilière", "syndic de copropriété", "hôtel", "résidence services", "gestionnaire de biens"],
+        id="formateur",
+        emoji="📚",
+        name="Formateur / E-learning",
+        category="conseil",
+        target_size="all",
+        description="Cible les entreprises et associations pour des formations en présentiel ou distanciel.",
+        keywords=["entreprise", "PME", "association", "cabinet médical", "industrie", "coworking", "agence"],
         location="Lyon, France",
-        your_title="Artisan — Plomberie & Électricité",
-        your_offer="Maintenance et interventions d'urgence pour gestionnaires de biens immobiliers",
+        your_title="Formateur & Concepteur E-learning",
+        your_offer="Formations sur mesure en présentiel ou en ligne pour monter en compétences vos équipes",
         email_hook=(
-            "Je me spécialise dans les contrats de maintenance pour les gestionnaires de patrimoine "
-            "comme {name}. Interventions rapides, devis transparents, disponibilité 7j/7 — "
-            "le tout sans les contraintes d'un prestataire unique sous-dimensionné."
+            "Je propose aux équipes de {name} des formations courtes et opérationnelles "
+            "adaptées à vos enjeux métier. "
+            "Une journée de formation bien ciblée peut générer un retour sur investissement "
+            "immédiat sur la productivité et la qualité de travail de vos collaborateurs."
         ),
-        sms_hook="Contrat maintenance plomberie/électricité pour vos biens. Intervention sous 4h. Devis gratuit.",
+        sms_hook="Formations courtes et opérationnelles pour vos équipes. Devis gratuit en 24h. Dispo ?",
         qualification_criteria=[
-            "Gestionnaire de biens immobiliers",
-            "Plusieurs logements ou locaux à gérer",
-            "Pas de prestataire technique mentionné",
+            "Entreprise avec salariés à former",
+            "Pas de section formation ou développement des compétences",
+            "Secteur en évolution rapide",
         ],
-        check_weight_overrides={
-            "https": 0, "tracking": 0, "viewport": 0, "title": 0,
-            "meta_description": 0, "lead_form": 0, "free_builder": 0,
-            "social_links": 0, "outdated": 0, "response_time": 0,
-        },
     ),
 
     Profile(
-        id="securite",
-        emoji="🛡️",
-        name="Agent de sécurité / Gardiennage",
-        description="Cible les bijouteries, pharmacies, galeries d'art et cliniques pour des contrats de gardiennage.",
-        keywords=["bijouterie", "pharmacie", "galerie d'art", "clinique privée", "boutique luxe", "joaillier", "horloger"],
-        location="Paris, France",
-        your_title="Responsable sécurité — Gardiennage & Surveillance",
-        your_offer="Gardiennage professionnel et surveillance de vos locaux et marchandises de valeur",
+        id="assistant_virtuel",
+        emoji="📋",
+        name="Assistant(e) Virtuel(le)",
+        category="conseil",
+        target_size="tpe",
+        description="Cible les professionnels libéraux solo surchargés — médecins, avocats, coachs — pour déléguer les tâches administratives.",
+        keywords=["médecin", "avocat", "notaire", "consultant", "thérapeute", "coach", "expert-comptable"],
+        location="Lyon, France",
+        your_title="Assistante Virtuelle",
+        your_offer="Gestion administrative, agenda et email pour libérer votre temps sur votre cœur de métier",
         email_hook=(
-            "Je propose aux établissements comme {name} des solutions de gardiennage "
-            "adaptées aux commerces de valeur. "
-            "Présence discrète mais visible, intervention rapide, agents certifiés — "
-            "pour que vous et vos clients vous sentiez en sécurité."
+            "En tant que professionnel indépendant, {name} gère probablement seul(e) "
+            "une part importante de ses tâches administratives. "
+            "Gestion d'agenda, réponse aux emails, relances clients, saisie de documents — "
+            "je prends en charge tout ça à distance pour que vous puissiez vous concentrer sur l'essentiel."
         ),
-        sms_hook="Gardiennage pour votre établissement. Agents certifiés, tarifs compétitifs. Devis gratuit ?",
+        sms_hook="Déléguez vos tâches admin à distance. Gestion d'agenda, emails, relances. Dispo pour en parler ?",
         qualification_criteria=[
-            "Commerce à forte valeur marchande",
-            "Bijouterie, pharmacie ou galerie",
-            "Pas de prestataire sécurité mentionné",
+            "Professionnel libéral ou consultant solo",
+            "Pas d'assistante ou de secrétariat visible",
+            "Activité à forte charge administrative",
         ],
-        check_weight_overrides={
-            "https": 0, "tracking": 0, "viewport": 0, "title": 0,
-            "meta_description": 0, "lead_form": 0, "free_builder": 0,
-            "social_links": 0, "outdated": 0, "response_time": 0,
-        },
     ),
 
     Profile(
         id="traducteur",
         emoji="🌍",
         name="Traducteur",
+        category="conseil",
+        target_size="all",
         description="Cible les cabinets juridiques, hôtels et exportateurs avec une clientèle internationale et un site français uniquement.",
         keywords=["cabinet d'avocats", "hôtel", "restaurant gastronomique", "exportateur", "agence internationale", "cabinet d'affaires"],
         location="Paris, France",
@@ -759,37 +673,40 @@ PROFILES: List[Profile] = [
         ],
     ),
 
-    Profile(
-        id="assistant_virtuel",
-        emoji="📋",
-        name="Assistant(e) Virtuel(le)",
-        description="Cible les professionnels libéraux solo surchargés — médecins, avocats, coachs — pour déléguer les tâches administratives.",
-        keywords=["médecin", "avocat", "notaire", "consultant", "thérapeute", "coach", "expert-comptable"],
-        location="Lyon, France",
-        your_title="Assistante Virtuelle Freelance",
-        your_offer="Gestion administrative, agenda et email pour libérer votre temps sur votre cœur de métier",
-        email_hook=(
-            "En tant que professionnel indépendant, {name} gère probablement seul(e) "
-            "une part importante de ses tâches administratives. "
-            "Gestion d'agenda, réponse aux emails, relances clients, saisie de documents — "
-            "je prends en charge tout ça à distance pour que vous puissiez vous concentrer sur l'essentiel."
-        ),
-        sms_hook="Déléguez vos tâches admin à distance. Gestion d'agenda, emails, relances. Dispo pour en parler ?",
-        qualification_criteria=[
-            "Professionnel libéral ou consultant solo",
-            "Pas d'assistante ou de secrétariat visible",
-            "Activité à forte charge administrative",
-        ],
-    ),
-
     # -----------------------------------------------------------------------
     # Profils Santé & Bien-être
     # -----------------------------------------------------------------------
 
     Profile(
+        id="coach_sportif",
+        emoji="🏋️",
+        name="Coach Sportif",
+        category="sante",
+        target_size="pme",
+        description="Cible les entreprises et RH pour proposer des sessions bien-être au travail.",
+        keywords=["entreprise", "cabinet RH", "coworking", "startup", "PME", "cabinet médical"],
+        location="Lyon, France",
+        your_title="Coach Sportif & Bien-être en entreprise",
+        your_offer="Sessions sport et bien-être en entreprise pour booster la productivité de vos équipes",
+        email_hook=(
+            "Le bien-être au travail est devenu un levier majeur de performance et de rétention des talents. "
+            "Je propose à {name} des sessions de sport et de relaxation adaptées à vos équipes, "
+            "directement sur votre lieu de travail."
+        ),
+        sms_hook="Coach sportif pro. Sessions bien-être en entreprise. Vos équipes méritent ça. On en parle ?",
+        qualification_criteria=[
+            "Entreprise avec salariés",
+            "Pas de programme bien-être mentionné",
+            "Secteur tertiaire ou bureau",
+        ],
+    ),
+
+    Profile(
         id="nutritionniste",
         emoji="🥗",
         name="Nutritionniste / Diététicien",
+        category="sante",
+        target_size="all",
         description="Cible les salles de sport, clubs fitness et entreprises sans partenaire nutrition.",
         keywords=["salle de sport", "club de fitness", "CrossFit", "studio de yoga", "cabinet médical", "centre bien-être"],
         location="Lyon, France",
@@ -818,6 +735,8 @@ PROFILES: List[Profile] = [
         id="kine_osteo",
         emoji="💆",
         name="Ostéopathe / Kiné",
+        category="sante",
+        target_size="all",
         description="Cible les clubs sportifs, studios de danse et entreprises sédentaires sans praticien référencé.",
         keywords=["club de sport", "studio de danse", "salle de fitness", "école de sport", "cabinet médical sportif"],
         location="Paris, France",
@@ -846,6 +765,8 @@ PROFILES: List[Profile] = [
         id="psy_therapeute",
         emoji="🧠",
         name="Psychologue / Thérapeute",
+        category="sante",
+        target_size="pme",
         description="Cible les entreprises et cabinets RH pour des programmes de soutien psychologique et QVT.",
         keywords=["entreprise", "PME", "startup", "cabinet RH", "SSII", "cabinet médical", "association"],
         location="Paris, France",
@@ -866,45 +787,123 @@ PROFILES: List[Profile] = [
     ),
 
     # -----------------------------------------------------------------------
-    # Profils Artisanat & BTP
+    # Profils Services Physiques
     # -----------------------------------------------------------------------
 
     Profile(
-        id="archi_interieur",
-        emoji="🏠",
-        name="Architecte d'intérieur",
-        description="Cible les hôtels, restaurants et boutiques avec une décoration datée ou en cours de travaux.",
-        keywords=["hôtel", "restaurant", "boutique", "spa", "café", "bureau coworking", "cabinet médical"],
-        location="Paris, France",
-        your_title="Architecte d'intérieur",
-        your_offer="Conception et rénovation d'espaces commerciaux pour maximiser l'expérience client",
+        id="nettoyage",
+        emoji="🧹",
+        name="Service de Nettoyage",
+        category="services_physiques",
+        target_size="all",
+        description="Cible les bureaux, restaurants et hôtels pour des contrats de nettoyage régulier.",
+        keywords=["bureau", "restaurant", "hôtel", "clinique", "cabinet médical", "coworking"],
+        location="Lyon, France",
+        your_title="Service de nettoyage professionnel",
+        your_offer="Nettoyage professionnel de vos locaux, disponible 7j/7",
         email_hook=(
-            "En visitant le site de {name}, j'ai remarqué que l'espace mérite peut-être "
-            "une mise à jour pour mieux refléter vos valeurs et attirer davantage de clients. "
-            "Un espace bien conçu augmente le panier moyen et la durée de visite — "
-            "je serais ravi de vous présenter quelques idées sans engagement."
+            "Je propose aux établissements comme {name} un service de nettoyage professionnel "
+            "fiable et flexible. Intervention en dehors de vos heures d'ouverture, "
+            "produits certifiés, tarifs compétitifs."
         ),
-        sms_hook="Un réaménagement de votre espace peut booster vos ventes. Visite conseil offerte cette semaine.",
+        sms_hook="Service nettoyage pro pour vos locaux. Disponible 7j/7. Devis gratuit en 24h.",
         qualification_criteria=[
-            "Commerce ou hôtel avec espace physique",
-            "Site avec photos d'intérieur datées",
-            "Pas de mention de rénovation récente",
+            "Local commercial ou professionnel",
+            "Restaurant ou hôtel",
+            "Bureau ou cabinet",
+        ],
+    ),
+
+    Profile(
+        id="securite",
+        emoji="🛡️",
+        name="Agent de sécurité / Gardiennage",
+        category="services_physiques",
+        target_size="all",
+        description="Cible les bijouteries, pharmacies, galeries d'art et cliniques pour des contrats de gardiennage.",
+        keywords=["bijouterie", "pharmacie", "galerie d'art", "clinique privée", "boutique luxe", "joaillier", "horloger"],
+        location="Paris, France",
+        your_title="Responsable sécurité — Gardiennage & Surveillance",
+        your_offer="Gardiennage professionnel et surveillance de vos locaux et marchandises de valeur",
+        email_hook=(
+            "Je propose aux établissements comme {name} des solutions de gardiennage "
+            "adaptées aux commerces de valeur. "
+            "Présence discrète mais visible, intervention rapide, agents certifiés — "
+            "pour que vous et vos clients vous sentiez en sécurité."
+        ),
+        sms_hook="Gardiennage pour votre établissement. Agents certifiés, tarifs compétitifs. Devis gratuit ?",
+        qualification_criteria=[
+            "Commerce à forte valeur marchande",
+            "Bijouterie, pharmacie ou galerie",
+            "Pas de prestataire sécurité mentionné",
         ],
         check_weight_overrides={
-            "outdated": 20,
-            "social_links": 10,
-            "free_builder": 15,
-            "tracking": 0,
-            "title": 0,
-            "meta_description": 0,
+            "https": 0, "tracking": 0, "viewport": 0, "title": 0,
+            "meta_description": 0, "lead_form": 0, "free_builder": 0,
+            "social_links": 0, "outdated": 0, "response_time": 0,
         },
-        score_threshold_default=70,
+    ),
+
+    Profile(
+        id="traiteur",
+        emoji="🍽️",
+        name="Traiteur / Chef à domicile",
+        category="services_physiques",
+        target_size="pme",
+        description="Cible les espaces de coworking, hôtels d'affaires et entreprises sans prestataire repas.",
+        keywords=["espace coworking", "hôtel d'affaires", "salle de réunion", "centre de conférences", "entreprise", "PME"],
+        location="Paris, France",
+        your_title="Traiteur & Chef à domicile",
+        your_offer="Plateaux repas et buffets pour vos réunions, séminaires et événements d'entreprise",
+        email_hook=(
+            "Je propose aux équipes de {name} des solutions de restauration sur mesure "
+            "pour vos réunions et événements professionnels. "
+            "Plateaux repas, buffets déjeuner ou cocktails dînatoires — "
+            "je m'occupe de tout pour que votre événement soit mémorable."
+        ),
+        sms_hook="Plateaux repas et buffets pour vos réunions d'entreprise. Devis sous 2h. Disponible ?",
+        qualification_criteria=[
+            "Espace avec salles de réunion",
+            "Pas de prestataire restauration mentionné",
+            "Entreprise avec équipes régulières",
+        ],
+    ),
+
+    Profile(
+        id="artisan_batiment",
+        emoji="🔧",
+        name="Plombier / Électricien",
+        category="services_physiques",
+        target_size="all",
+        description="Cible les agences immobilières, syndics et hôtels pour des contrats de maintenance récurrente.",
+        keywords=["agence immobilière", "syndic de copropriété", "hôtel", "résidence services", "gestionnaire de biens"],
+        location="Lyon, France",
+        your_title="Artisan — Plomberie & Électricité",
+        your_offer="Maintenance et interventions d'urgence pour gestionnaires de biens immobiliers",
+        email_hook=(
+            "Je me spécialise dans les contrats de maintenance pour les gestionnaires de patrimoine "
+            "comme {name}. Interventions rapides, devis transparents, disponibilité 7j/7 — "
+            "le tout sans les contraintes d'un prestataire unique sous-dimensionné."
+        ),
+        sms_hook="Contrat maintenance plomberie/électricité pour vos biens. Intervention sous 4h. Devis gratuit.",
+        qualification_criteria=[
+            "Gestionnaire de biens immobiliers",
+            "Plusieurs logements ou locaux à gérer",
+            "Pas de prestataire technique mentionné",
+        ],
+        check_weight_overrides={
+            "https": 0, "tracking": 0, "viewport": 0, "title": 0,
+            "meta_description": 0, "lead_form": 0, "free_builder": 0,
+            "social_links": 0, "outdated": 0, "response_time": 0,
+        },
     ),
 
     Profile(
         id="paysagiste",
         emoji="🌿",
         name="Paysagiste",
+        category="services_physiques",
+        target_size="all",
         description="Cible les hôtels, restaurants avec terrasse et entreprises avec espaces verts à entretenir.",
         keywords=["hôtel", "restaurant avec terrasse", "château", "résidence", "entreprise", "golf", "camping"],
         location="Lyon, France",
@@ -933,6 +932,8 @@ PROFILES: List[Profile] = [
         id="imprimeur",
         emoji="🖨️",
         name="Imprimeur / Signalétique",
+        category="services_physiques",
+        target_size="tpe",
         description="Cible les commerces et agences pour des supports print, enseignes et signalétique professionnelle.",
         keywords=["commerce", "restaurant", "agence", "startup", "boutique", "salon", "pharmacie"],
         location="Lyon, France",
@@ -961,14 +962,134 @@ PROFILES: List[Profile] = [
         score_threshold_default=70,
     ),
 
+    Profile(
+        id="archi_interieur",
+        emoji="🏠",
+        name="Architecte d'intérieur",
+        category="services_physiques",
+        target_size="all",
+        description="Cible les hôtels, restaurants et boutiques avec une décoration datée ou en cours de travaux.",
+        keywords=["hôtel", "restaurant", "boutique", "spa", "café", "bureau coworking", "cabinet médical"],
+        location="Paris, France",
+        your_title="Architecte d'intérieur",
+        your_offer="Conception et rénovation d'espaces commerciaux pour maximiser l'expérience client",
+        email_hook=(
+            "En visitant le site de {name}, j'ai remarqué que l'espace mérite peut-être "
+            "une mise à jour pour mieux refléter vos valeurs et attirer davantage de clients. "
+            "Un espace bien conçu augmente le panier moyen et la durée de visite — "
+            "je serais ravi de vous présenter quelques idées sans engagement."
+        ),
+        sms_hook="Un réaménagement de votre espace peut booster vos ventes. Visite conseil offerte cette semaine.",
+        qualification_criteria=[
+            "Commerce ou hôtel avec espace physique",
+            "Site avec photos d'intérieur datées",
+            "Pas de mention de rénovation récente",
+        ],
+        check_weight_overrides={
+            "outdated": 20,
+            "social_links": 10,
+            "free_builder": 15,
+            "tracking": 0,
+            "title": 0,
+            "meta_description": 0,
+        },
+        score_threshold_default=70,
+    ),
+
     # -----------------------------------------------------------------------
-    # Profils Éducation & Enfance
+    # Profils Spéciaux
     # -----------------------------------------------------------------------
+
+    Profile(
+        id="fleuriste",
+        emoji="💐",
+        name="Fleuriste",
+        category="special",
+        target_size="all",
+        description="Cible les salles de mariage, hôtels et entreprises pour des collaborations événementielles.",
+        keywords=["salle de mariage", "hôtel", "wedding planner", "organisateur événement", "entreprise"],
+        location="Lyon, France",
+        your_title="Fleuriste événementiel",
+        your_offer="Décoration florale sur mesure pour vos événements et cérémonies",
+        email_hook=(
+            "Je suis fleuriste spécialisé dans la décoration événementielle. "
+            "En consultant le site de {name}, j'ai pensé qu'une collaboration "
+            "pourrait sublimer vos événements et apporter une vraie valeur ajoutée à vos clients."
+        ),
+        sms_hook="Fleuriste événementiel disponible pour vos mariages et événements. Collaboration possible ?",
+        qualification_criteria=[
+            "Établissement organisant des événements",
+            "Hôtel ou salle de réception",
+            "Absence de prestataire floral mentionné",
+        ],
+    ),
+
+    Profile(
+        id="coursier",
+        emoji="🚚",
+        name="Coursier High Ticket",
+        category="special",
+        target_size="all",
+        description="Cible les professionnels et commerces haut de gamme sans solution de course dédiée.",
+        keywords=["notaire", "avocat", "bijouterie", "galerie d'art", "boutique mode", "mobilier design", "architecte", "expert-comptable"],
+        location="Paris, France",
+        your_title="Service de course express haut de gamme",
+        your_offer="Livraison sécurisée et discrète de vos documents et colis sensibles en moins de 2h",
+        email_hook=(
+            "Je gère un service de course express spécialisé dans les envois sensibles et haut de gamme. "
+            "Pour des professionnels comme {name}, la rapidité et la discrétion ne sont pas négociables — "
+            "c'est exactement ce que nous proposons, sans les contraintes d'un prestataire généraliste."
+        ),
+        sms_hook="Course express discrète pour docs et colis sensibles. Intervention en 2h. Dispo pour en parler ?",
+        qualification_criteria=[
+            "Professionnel ou commerce haut de gamme",
+            "Pas de service de course dédié en place",
+            "Besoins en envois de documents ou colis de valeur",
+        ],
+        score_direction="desc",
+        score_threshold_default=70,
+        check_weight_overrides={
+            # Désactiver tous les checks web dev
+            "https": 0, "response_time": 0, "viewport": 0, "title": 0,
+            "meta_description": 0, "tracking": 0, "lead_form": 0,
+            "free_builder": 0, "social_links": 0, "outdated": 0,
+            # Livraison déjà couverte = moins d'opportunité
+            "delivery_covered": 15,
+            # low_volume désactivé : un petit cabinet d'avocats a peu d'avis mais reste bon client
+            "low_volume": 0,
+        },
+    ),
+
+    Profile(
+        id="chercheur_emploi",
+        emoji="🔍",
+        name="Chercheur d'emploi",
+        category="special",
+        target_size="pme",
+        description="Cible les entreprises susceptibles de recruter pour une candidature spontanée percutante.",
+        keywords=["agence web", "startup", "cabinet conseil", "agence communication", "ESN"],
+        location="Paris, France",
+        your_title="Candidat motivé",
+        your_offer="Candidature spontanée — profil junior polyvalent et motivé",
+        email_hook=(
+            "Je me permets de vous contacter car le projet de {name} m'a particulièrement intéressé. "
+            "Convaincu que je pourrais apporter une vraie valeur à votre équipe, "
+            "je vous adresse ma candidature spontanée."
+        ),
+        sms_hook="Candidature spontanée pour rejoindre votre équipe. Mon profil pourrait vous intéresser ?",
+        qualification_criteria=[
+            "Entreprise en croissance",
+            "Secteur en lien avec mon profil",
+            "Offres d'emploi publiées récemment",
+        ],
+    ),
 
     Profile(
         id="prof_particulier",
         emoji="📖",
         name="Professeur particulier",
+        category="special",
+        target_size="all",
         description="Cible les établissements scolaires et centres de soutien pour des partenariats de cours particuliers.",
         keywords=["collège", "lycée", "école primaire", "centre de soutien scolaire", "prépa", "établissement scolaire"],
         location="Paris, France",
@@ -997,6 +1118,8 @@ PROFILES: List[Profile] = [
         id="animateur_enfants",
         emoji="🎪",
         name="Animateur / Événements enfants",
+        category="special",
+        target_size="all",
         description="Cible les restaurants familiaux, hôtels et centres commerciaux pour des animations enfants.",
         keywords=["restaurant familial", "centre commercial", "hôtel familial", "salle de fête", "camping", "parc de loisirs"],
         location="Lyon, France",
@@ -1021,10 +1144,16 @@ PROFILES: List[Profile] = [
         },
     ),
 
+    # -----------------------------------------------------------------------
+    # Profil Custom
+    # -----------------------------------------------------------------------
+
     Profile(
         id="custom",
         emoji="⚙️",
         name="Profil Custom",
+        category="autre",
+        target_size="all",
         description="Configurez entièrement votre propre profil de prospection.",
         keywords=[""],
         location="",

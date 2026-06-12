@@ -69,9 +69,9 @@ class TestProfilesPredefinis(unittest.TestCase):
         self.assertEqual(len(ids), len(set(ids)), "Des profils ont des ids en doublon")
 
     def test_get_profile_existant(self):
-        p = get_profile("dev_web")
+        p = get_profile("web_tpe")
         self.assertIsNotNone(p)
-        self.assertEqual(p.id, "dev_web")
+        self.assertEqual(p.id, "web_tpe")
 
     def test_get_profile_inexistant(self):
         p = get_profile("profil_qui_nexiste_pas")
@@ -87,6 +87,15 @@ class TestProfilesPredefinis(unittest.TestCase):
 
     def test_10_profils_minimum(self):
         self.assertGreaterEqual(len(PROFILES), 10, "Il devrait y avoir au moins 10 profils")
+
+    def test_tous_les_profils_ont_une_category(self):
+        for p in PROFILES:
+            self.assertTrue(p.category, f"Profil sans category : {p.name}")
+
+    def test_tous_les_profils_ont_un_target_size(self):
+        valid_sizes = {"tpe", "pme", "all"}
+        for p in PROFILES:
+            self.assertIn(p.target_size, valid_sizes, f"target_size invalide pour {p.name}")
 
 
 # ---------------------------------------------------------------------------
@@ -173,14 +182,14 @@ class TestProfileManager(unittest.TestCase):
             tmp_path = f.name
 
         with patch("profile_manager.CUSTOM_PROFILES_FILE", tmp_path):
-            p = self._make_test_profile(id="dev_web")  # même id qu'un profil prédéfini
+            p = self._make_test_profile(id="web_tpe")  # même id qu'un profil prédéfini
             p.name = "Mon Dev Web Custom"
             save_custom_profile(p)
             all_profiles = get_all_profiles()
 
-        dev_web_profiles = [x for x in all_profiles if x.id == "dev_web"]
-        self.assertEqual(len(dev_web_profiles), 1)
-        self.assertEqual(dev_web_profiles[0].name, "Mon Dev Web Custom")
+        web_tpe_profiles = [x for x in all_profiles if x.id == "web_tpe"]
+        self.assertEqual(len(web_tpe_profiles), 1)
+        self.assertEqual(web_tpe_profiles[0].name, "Mon Dev Web Custom")
         os.unlink(tmp_path)
 
 
