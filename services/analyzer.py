@@ -363,14 +363,22 @@ def _check_outdated_site(html: str, issues: _IssueList, weight: int = MAJOR_WEIG
 # ---------------------------------------------------------------------------
 
 def _verify_email_mx(email: str) -> bool:
-    """Retourne True si le domaine email a au moins un enregistrement MX valide."""
+    """Retourne True si le domaine email a au moins un enregistrement MX valide.
+    Retourne True aussi si le DNS est injoignable (timeout / réseau) pour ne pas
+    rejeter d'emails valides à cause d'une indisponibilité réseau passagère.
+    Retourne False uniquement si le domaine est confirmé inexistant (NXDOMAIN)."""
     try:
         import dns.resolver
         domain = email.split("@", 1)[1]
         dns.resolver.resolve(domain, "MX")
         return True
-    except Exception:
-        return False
+    except Exception as exc:
+        exc_name = type(exc).__name__
+        # Domaine inexistant → rejet certain
+        if "NXDOMAIN" in exc_name or "NoNameservers" in exc_name:
+            return False
+        # Tout le reste (timeout, NoAnswer, réseau indispo, tests) → on laisse passer
+        return True
 
 
 # ---------------------------------------------------------------------------
