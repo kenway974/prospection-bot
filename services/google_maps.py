@@ -93,6 +93,7 @@ def fetch_raw_candidates(keyword: str, max_raw: int = GOOGLE_MAX_RESULTS) -> Lis
     """
     Récupère jusqu'à `max_raw` résultats bruts via Google Places Text Search.
     Gère la pagination automatiquement (next_page_token).
+    Retry exponentiel (2s, 4s, 8s) sur la première page uniquement.
     """
     url = f"{BASE_URL}/place/textsearch/json"
     params = {
@@ -102,15 +103,27 @@ def fetch_raw_candidates(keyword: str, max_raw: int = GOOGLE_MAX_RESULTS) -> Lis
         "language": "fr",
     }
     results: List[dict] = []
+    is_first_page = True
 
     while True:
-        try:
-            resp = requests.get(url, params=params, timeout=config.request_timeout)
-            resp.raise_for_status()
-            data = resp.json()
-        except requests.RequestException as exc:
-            logger.error("Erreur Text Search pour '%s' : %s", keyword, exc)
+        max_attempts = 3 if is_first_page else 1
+        data = None
+        for attempt in range(max_attempts):
+            try:
+                resp = requests.get(url, params=params, timeout=config.request_timeout)
+                resp.raise_for_status()
+                data = resp.json()
+                break
+            except requests.RequestException as exc:
+                if attempt < max_attempts - 1:
+                    delay = 2 ** (attempt + 1)
+                    logger.debug("    ↩️  Text Search retry %d/%d dans %ds… ('%s')", attempt + 1, max_attempts, delay, keyword)
+                    time.sleep(delay)
+                else:
+                    logger.error("Erreur Text Search pour '%s' : %s", keyword, exc)
+        if data is None:
             break
+        is_first_page = False
 
         status = data.get("status")
         if status not in ("OK", "ZERO_RESULTS"):
@@ -150,13 +163,21 @@ def build_prospect(raw: dict, keyword: str) -> Optional[Prospect]:
         "key": config.google_api_key,
         "language": "fr",
     }
-    try:
-        resp = requests.get(url, params=params, timeout=config.request_timeout)
-        resp.raise_for_status()
-        details = resp.json().get("result", {})
-    except requests.RequestException as exc:
-        logger.error("Erreur Place Details (%s) : %s", place_id, exc)
-        return None
+    details: dict = {}
+    for attempt in range(3):
+        try:
+            resp = requests.get(url, params=params, timeout=config.request_timeout)
+            resp.raise_for_status()
+            details = resp.json().get("result", {})
+            break
+        except requests.RequestException as exc:
+            if attempt < 2:
+                delay = 2 ** (attempt + 1)
+                logger.debug("    ↩️  Place Details retry %d/3 dans %ds… (%s)", attempt + 1, delay, place_id)
+                time.sleep(delay)
+            else:
+                logger.error("Erreur Place Details (%s) : %s", place_id, exc)
+                return None
 
     if not details:
         return None

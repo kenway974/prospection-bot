@@ -262,35 +262,44 @@ def _check_social_links(soup: BeautifulSoup, issues: _IssueList, weight: int = M
 
 def _check_pagespeed(url: str, issues: _IssueList, weight: int = MAJOR_WEIGHT) -> None:
     """Score Lighthouse mobile via l'API Google PageSpeed Insights.
-    Skip silencieusement si la clé API est absente ou si l'API répond mal."""
+    Skip silencieusement si la clé API est absente ou si l'API répond mal.
+    Retry exponentiel (2s, 4s) sur les erreurs réseau et rate-limit (429)."""
     if weight == 0 or not config.google_api_key:
         return
-    try:
-        resp = requests.get(
-            "https://www.googleapis.com/pagespeedonline/v5/runPagespeed",
-            params={"url": url, "strategy": "mobile", "key": config.google_api_key},
-            timeout=30,
-        )
-        if not resp.ok:
-            logger.debug("    ⚠️  PageSpeed API HTTP %d pour %s", resp.status_code, url)
+    for attempt in range(3):
+        try:
+            resp = requests.get(
+                "https://www.googleapis.com/pagespeedonline/v5/runPagespeed",
+                params={"url": url, "strategy": "mobile", "key": config.google_api_key},
+                timeout=30,
+            )
+            if resp.status_code == 429 and attempt < 2:
+                time.sleep(2 ** (attempt + 1))
+                continue
+            if not resp.ok:
+                logger.debug("    ⚠️  PageSpeed API HTTP %d pour %s", resp.status_code, url)
+                return
+            score = int(resp.json()["lighthouseResult"]["categories"]["performance"]["score"] * 100)
+            if score < 50:
+                issues.append((
+                    f"Performance mobile mauvaise (PageSpeed : {score}/100) "
+                    "→ site très lent sur smartphone, pénalité SEO Core Web Vitals",
+                    weight,
+                ))
+            elif score < 70:
+                issues.append((
+                    f"Performance mobile moyenne (PageSpeed : {score}/100) "
+                    "→ optimisations nécessaires (images, JS, CSS)",
+                    MINOR_WEIGHT,
+                ))
+            else:
+                logger.debug("    ✅ PageSpeed mobile OK : %d/100 pour %s", score, url)
             return
-        score = int(resp.json()["lighthouseResult"]["categories"]["performance"]["score"] * 100)
-        if score < 50:
-            issues.append((
-                f"Performance mobile mauvaise (PageSpeed : {score}/100) "
-                "→ site très lent sur smartphone, pénalité SEO Core Web Vitals",
-                weight,
-            ))
-        elif score < 70:
-            issues.append((
-                f"Performance mobile moyenne (PageSpeed : {score}/100) "
-                "→ optimisations nécessaires (images, JS, CSS)",
-                MINOR_WEIGHT,
-            ))
-        else:
-            logger.debug("    ✅ PageSpeed mobile OK : %d/100 pour %s", score, url)
-    except (requests.RequestException, KeyError, ValueError, TypeError) as exc:
-        logger.debug("    ⚠️  PageSpeed API indisponible pour %s : %s", url, exc)
+        except (requests.RequestException, KeyError, ValueError, TypeError) as exc:
+            if attempt < 2:
+                time.sleep(2 ** (attempt + 1))
+            else:
+                logger.debug("    ⚠️  PageSpeed API indisponible pour %s : %s", url, exc)
 
 
 def _check_delivery_covered(
