@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List
+from typing import Dict, List, Optional
 
 import requests
 
@@ -81,10 +81,10 @@ class NotionExporter(CRMExporter):
             lines.append(f"  {i}. {issue}")
         return "\n".join(lines)
 
-    def _push_one(self, p: Prospect) -> bool:
+    def _push_one(self, p: Prospect) -> Optional[str]:
         if self._already_exists(p.name, p.phone):
             logger.debug("    ↩️  Notion — doublon ignoré : %s", p.name)
-            return False
+            return None
 
         properties: dict = {
             "Entreprise":   self._title(p.name),
@@ -107,10 +107,10 @@ class NotionExporter(CRMExporter):
             )
             resp.raise_for_status()
             logger.info("    ✅ Notion ← %s", p.name)
-            return True
+            return resp.json().get("id")
         except requests.RequestException as exc:
             logger.error("    ❌ Erreur Notion pour %s : %s", p.name, exc)
-            return False
+            return None
 
     # ------------------------------------------------------------------
     # Interface CRMExporter
@@ -119,6 +119,27 @@ class NotionExporter(CRMExporter):
     def export(self, prospects: List[Prospect]) -> int:
         logger.info("")
         logger.info("🔄 Synchronisation Notion (%d prospects)…", len(prospects))
-        created = sum(1 for p in prospects if self._push_one(p))
+        self._last_exported_ids: Dict[str, str] = {}
+        for p in prospects:
+            page_id = self._push_one(p)
+            if page_id:
+                self._last_exported_ids[p.place_id] = page_id
+        created = len(self._last_exported_ids)
         logger.info("   → %d fiche(s) créée(s) dans Notion.", created)
         return created
+
+    def update_status(self, page_id: str, status: str) -> bool:
+        """Met à jour le statut d'une fiche Notion (PATCH /pages/{id})."""
+        try:
+            resp = requests.patch(
+                f"{NOTION_BASE_URL}/pages/{page_id}",
+                headers=self._headers(),
+                json={"properties": {"Status": self._rich_text(status)}},
+                timeout=config.request_timeout,
+            )
+            resp.raise_for_status()
+            logger.debug("    🔄 Notion statut → '%s' (%s…)", status, page_id[:8])
+            return True
+        except requests.RequestException as exc:
+            logger.error("    ❌ Notion update_status : %s", exc)
+            return False

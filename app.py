@@ -536,13 +536,25 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             params.get("crm_key", ""),
             **params.get("crm_extra", {}),
         )
+        notion_page_ids: dict = {}
         if crm_exporter:
             crm_exporter.export(all_prospects)
+            if hasattr(crm_exporter, "_last_exported_ids"):
+                notion_page_ids = crm_exporter._last_exported_ids
 
         # 7. Gmail
         if params["send_emails"] and params["gmail_address"] and params["gmail_password"]:
             from services.gmail import send_all
             send_all(all_prospects, params["gmail_address"], params["gmail_password"])
+            # Mise à jour statut Notion pour les prospects envoyés
+            if notion_page_ids and params.get("crm_type") == "notion" and params.get("crm_key"):
+                from services.crm.notion import NotionExporter
+                _nu = NotionExporter(params["crm_key"], params.get("crm_extra", {}).get("database_id", ""))
+                for _p in all_prospects:
+                    if _p.email:
+                        _pid = notion_page_ids.get(_p.place_id)
+                        if _pid:
+                            _nu.update_status(_pid, "contacté")
 
         # 8. SMS Brevo
         if params["send_sms"] and params["brevo_key"]:
@@ -550,7 +562,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             send_all_sms(all_prospects)
 
         # 9. Marquage des prospects contactés (avec infos complètes pour les relances)
-        mark_as_contacted(all_prospects)
+        mark_as_contacted(all_prospects, notion_page_ids=notion_page_ids)
 
         # 10. Historique
         from history_manager import save_run
@@ -965,6 +977,12 @@ with st.expander("🔄 Relances — contacts sans réponse"):
                 )
                 drafts.append((p.name, draft_followup_email(p), contact["place_id"]))
                 mark_followup_sent(contact["place_id"])
+                if crm_type == "notion" and crm_key:
+                    from history_manager import get_notion_page_id
+                    from services.crm.notion import NotionExporter
+                    _np = get_notion_page_id(contact["place_id"])
+                    if _np:
+                        NotionExporter(crm_key, crm_extra.get("database_id", "")).update_status(_np, "relancé")
             st.session_state["followup_drafts"] = drafts
             st.success(f"✅ {len(drafts)} email(s) de relance générés.")
             st.rerun()
@@ -998,4 +1016,10 @@ with st.expander("🔄 Relances — contacts sans réponse"):
             with col_btn:
                 if st.button("✅ Répondu", key=f"responded_{contact['place_id']}"):
                     mark_as_responded(contact["place_id"])
+                    if crm_type == "notion" and crm_key:
+                        from history_manager import get_notion_page_id
+                        from services.crm.notion import NotionExporter
+                        _np = get_notion_page_id(contact["place_id"])
+                        if _np:
+                            NotionExporter(crm_key, crm_extra.get("database_id", "")).update_status(_np, "répondu")
                     st.rerun()

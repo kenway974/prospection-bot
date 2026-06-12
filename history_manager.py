@@ -31,7 +31,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 if TYPE_CHECKING:
     from services.google_maps import Prospect
@@ -91,7 +91,7 @@ def load_contacted_ids() -> set:
     return set(_load_contacted_data().keys())
 
 
-def mark_as_contacted(prospects: List[Prospect]) -> None:
+def mark_as_contacted(prospects: List[Prospect], notion_page_ids: Dict[str, str] | None = None) -> None:
     """
     Enregistre les prospects contactés avec leur date de premier contact.
     Les prospects déjà présents ne sont pas écrasés (on garde la date initiale).
@@ -100,14 +100,22 @@ def mark_as_contacted(prospects: List[Prospect]) -> None:
     today = datetime.now().strftime("%Y-%m-%d")
     for p in prospects:
         if p.place_id not in data:
-            data[p.place_id] = {
+            entry = {
                 "name": p.name,
                 "email": p.email or "",
                 "first_contact_date": today,
                 "responded": False,
                 "followup_sent": False,
             }
+            if notion_page_ids and p.place_id in notion_page_ids:
+                entry["notion_page_id"] = notion_page_ids[p.place_id]
+            data[p.place_id] = entry
     _save_contacted_data(data)
+
+
+def get_notion_page_id(place_id: str) -> Optional[str]:
+    """Retourne le page_id Notion stocké pour un prospect, ou None."""
+    return _load_contacted_data().get(place_id, {}).get("notion_page_id")
 
 
 def get_due_followups(delay_days: int = 5) -> List[dict]:
