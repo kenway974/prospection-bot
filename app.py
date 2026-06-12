@@ -120,6 +120,10 @@ def _init_state():
 
 _init_state()
 
+# Démarrage du thread d'envoi différé (idempotent — ne démarre qu'une fois par process)
+from services import scheduler as _scheduler
+_scheduler.ensure_running()
+
 
 # ---------------------------------------------------------------------------
 # Sidebar — Configuration
@@ -321,6 +325,21 @@ with col2:
     send_emails = st.toggle("📧 Envoyer les emails auto", value=False)
     if send_emails:
         st.warning("⚠️ Seuls les prospects avec un email trouvé recevront un mail.")
+        _email_mode = st.radio(
+            "Mode d'envoi", ["📤 Immédiat", "⏰ Programmé"],
+            horizontal=True, label_visibility="collapsed",
+        )
+        if _email_mode == "⏰ Programmé":
+            from datetime import date as _dt_date, timedelta as _dt_td, time as _dt_time
+            _sched_date = st.date_input("Date d'envoi", value=_dt_date.today() + _dt_td(days=1), min_value=_dt_date.today())
+            _sched_time = st.time_input("Heure d'envoi", value=_dt_time(9, 0))
+        else:
+            _sched_date = None
+            _sched_time = None
+    else:
+        _email_mode = "📤 Immédiat"
+        _sched_date = None
+        _sched_time = None
     send_sms_toggle = st.toggle("📱 Envoyer les SMS auto", value=False)
     if send_sms_toggle:
         st.warning("⚠️ Seuls les numéros mobiles (06/07) recevront un SMS.")
@@ -544,17 +563,44 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
 
         # 7. Gmail
         if params["send_emails"] and params["gmail_address"] and params["gmail_password"]:
-            from services.gmail import send_all
-            send_all(all_prospects, params["gmail_address"], params["gmail_password"])
-            # Mise à jour statut Notion pour les prospects envoyés
-            if notion_page_ids and params.get("crm_type") == "notion" and params.get("crm_key"):
-                from services.crm.notion import NotionExporter
-                _nu = NotionExporter(params["crm_key"], params.get("crm_extra", {}).get("database_id", ""))
+            if params.get("email_send_mode") == "⏰ Programmé" and params.get("sched_date"):
+                from datetime import datetime as _dtime
+                from services import scheduler as _sched_mod
+                _send_at = _dtime.strptime(
+                    f"{params['sched_date']} {params.get('sched_time', '09:00')}",
+                    "%Y-%m-%d %H:%M",
+                ).timestamp()
+                _n_sched = 0
                 for _p in all_prospects:
-                    if _p.email:
-                        _pid = notion_page_ids.get(_p.place_id)
-                        if _pid:
-                            _nu.update_status(_pid, "contacté")
+                    if not _p.email or not _p.email_draft:
+                        continue
+                    _sched_mod.add_pending(
+                        place_id=_p.place_id,
+                        name=_p.name,
+                        email=_p.email,
+                        draft=_p.email_draft,
+                        gmail_address=params["gmail_address"],
+                        gmail_password=params["gmail_password"],
+                        send_at=_send_at,
+                        notion_page_id=notion_page_ids.get(_p.place_id, ""),
+                        notion_api_key=params.get("crm_key", "") if params.get("crm_type") == "notion" else "",
+                    )
+                    _n_sched += 1
+                log_q.put(
+                    f"[--] ⏰ {_n_sched} email(s) programmé(s) pour le "
+                    f"{params['sched_date']} à {params.get('sched_time', '09:00')}."
+                )
+            else:
+                from services.gmail import send_all
+                send_all(all_prospects, params["gmail_address"], params["gmail_password"])
+                if notion_page_ids and params.get("crm_type") == "notion" and params.get("crm_key"):
+                    from services.crm.notion import NotionExporter
+                    _nu = NotionExporter(params["crm_key"], params.get("crm_extra", {}).get("database_id", ""))
+                    for _p in all_prospects:
+                        if _p.email:
+                            _pid = notion_page_ids.get(_p.place_id)
+                            if _pid:
+                                _nu.update_status(_pid, "contacté")
 
         # 8. SMS Brevo
         if params["send_sms"] and params["brevo_key"]:
@@ -645,6 +691,9 @@ if launch and not st.session_state.running:
         "gmail_password": gmail_password,
         "send_sms": send_sms_toggle,
         "cache_ttl_days": cache_ttl_days,
+        "email_send_mode": _email_mode,
+        "sched_date": _sched_date.isoformat() if _sched_date else None,
+        "sched_time": _sched_time.strftime("%H:%M") if _sched_time else None,
     }
 
     thread = threading.Thread(
@@ -923,6 +972,22 @@ with st.expander("🗂️ Historique des contacts"):
                 os.remove(history_path)
             st.success("Historique effacé. Le prochain run reprospecttra depuis zéro.")
             st.rerun()
+
+# ---------------------------------------------------------------------------
+# Emails programmés
+# ---------------------------------------------------------------------------
+st.markdown("---")
+with st.expander("📬 Emails programmés"):
+    from services import scheduler as _sched_ui
+    _stats = _sched_ui.get_stats()
+    col_s1, col_s2, col_s3 = st.columns(3)
+    col_s1.metric("En attente", _stats["pending"])
+    col_s2.metric("Envoyés", _stats["sent"])
+    col_s3.metric("Total", _stats["total"])
+    if _stats["pending"] > 0:
+        st.info(f"⏰ {_stats['pending']} email(s) en attente d'envoi — le thread vérifie toutes les 60 secondes.")
+    elif _stats["total"] == 0:
+        st.caption("Aucun email programmé pour l'instant.")
 
 # ---------------------------------------------------------------------------
 # Cache d'analyse
