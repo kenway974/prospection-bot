@@ -142,11 +142,70 @@ with st.sidebar:
     st.markdown("## 🎯 Prospection B2B")
     st.markdown("---")
 
+    st.markdown("### 📡 Source de prospection")
+    from services.sources import SOURCE_LABELS as _SRC_LABELS
+    source_type = st.selectbox(
+        "Source",
+        options=list(_SRC_LABELS.keys()),
+        format_func=lambda x: _SRC_LABELS[x],
+        index=list(_SRC_LABELS.keys()).index(_get("source_type") or "google_maps"),
+        label_visibility="collapsed",
+    )
+
+    # Config spécifique à la source
+    ft_client_id = ft_client_secret = google_cx = ""
+
+    if source_type == "france_travail":
+        st.markdown("**Client ID France Travail**")
+        ft_client_id = st.text_input(
+            "FT Client ID", value=_get("ft_client_id", "FT_CLIENT_ID"),
+            placeholder="PAR_xxxx…", label_visibility="collapsed",
+        )
+        st.markdown("**Client Secret France Travail**")
+        ft_client_secret = st.text_input(
+            "FT Client Secret", type="password",
+            value=_get("ft_client_secret", "FT_CLIENT_SECRET"),
+            placeholder="xxxxxxxx-xxxx-…", label_visibility="collapsed",
+        )
+        with st.expander("ℹ️ Comment obtenir les identifiants France Travail ?"):
+            st.markdown("""
+1. Inscris-toi sur [francetravail.io](https://francetravail.io/inscription)
+2. **Mes APIs** → **Référencer une nouvelle application**
+3. Coche **Offres d'emploi v2** dans les API souhaitées
+4. Récupère **Client ID** et **Client Secret** dans l'onglet **Mes applications**
+""")
+
+    elif source_type == "google_search":
+        st.markdown("**Custom Search Engine ID (cx)**")
+        google_cx = st.text_input(
+            "CX", value=_get("google_cx", "GOOGLE_CX"),
+            placeholder="017576…:xxxxxxx", label_visibility="collapsed",
+        )
+        with st.expander("ℹ️ Comment créer un moteur de recherche Google ?"):
+            st.markdown("""
+1. Va sur [programmablesearchengine.google.com](https://programmablesearchengine.google.com/controlpanel/all)
+2. **Ajouter** → donne un nom → **Rechercher dans tout le web** ✓ → **Créer**
+3. Copie l'**ID du moteur de recherche** (`017576…:xxx`) et colle-le ci-dessus
+4. La clé Google API existante est réutilisée automatiquement
+""")
+
+    elif source_type == "sirene":
+        st.caption("✅ Aucune clé requise — API officielle data.gouv.fr (gratuite).")
+
+    elif source_type == "pages_jaunes":
+        st.caption("✅ Aucune clé requise — scraping de l'annuaire public Pages Jaunes.")
+
+    elif source_type == "linkedin_csv":
+        st.caption("📎 Le fichier CSV LinkedIn s'importe dans la zone principale.")
+
+    st.markdown("---")
     st.markdown("### 🔑 Clés API")
 
+    google_key_required = source_type in ("google_maps", "google_search")
     st.markdown(
-        "**Google Places API Key** "
+        "**Google Places / Search API Key** "
         "— [Obtenir ici ↗](https://console.cloud.google.com/apis/credentials)"
+        + ("" if google_key_required else " *(optionnel pour cette source)*")
     )
     google_key = st.text_input(
         "Google Places API Key",
@@ -160,9 +219,10 @@ with st.sidebar:
 1. Va sur [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
 2. **Créer des identifiants** → **Clé API**
 3. Dans **Bibliothèque d'API**, active :
-   - *Places API* (obligatoire)
+   - *Places API* (obligatoire pour Google Maps)
+   - *Custom Search JSON API* (pour la source Google Search)
    - *PageSpeed Insights API* (pour les scores de perf mobile)
-4. Optionnel : restreins la clé à ces 2 API (onglet **Restrictions de clé API**)
+4. Optionnel : restreins la clé à ces API (onglet **Restrictions de clé API**)
 5. Copie la clé (`AIzaSy…`) et colle-la ci-dessus
 """)
 
@@ -412,6 +472,28 @@ with col2:
         help="Durée de validité : un site analysé il y a moins de X jours ne sera pas réanalysé.",
     )
 
+# LinkedIn CSV uploader (visible seulement si source linkedin_csv sélectionnée)
+linkedin_content = ""
+if source_type == "linkedin_csv":
+    st.markdown("---")
+    st.markdown("### 📎 Import CSV LinkedIn")
+    st.caption(
+        "Exporte tes contacts depuis **LinkedIn Sales Navigator** (Accounts/Leads → Export) "
+        "ou **Mes connexions** (Paramètres → Confidentialité → Obtenir une copie de tes données)."
+    )
+    _uploaded_csv = st.file_uploader(
+        "Déposer le fichier CSV LinkedIn",
+        type=["csv"],
+        help="Format auto-détecté : Sales Navigator, Connexions, ou tout CSV avec colonnes Company/Email/Website.",
+    )
+    if _uploaded_csv:
+        try:
+            linkedin_content = _uploaded_csv.read().decode("utf-8-sig")
+            _n_rows = max(0, len(linkedin_content.splitlines()) - 1)
+            st.success(f"✅ {_n_rows} ligne(s) importée(s) — prêt à analyser.")
+        except Exception as _e:
+            st.error(f"❌ Erreur de lecture : {_e}")
+
 st.markdown("---")
 
 
@@ -485,6 +567,11 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         from services.crm import get_exporter
         from history_manager import load_contacted_ids, mark_as_contacted
         from services import cache as _cache_mod
+        from services.sources import (
+            search_sirene, search_pages_jaunes,
+            search_france_travail, search_google_custom, SOURCE_LABELS,
+        )
+        from services.sources.linkedin_csv import parse_linkedin_csv
         _cache_mod.set_ttl(params.get("cache_ttl_days", 30))
 
         os.makedirs(c.output_dir, exist_ok=True)
@@ -495,107 +582,129 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         score_direction = params.get("score_direction", "asc")
         weight_overrides = params.get("weight_overrides", {})
         already_contacted = load_contacted_ids()
+        source           = params.get("source_type", "google_maps")
 
         all_qualified: list = []
         seen: set = set()
-
         workers = params.get("analysis_workers", 5)
 
-        # Boucle principale : pour chaque mot-clé, cherche jusqu'à target_per_kw qualifiés
-        for kw in params["keywords"]:
-            log_q.put(f"[--] 🔍 Recherche '{kw}' — objectif {target_per_kw} qualifiés…")
-            raw_candidates = fetch_raw_candidates(kw)
-
-            if not raw_candidates:
-                log_q.put(f"[--] ❌ Aucun résultat Google pour '{kw}' — vérifiez le mot-clé ou la zone.")
-                continue
-
-            skip_contacted = skip_seen = skip_api = skip_rating = skip_score = 0
-
-            # Phase 1 — pré-filtre : dédup + collecte des bruts (buffer = 4× quota)
-            raw_to_build: list = []
-            for raw in raw_candidates:
-                if len(raw_to_build) >= target_per_kw * 4:
-                    break
-                place_id = raw.get("place_id", "")
-                if not place_id:
-                    continue
-                if place_id in seen:
-                    skip_seen += 1
-                    continue
-                if place_id in already_contacted:
-                    skip_contacted += 1
-                    continue
-                seen.add(place_id)
-                raw_to_build.append(raw)
-
-            if not raw_to_build:
-                log_q.put(f"[--] ⚠️  0/{target_per_kw} qualifiés pour '{kw}' → tous déjà contactés ou vus.")
-                continue
-
-            # Phase 2 — Place Details en parallèle
-            n_workers = min(workers, len(raw_to_build))
-            with ThreadPoolExecutor(max_workers=n_workers) as ex:
-                built_list = list(ex.map(partial(build_prospect, keyword=kw), raw_to_build))
-
-            candidates: list = []
-            for p in built_list:
-                if p is None:
-                    skip_api += 1
-                elif p.rating is not None and p.rating < min_rating:
-                    skip_rating += 1
-                else:
-                    candidates.append(p)
-
+        def _analyse_and_filter(candidates: list, label: str) -> list:
+            """Analyse un lot de prospects et filtre par score. Retourne la liste qualifiée."""
             if not candidates:
-                reasons = []
-                if skip_api:     reasons.append(f"{skip_api} erreur(s) API")
-                if skip_rating:  reasons.append(f"{skip_rating} note(s) trop basse(s)")
-                reason_str = " | ".join(reasons) if reasons else "Google épuisé"
-                log_q.put(f"[--] ⚠️  0/{target_per_kw} qualifiés pour '{kw}' → {reason_str}.")
-                continue
+                return []
+            batch = candidates[:target_per_kw * 3]
+            with ThreadPoolExecutor(max_workers=min(workers, len(batch))) as ex:
+                analyzed = list(ex.map(partial(analyze_prospect, weight_overrides=weight_overrides), batch))
+            qualified = []
+            for p in analyzed:
+                qualifies = (p.score >= threshold if score_direction == "desc" else p.score <= threshold)
+                if qualifies:
+                    qualified.append(p)
+                    log_q.put(f"[--] ✅ {p.name} — score {p.score}/100")
+            return qualified
 
-            # Phase 3 — Analyse des sites en parallèle (fetch + PageSpeed + email)
-            candidates = candidates[:target_per_kw * 3]
-            with ThreadPoolExecutor(max_workers=min(workers, len(candidates))) as ex:
-                analyzed_list = list(ex.map(
-                    partial(analyze_prospect, weight_overrides=weight_overrides),
-                    candidates,
-                ))
+        def _dedup(candidates: list) -> list:
+            """Retire les prospects déjà contactés ou vus dans cette session."""
+            out = []
+            for p in candidates:
+                if p.place_id in seen or p.place_id in already_contacted:
+                    continue
+                seen.add(p.place_id)
+                out.append(p)
+            return out
 
-            # Phase 4 — filtre par score
-            kw_qualified: list = []
-            for analyzed in analyzed_list:
-                qualifies = (
-                    analyzed.score >= threshold if score_direction == "desc"
-                    else analyzed.score <= threshold
-                )
-                if qualifies and len(kw_qualified) < target_per_kw:
-                    kw_qualified.append(analyzed)
-                    log_q.put(
-                        f"[--] ✅ [{len(kw_qualified)}/{target_per_kw}] {analyzed.name}"
-                        f" — score {analyzed.score}/100"
-                    )
-                else:
-                    skip_score += 1
-
-            found = len(kw_qualified)
-            if found < target_per_kw:
-                reasons = []
-                if skip_contacted: reasons.append(f"{skip_contacted} déjà contacté(s)")
-                if skip_score:
-                    if score_direction == "desc":
-                        reasons.append(f"{skip_score} établissement(s) déjà couverts (score < {threshold}/100)")
-                    else:
-                        reasons.append(f"{skip_score} site(s) trop bon(s) pour le seuil ({threshold}/100)")
-                if skip_rating:    reasons.append(f"{skip_rating} note(s) Google trop basse(s) (< {min_rating}⭐)")
-                if skip_api:       reasons.append(f"{skip_api} erreur(s) API Google")
-                if skip_seen:      reasons.append(f"{skip_seen} doublon(s) inter-mots-clés")
-                reason_str = " | ".join(reasons) if reasons else "Google épuisé"
-                log_q.put(f"[--] ⚠️  {found}/{target_per_kw} qualifiés pour '{kw}' → {reason_str}.")
+        # ── LinkedIn CSV : traitement hors boucle mots-clés ──────────────────
+        if source == "linkedin_csv":
+            csv_content = params.get("linkedin_content", "")
+            if not csv_content:
+                log_q.put("[--] ❌ Aucun fichier CSV LinkedIn fourni.")
             else:
-                log_q.put(f"[--] ✅ {found}/{target_per_kw} qualifiés pour '{kw}'.")
-            all_qualified.extend(kw_qualified)
+                raw_li = parse_linkedin_csv(csv_content, "LinkedIn")
+                li_ok = _dedup(raw_li)
+                log_q.put(f"[--] 📎 {len(li_ok)} contact(s) LinkedIn à analyser…")
+                all_qualified.extend(_analyse_and_filter(li_ok, "LinkedIn"))
+
+        else:
+            # ── Boucle par mot-clé (Google Maps + Sirene + PJ + FT + GS) ────
+            for kw in params["keywords"]:
+                src_label = SOURCE_LABELS.get(source, source)
+                log_q.put(f"[--] 🔍 [{src_label}] '{kw}' — objectif {target_per_kw}…")
+
+                if source == "google_maps":
+                    # ── Phase 1 : Text Search ──
+                    raw_candidates = fetch_raw_candidates(kw)
+                    if not raw_candidates:
+                        log_q.put(f"[--] ❌ Aucun résultat Google pour '{kw}'.")
+                        continue
+
+                    skip_contacted = skip_seen = skip_api = skip_rating = 0
+                    raw_to_build: list = []
+                    for raw in raw_candidates:
+                        if len(raw_to_build) >= target_per_kw * 4:
+                            break
+                        pid = raw.get("place_id", "")
+                        if not pid:
+                            continue
+                        if pid in seen:
+                            skip_seen += 1; continue
+                        if pid in already_contacted:
+                            skip_contacted += 1; continue
+                        seen.add(pid)
+                        raw_to_build.append(raw)
+
+                    if not raw_to_build:
+                        log_q.put(f"[--] ⚠️  0/{target_per_kw} — tous déjà contactés ou vus.")
+                        continue
+
+                    # ── Phase 2 : Place Details en parallèle ──
+                    with ThreadPoolExecutor(max_workers=min(workers, len(raw_to_build))) as ex:
+                        built_list = list(ex.map(partial(build_prospect, keyword=kw), raw_to_build))
+
+                    candidates: list = []
+                    for p in built_list:
+                        if p is None:
+                            skip_api += 1
+                        elif p.rating is not None and p.rating < min_rating:
+                            skip_rating += 1
+                        else:
+                            candidates.append(p)
+
+                    if not candidates:
+                        reasons = []
+                        if skip_api:    reasons.append(f"{skip_api} erreur(s) API")
+                        if skip_rating: reasons.append(f"{skip_rating} note(s) trop basse(s)")
+                        log_q.put(f"[--] ⚠️  0/{target_per_kw} — {' | '.join(reasons) or 'Google épuisé'}.")
+                        continue
+
+                else:
+                    # ── Sources alternatives : retournent directement des Prospects ──
+                    if source == "sirene":
+                        raw = search_sirene(kw, params["location"], target_per_kw * 3)
+                    elif source == "pages_jaunes":
+                        raw = search_pages_jaunes(kw, params["location"], target_per_kw * 3)
+                    elif source == "france_travail":
+                        raw = search_france_travail(
+                            kw, params["location"], target_per_kw * 3,
+                            client_id=params.get("ft_client_id", ""),
+                            client_secret=params.get("ft_client_secret", ""),
+                        )
+                    elif source == "google_search":
+                        raw = search_google_custom(
+                            kw, params["location"], target_per_kw * 3,
+                            cx=params.get("google_cx", ""),
+                        )
+                    else:
+                        raw = []
+
+                    candidates = _dedup(raw)
+                    if not candidates:
+                        log_q.put(f"[--] ⚠️  0 résultat {src_label} pour '{kw}'.")
+                        continue
+
+                # ── Phase 3+4 : Analyse + filtre score (commun toutes sources) ──
+                kw_qualified = _analyse_and_filter(candidates, kw)[:target_per_kw]
+                log_q.put(f"[--] {'✅' if len(kw_qualified) >= target_per_kw else '⚠️ '} {len(kw_qualified)}/{target_per_kw} qualifiés pour '{kw}'.")
+                all_qualified.extend(kw_qualified)
 
         all_prospects = all_qualified
         log_q.put(f"[--] 📋 {len(all_prospects)} prospect(s) qualifiés au total.")
@@ -705,13 +814,28 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
 # ---------------------------------------------------------------------------
 col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
 with col_btn2:
-    launch = st.button(
-        "🚀 Lancer la prospection",
-        disabled=st.session_state.running or not google_key or not keywords or not location,
-    )
+    _launch_disabled = st.session_state.running
+    if source_type == "google_maps":
+        _launch_disabled = _launch_disabled or not google_key or not keywords or not location
+    elif source_type == "google_search":
+        _launch_disabled = _launch_disabled or not google_key or not google_cx or not keywords or not location
+    elif source_type == "france_travail":
+        _launch_disabled = _launch_disabled or not ft_client_id or not ft_client_secret or not keywords or not location
+    elif source_type == "linkedin_csv":
+        _launch_disabled = _launch_disabled or not linkedin_content
+    else:  # sirene, pages_jaunes
+        _launch_disabled = _launch_disabled or not keywords or not location
 
-if not google_key:
+    launch = st.button("🚀 Lancer la prospection", disabled=_launch_disabled)
+
+if source_type == "google_maps" and not google_key:
     st.info("👈 Renseigne ta clé Google Places dans la barre latérale pour commencer.")
+elif source_type == "google_search" and not google_cx:
+    st.info("👈 Renseigne ton Custom Search Engine ID (cx) dans la barre latérale.")
+elif source_type == "france_travail" and (not ft_client_id or not ft_client_secret):
+    st.info("👈 Renseigne tes identifiants France Travail dans la barre latérale.")
+elif source_type == "linkedin_csv" and not linkedin_content:
+    st.info("👆 Importe un fichier CSV LinkedIn ci-dessus pour commencer.")
 
 # ---------------------------------------------------------------------------
 # Démarrage du thread
@@ -726,6 +850,10 @@ if launch and not st.session_state.running:
     # Persistance des paramètres (rechargés comme defaults au prochain démarrage)
     _save_settings({
         "google_api_key":    google_key,
+        "source_type":       source_type,
+        "ft_client_id":      ft_client_id or None,
+        "ft_client_secret":  ft_client_secret or None,
+        "google_cx":         google_cx or None,
         "crm_type":          crm_type,
         "notion_api_key":    crm_key if crm_type == "notion" else None,
         "notion_database_id": crm_extra.get("database_id") if crm_type == "notion" else None,
@@ -773,6 +901,11 @@ if launch and not st.session_state.running:
         "email_send_mode": _email_mode,
         "sched_date": _sched_date.isoformat() if _sched_date else None,
         "sched_time": _sched_time.strftime("%H:%M") if _sched_time else None,
+        "source_type":       source_type,
+        "ft_client_id":      ft_client_id,
+        "ft_client_secret":  ft_client_secret,
+        "google_cx":         google_cx,
+        "linkedin_content":  linkedin_content,
     }
 
     thread = threading.Thread(
