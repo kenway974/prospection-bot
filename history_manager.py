@@ -36,8 +36,9 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 if TYPE_CHECKING:
     from services.google_maps import Prospect
 
-HISTORY_FILE   = os.path.join("output", "history.json")
-CONTACTED_FILE = os.path.join("output", "contacted_place_ids.json")
+HISTORY_FILE          = os.path.join("output", "history.json")
+CONTACTED_FILE        = os.path.join("output", "contacted_place_ids.json")
+CONTACTED_BACKUP_FILE = os.path.join("output", "contacted_place_ids.bak.json")
 
 
 def _ensure_output() -> None:
@@ -48,36 +49,49 @@ def _ensure_output() -> None:
 # Fonctions internes — gestion du fichier contacted_place_ids.json
 # ---------------------------------------------------------------------------
 
+def _migrate(data) -> dict:
+    """Migre depuis l'ancien format (liste de place_id strings)."""
+    if isinstance(data, list):
+        return {
+            pid: {
+                "name": "",
+                "email": "",
+                "first_contact_date": "",
+                "responded": False,
+                "followup_sent": False,
+            }
+            for pid in data
+        }
+    return data
+
+
 def _load_contacted_data() -> dict:
     """
     Charge le dict complet des prospects contactés.
-    Gère la migration depuis l'ancien format (liste de place_id).
+    Si le fichier principal est manquant ou corrompu, restaure depuis la sauvegarde.
     """
     _ensure_output()
-    if not os.path.exists(CONTACTED_FILE):
-        return {}
-    try:
-        with open(CONTACTED_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        # Migration depuis l'ancien format (liste de strings)
-        if isinstance(data, list):
-            return {
-                pid: {
-                    "name": "",
-                    "email": "",
-                    "first_contact_date": "",
-                    "responded": False,
-                    "followup_sent": False,
-                }
-                for pid in data
-            }
-        return data
-    except Exception:
-        return {}
+    for filepath in [CONTACTED_FILE, CONTACTED_BACKUP_FILE]:
+        if not os.path.exists(filepath):
+            continue
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return _migrate(data)
+        except Exception:
+            continue
+    return {}
 
 
 def _save_contacted_data(data: dict) -> None:
     _ensure_output()
+    import shutil
+    # Rotation : copie l'actuel en backup avant d'écraser
+    if os.path.exists(CONTACTED_FILE):
+        try:
+            shutil.copy2(CONTACTED_FILE, CONTACTED_BACKUP_FILE)
+        except OSError:
+            pass
     with open(CONTACTED_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
