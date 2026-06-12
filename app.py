@@ -1016,6 +1016,24 @@ with st.expander("💾 Sauvegarder ce profil pour une prochaine fois"):
         st.success(f"✅ Profil « {save_name} » sauvegardé ! Il apparaîtra dans la liste au prochain lancement.")
 
 # ---------------------------------------------------------------------------
+# Test A/B — Statistiques de templates
+# ---------------------------------------------------------------------------
+st.markdown("---")
+with st.expander("🧪 Test A/B — Performance des templates email"):
+    from history_manager import get_ab_stats
+    ab = get_ab_stats()
+    st.caption("Les prospects sont répartis 50/50 entre le template A (narratif) et le template B (court/direct).")
+    col_a, col_b = st.columns(2)
+    for col, variant, label in [(col_a, "A", "Template A — Narratif"), (col_b, "B", "Template B — Direct")]:
+        s = ab.get(variant, {"total": 0, "responded": 0})
+        rate = f"{s['responded']/s['total']*100:.0f}%" if s["total"] else "—"
+        with col:
+            st.markdown(f"**{label}**")
+            st.metric("Envoyés", s["total"])
+            st.metric("Réponses", s["responded"])
+            st.metric("Taux de réponse", rate)
+
+# ---------------------------------------------------------------------------
 # Historique des campagnes
 # ---------------------------------------------------------------------------
 st.markdown("---")

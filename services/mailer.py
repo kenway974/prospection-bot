@@ -12,9 +12,15 @@ Logique de construction :
 
 from __future__ import annotations
 
+import hashlib
 import os
 from config import config, logger
 from services.google_maps import Prospect
+
+
+def get_template_variant(place_id: str) -> str:
+    """Assigne le variant A ou B de façon déterministe via le hash du place_id (50/50)."""
+    return "A" if int(hashlib.md5(place_id.encode()).hexdigest(), 16) % 2 == 0 else "B"
 
 
 # ---------------------------------------------------------------------------
@@ -190,10 +196,68 @@ def _build_cta(prospect: Prospect) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Construction finale
+# Template B — ton court et direct, accroche chiffrée
 # ---------------------------------------------------------------------------
 
-def draft_email(prospect: Prospect) -> str:
+def _draft_email_b(prospect: Prospect) -> str:
+    """Variante B : email plus court, ton direct, chiffres mis en avant."""
+    n = len(prospect.issues)
+    cms = getattr(prospect, "cms", None)
+
+    if not prospect.has_website():
+        subject = f"Site web pour {prospect.name} ?"
+        body_lines = [
+            "Bonjour,",
+            "",
+            f"Votre établissement n'apparaît pas avec de site web sur Google.",
+            "En moyenne, les commerces avec un site reçoivent 70 % de contacts supplémentaires.",
+            "",
+            "Je crée des sites efficaces en moins de 2 semaines. Ça vous intéresse ?",
+        ]
+    elif any("inaccessible" in i for i in prospect.issues):
+        subject = f"Votre site est down — {prospect.name}"
+        body_lines = [
+            "Bonjour,",
+            "",
+            f"Votre site est actuellement inaccessible.",
+            "Chaque heure perdue, c'est un client qui va chez un concurrent.",
+            "",
+            "15 minutes suffisent pour faire le point. Disponible cette semaine ?",
+        ]
+    else:
+        cms_mention = f" (construit sous {cms})" if cms else ""
+        top = prospect.issues[0].split("→")[0].strip().lower() if prospect.issues else "votre présence en ligne"
+        subject = f"Question rapide — {prospect.name}"
+        body_lines = [
+            "Bonjour,",
+            "",
+            f"J'ai analysé votre site{cms_mention} et relevé {n} point(s) qui vous coûtent des clients :",
+            f"→ {top}",
+        ]
+        if n > 1:
+            second = prospect.issues[1].split("→")[0].strip().lower()
+            body_lines.append(f"→ {second}")
+        body_lines += [
+            "",
+            "Je peux vous montrer en 15 min comment corriger ça, sans engagement.",
+            "Disponible cette semaine ?",
+        ]
+
+    signature_parts = [config.your_name, config.your_title]
+    if config.your_email:
+        signature_parts.append(config.your_email)
+    signature = "\n".join(filter(None, signature_parts))
+
+    body = "\n".join(body_lines)
+    return f"OBJET : {subject}\n\n{body}\n\n{signature}".strip()
+
+
+# ---------------------------------------------------------------------------
+# Construction finale — dispatche vers A ou B
+# ---------------------------------------------------------------------------
+
+def _draft_email_a(prospect: Prospect) -> str:
+    """Template A (original) — accroche narrative, argumentée."""
     n_issues = len(prospect.issues)
     subject = _build_subject(prospect, n_issues)
     hook = _build_hook(prospect)
@@ -207,14 +271,10 @@ def draft_email(prospect: Prospect) -> str:
         signature_parts.append(config.your_email)
     signature = "\n".join(filter(None, signature_parts))
 
-    # Corps du mail
     parts = [f"OBJET : {subject}", "", "Bonjour,", "", hook]
-
     if issues_block:
         parts += ["", issues_block]
-
     parts += ["", cta, ""]
-
     parts += [
         "Un simple échange de 15 minutes suffit — et si je ne peux pas vous aider, je vous le dirai franchement.",
         "",
@@ -224,13 +284,19 @@ def draft_email(prospect: Prospect) -> str:
         "",
         signature,
     ]
-
     return "\n".join(parts).strip()
+
+
+def draft_email(prospect: Prospect) -> str:
+    """Dispatche vers le template A ou B selon le hash du place_id (test A/B 50/50)."""
+    variant = get_template_variant(prospect.place_id)
+    return _draft_email_b(prospect) if variant == "B" else _draft_email_a(prospect)
 
 
 def enrich_with_email(prospect: Prospect) -> Prospect:
     prospect.email_draft = draft_email(prospect)
-    logger.debug("  ✉️  Brouillon généré pour %s.", prospect.name)
+    variant = get_template_variant(prospect.place_id)
+    logger.debug("  ✉️  Brouillon [template %s] généré pour %s.", variant, prospect.name)
     return prospect
 
 

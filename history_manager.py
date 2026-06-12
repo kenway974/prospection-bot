@@ -105,11 +105,26 @@ def load_contacted_ids() -> set:
     return set(_load_contacted_data().keys())
 
 
+def get_ab_stats() -> Dict[str, Dict[str, int]]:
+    """Retourne les stats A/B : {variant: {total, responded}} pour chaque template."""
+    data = _load_contacted_data()
+    stats: Dict[str, Dict[str, int]] = {"A": {"total": 0, "responded": 0}, "B": {"total": 0, "responded": 0}}
+    for info in data.values():
+        variant = info.get("email_template", "A")
+        if variant not in stats:
+            stats[variant] = {"total": 0, "responded": 0}
+        stats[variant]["total"] += 1
+        if info.get("responded"):
+            stats[variant]["responded"] += 1
+    return stats
+
+
 def mark_as_contacted(prospects: List[Prospect], notion_page_ids: Dict[str, str] | None = None) -> None:
     """
     Enregistre les prospects contactés avec leur date de premier contact.
     Les prospects déjà présents ne sont pas écrasés (on garde la date initiale).
     """
+    from services.mailer import get_template_variant
     data = _load_contacted_data()
     today = datetime.now().strftime("%Y-%m-%d")
     for p in prospects:
@@ -120,6 +135,7 @@ def mark_as_contacted(prospects: List[Prospect], notion_page_ids: Dict[str, str]
                 "first_contact_date": today,
                 "responded": False,
                 "followup_sent": False,
+                "email_template": get_template_variant(p.place_id),
             }
             if notion_page_ids and p.place_id in notion_page_ids:
                 entry["notion_page_id"] = notion_page_ids[p.place_id]
