@@ -1016,6 +1016,78 @@ with st.expander("💾 Sauvegarder ce profil pour une prochaine fois"):
         st.success(f"✅ Profil « {save_name} » sauvegardé ! Il apparaîtra dans la liste au prochain lancement.")
 
 # ---------------------------------------------------------------------------
+# Dashboard de statistiques
+# ---------------------------------------------------------------------------
+st.markdown("---")
+with st.expander("📊 Dashboard — Statistiques globales"):
+    from history_manager import load_history as _lh, _load_contacted_data as _lcd2
+    _hist = _lh()
+    _cdata2 = _lcd2()
+
+    if not _hist:
+        st.info("Lancez au moins une campagne pour voir les statistiques.")
+    else:
+        _total_runs      = len(_hist)
+        _total_prospects = sum(r.get("total_prospects", 0) for r in _hist)
+        _total_emails    = sum(r.get("emails_trouvés", 0)  for r in _hist)
+        _total_mobiles   = sum(r.get("mobiles_trouvés", 0) for r in _hist)
+        _total_responded = sum(1 for v in _cdata2.values() if v.get("responded"))
+        _total_contacted = len(_cdata2)
+
+        # Métriques globales
+        dc1, dc2, dc3, dc4, dc5 = st.columns(5)
+        dc1.metric("Campagnes", _total_runs)
+        dc2.metric("Prospects total", _total_prospects)
+        dc3.metric("Emails trouvés", _total_emails)
+        dc4.metric("Mobiles trouvés", _total_mobiles)
+        _rrate = f"{_total_responded / _total_contacted * 100:.0f}%" if _total_contacted else "—"
+        dc5.metric("Taux de réponse", _rrate)
+
+        st.markdown("---")
+
+        # Graphique : prospects + emails par campagne (10 dernières)
+        try:
+            import pandas as _pd
+
+            _runs_data = [{
+                "Campagne": r["date"][:10],
+                "Prospects": r.get("total_prospects", 0),
+                "Emails": r.get("emails_trouvés", 0),
+                "Mobiles": r.get("mobiles_trouvés", 0),
+            } for r in reversed(_hist[:10])]
+            _df_runs = _pd.DataFrame(_runs_data).set_index("Campagne")
+            st.markdown("**Prospects et emails par campagne (10 dernières)**")
+            st.bar_chart(_df_runs[["Prospects", "Emails"]])
+
+            # Top mots-clés
+            _kw_counts: dict = {}
+            for r in _hist:
+                for kw in r.get("keywords", []):
+                    _kw_counts[kw] = _kw_counts.get(kw, 0) + r.get("total_prospects", 0)
+            if _kw_counts:
+                _top_kw = sorted(_kw_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+                _df_kw = _pd.DataFrame(_top_kw, columns=["Mot-clé", "Prospects"]).set_index("Mot-clé")
+                st.markdown("**Top mots-clés (par nombre de prospects cumulés)**")
+                st.bar_chart(_df_kw)
+
+            # Distribution des scores de la dernière campagne
+            if st.session_state.prospects:
+                _scores = [p.score for p in st.session_state.prospects]
+                _bins = {"0-20": 0, "21-40": 0, "41-60": 0, "61-80": 0, "81-100": 0}
+                for s in _scores:
+                    if s <= 20:    _bins["0-20"]   += 1
+                    elif s <= 40:  _bins["21-40"]  += 1
+                    elif s <= 60:  _bins["41-60"]  += 1
+                    elif s <= 80:  _bins["61-80"]  += 1
+                    else:          _bins["81-100"] += 1
+                _df_score = _pd.DataFrame(list(_bins.items()), columns=["Score", "Nombre"]).set_index("Score")
+                st.markdown("**Distribution des scores (campagne en cours)**")
+                st.bar_chart(_df_score)
+
+        except ImportError:
+            st.caption("pandas non disponible — install `pandas` pour les graphiques.")
+
+# ---------------------------------------------------------------------------
 # Test A/B — Statistiques de templates
 # ---------------------------------------------------------------------------
 st.markdown("---")
