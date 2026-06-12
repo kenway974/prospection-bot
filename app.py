@@ -145,6 +145,16 @@ with st.sidebar:
         placeholder="AIzaSy...",
         label_visibility="collapsed",
     )
+    with st.expander("ℹ️ Comment créer cette clé ?"):
+        st.markdown("""
+1. Va sur [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
+2. **Créer des identifiants** → **Clé API**
+3. Dans **Bibliothèque d'API**, active :
+   - *Places API* (obligatoire)
+   - *PageSpeed Insights API* (pour les scores de perf mobile)
+4. Optionnel : restreins la clé à ces 2 API (onglet **Restrictions de clé API**)
+5. Copie la clé (`AIzaSy…`) et colle-la ci-dessus
+""")
 
     st.markdown("**CRM**")
     crm_type = st.selectbox(
@@ -163,12 +173,32 @@ with st.sidebar:
                 placeholder="c2507703-...", label_visibility="collapsed",
             )
         }
+        with st.expander("ℹ️ Notion — comment créer la clé et le Database ID ?"):
+            st.markdown("""
+**Token d'intégration :**
+1. Va sur [notion.so/my-integrations](https://www.notion.so/my-integrations)
+2. **+ Nouvelle intégration** → nom "ProspectionBot" → Submit
+3. Copie le **Token d'intégration interne** (`secret_…`)
+
+**Database ID :**
+1. Ouvre ta base Notion dans le navigateur
+2. URL : `notion.so/MonEspace/`**`c2507703175647aaf2132a76c00e06`**`?v=…`
+3. Le Database ID est la partie surlignée (32 car. après le dernier `/` avant `?v=`)
+4. ⚠️ Invite l'intégration dans ta base : ouvre la base → **⋯** → **Connexions** → ajoute "ProspectionBot"
+""")
     elif crm_type == "hubspot":
         crm_key = st.text_input(
             "HubSpot Private App Token", type="password",
             value=os.getenv("HUBSPOT_API_KEY", ""), placeholder="pat-eu1-...",
             label_visibility="collapsed",
         )
+        with st.expander("ℹ️ HubSpot — comment créer un token ?"):
+            st.markdown("""
+1. Dans HubSpot, va dans **Paramètres** (⚙️) → **Intégrations** → **Applications privées**
+2. **Créer une application privée** → donne-lui un nom (ex: ProspectionBot)
+3. Onglet **Portées** : coche `crm.objects.contacts.write` et `crm.objects.contacts.read`
+4. **Créer l'application** → copie le token (`pat-eu1-…`)
+""")
         crm_extra = {}
     else:
         crm_key  = ""
