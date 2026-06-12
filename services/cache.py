@@ -47,11 +47,11 @@ def get_cached(url: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def set_cached(url: str, issues: List[str], score: int, email: Optional[str]) -> None:
+def set_cached(url: str, issues: List[str], score: int, email: Optional[str], cms: Optional[str] = None) -> None:
     """Sauvegarde le résultat d'analyse pour une URL (thread-safe)."""
     with _lock:
         cache = _load()
-        cache[url] = {"issues": issues, "score": score, "email": email, "ts": time.time()}
+        cache[url] = {"issues": issues, "score": score, "email": email, "cms": cms, "ts": time.time()}
         _save(cache)
 
 

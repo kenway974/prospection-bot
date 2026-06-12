@@ -105,6 +105,21 @@ _DELIVERY_PLATFORMS = (
     "just eat", "glovo", "stuart", "lyveat", "takeaway",
 )
 
+# CMS / builders détectables par signature dans l'URL ou le HTML
+_CMS_SIGNATURES: dict = {
+    "WordPress":   ["wp-content/", "wp-includes/", "wordpress"],
+    "Wix":         ["wix.com", "wixstatic.com"],
+    "Squarespace": ["squarespace.com", "squarespace-cdn.com", "static1.squarespace"],
+    "Shopify":     ["myshopify.com", "cdn.shopify.com"],
+    "PrestaShop":  ["prestashop", "/modules/blockwishlist", "prestashop-"],
+    "Joomla":      ["/components/com_", "joomla"],
+    "Drupal":      ["sites/default/files", "/drupal"],
+    "Webflow":     ["webflow.io", "webflow.com/css"],
+    "Jimdo":       ["jimdo.com", "jimdofree.com", "jimdosite.com"],
+    "Weebly":      ["weebly.com", "editmysite.com"],
+    "Webnode":     ["webnode.fr", "webnode.com"],
+}
+
 # Domaines des réseaux sociaux principaux
 _SOCIAL_DOMAINS = (
     "facebook.com", "instagram.com", "linkedin.com",
@@ -320,6 +335,15 @@ def _check_delivery_covered(
         ))
 
 
+def _detect_cms(url: str, html: str) -> Optional[str]:
+    """Identifie le CMS ou builder utilisé par le site via signatures URL/HTML."""
+    combined = url.lower() + html.lower()
+    for cms, signatures in _CMS_SIGNATURES.items():
+        if any(sig.lower() in combined for sig in signatures):
+            return cms
+    return None
+
+
 def _check_outdated_site(html: str, issues: _IssueList, weight: int = MAJOR_WEIGHT) -> None:
     """Copyright trop ancien = site non maintenu → opportunité de refonte."""
     current_year = datetime.now().year
@@ -447,6 +471,7 @@ def analyze_prospect(
         prospect.issues = cached["issues"]
         prospect.score  = cached["score"]
         prospect.email  = cached.get("email")
+        prospect.cms    = cached.get("cms")
         logger.info("  ⚡ %s — résultat en cache (score %d/100)", prospect.name, prospect.score)
         return prospect
 
@@ -481,6 +506,11 @@ def analyze_prospect(
     _check_delivery_covered(soup, html, weighted_issues, weights[CHECK_DELIVERY_COVERED])
     _check_pagespeed(url, weighted_issues,          weights[CHECK_PAGESPEED])
 
+    # Détection du CMS (pas un check, pas de pénalité — utilisé pour personnaliser l'email)
+    prospect.cms = _detect_cms(url, html)
+    if prospect.cms:
+        logger.debug("  🧩 CMS détecté : %s pour %s", prospect.cms, prospect.name)
+
     # Check volume d'activité (données Google, pas HTML)
     low_vol_weight = weights.get(CHECK_LOW_VOLUME, 0)
     if low_vol_weight > 0 and prospect.user_ratings_total < 30:
@@ -511,6 +541,6 @@ def analyze_prospect(
         logger.debug("      %d. [-%d pts] %s", i, weight, msg)
 
     # Mise en cache du résultat (évite de refaire l'analyse dans les 30 prochains jours)
-    _cache.set_cached(url, prospect.issues, prospect.score, prospect.email)
+    _cache.set_cached(url, prospect.issues, prospect.score, prospect.email, prospect.cms)
 
     return prospect

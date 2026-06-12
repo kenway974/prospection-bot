@@ -903,9 +903,10 @@ if st.session_state.prospects:
                 else:
                     st.markdown("**📧 Email :** non trouvé sur le site")
 
-                # Site web
+                # Site web + CMS détecté
                 if p.website:
-                    st.markdown(f"**🌐 Site :** [{p.website}]({p.website})")
+                    cms_badge = f" `{p.cms}`" if p.cms else ""
+                    st.markdown(f"**🌐 Site :** [{p.website}]({p.website}){cms_badge}")
                 else:
                     st.markdown("**🌐 Site :** ❌ Aucun site web")
 

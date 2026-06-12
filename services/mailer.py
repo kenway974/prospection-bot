@@ -93,6 +93,22 @@ def _build_hook(prospect: Prospect) -> str:
             f"et une partie repart sans laisser ses coordonnées."
         )
 
+    cms = getattr(prospect, "cms", None)
+    free_builders = {"Wix", "Jimdo", "Weebly", "Webnode"}
+    if cms and cms in free_builders and any("gratuit" in i.lower() or "outil" in i.lower() or "builder" in i.lower() for i in prospect.issues):
+        return (
+            f"En visitant le site de {prospect.name}, j'ai constaté qu'il est construit avec {cms}. "
+            f"Ces outils sont pratiques au départ, mais ils limitent sérieusement votre référencement naturel "
+            f"et votre image professionnelle — et Google le sait."
+        )
+
+    if cms in {"WordPress", "Joomla", "Drupal", "PrestaShop"} and prospect.issues:
+        return (
+            f"En analysant le site de {prospect.name} (construit sous {cms}), "
+            f"j'ai identifié {len(prospect.issues)} point(s) qui pénalisent votre visibilité "
+            f"et votre taux de conversion."
+        )
+
     if any("tracking" in i.lower() or "analytics" in i.lower() for i in prospect.issues):
         return (
             f"En analysant le site de {prospect.name}, j'ai constaté l'absence d'outils de mesure "
