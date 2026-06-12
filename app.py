@@ -124,6 +124,14 @@ _init_state()
 from services import scheduler as _scheduler
 _scheduler.ensure_running()
 
+# Chargement des paramètres sauvegardés (fallback sur env vars, puis "")
+from settings_manager import load_settings as _load_settings, save_settings as _save_settings
+_saved = _load_settings()
+
+def _get(key: str, env_var: str = "", default: str = "") -> str:
+    """Priorité : settings.json > variable d'env > valeur par défaut."""
+    return _saved.get(key) or os.getenv(env_var, "") or default
+
 
 # ---------------------------------------------------------------------------
 # Sidebar — Configuration
@@ -141,7 +149,7 @@ with st.sidebar:
     google_key = st.text_input(
         "Google Places API Key",
         type="password",
-        value=os.getenv("GOOGLE_PLACES_API_KEY", ""),
+        value=_get("google_api_key", "GOOGLE_PLACES_API_KEY"),
         placeholder="AIzaSy...",
         label_visibility="collapsed",
     )
@@ -164,12 +172,12 @@ with st.sidebar:
     if crm_type == "notion":
         crm_key = st.text_input(
             "Notion API Key", type="password",
-            value=os.getenv("NOTION_API_KEY", ""), placeholder="secret_...",
+            value=_get("notion_api_key", "NOTION_API_KEY"), placeholder="secret_...",
             label_visibility="collapsed",
         )
         crm_extra = {
             "database_id": st.text_input(
-                "Notion Database ID", value=os.getenv("NOTION_DATABASE_ID", ""),
+                "Notion Database ID", value=_get("notion_database_id", "NOTION_DATABASE_ID"),
                 placeholder="c2507703-...", label_visibility="collapsed",
             )
         }
@@ -189,7 +197,7 @@ with st.sidebar:
     elif crm_type == "hubspot":
         crm_key = st.text_input(
             "HubSpot Private App Token", type="password",
-            value=os.getenv("HUBSPOT_API_KEY", ""), placeholder="pat-eu1-...",
+            value=_get("hubspot_api_key", "HUBSPOT_API_KEY"), placeholder="pat-eu1-...",
             label_visibility="collapsed",
         )
         with st.expander("ℹ️ HubSpot — comment créer un token ?"):
@@ -214,7 +222,7 @@ with st.sidebar:
     brevo_key = st.text_input(
         "Brevo API Key",
         type="password",
-        value=os.getenv("BREVO_API_KEY", ""),
+        value=_get("brevo_api_key", "BREVO_API_KEY"),
         placeholder="xsmtpsib-...",
         label_visibility="collapsed",
     )
@@ -232,7 +240,7 @@ with st.sidebar:
     st.markdown("**Adresse Gmail**")
     gmail_address = st.text_input(
         "Adresse Gmail",
-        value=os.getenv("GMAIL_ADDRESS", ""),
+        value=_get("gmail_address", "GMAIL_ADDRESS"),
         placeholder="toi@gmail.com",
         label_visibility="collapsed",
     )
@@ -260,10 +268,10 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### 👤 Ta signature")
-    your_name = st.text_input("Prénom", value=os.getenv("YOUR_NAME", "Kenny"))
-    your_title = st.text_input("Titre", value=os.getenv("YOUR_TITLE", "Développeur Web Freelance"))
-    your_email = st.text_input("Ton email", value=os.getenv("YOUR_EMAIL", ""))
-    your_website = st.text_input("Ton site", value=os.getenv("YOUR_WEBSITE", ""))
+    your_name = st.text_input("Prénom", value=_get("your_name", "YOUR_NAME"))
+    your_title = st.text_input("Titre", value=_get("your_title", "YOUR_TITLE"))
+    your_email = st.text_input("Ton email", value=_get("your_email", "YOUR_EMAIL"))
+    your_website = st.text_input("Ton site", value=_get("your_website", "YOUR_WEBSITE"))
 
     st.markdown("---")
     st.caption("🔒 Tes clés restent sur ta machine. Rien n'est envoyé à l'extérieur.")
@@ -704,6 +712,21 @@ if launch and not st.session_state.running:
     st.session_state.logs = []
     st.session_state.prospects = []
     st.session_state.log_queue = queue.Queue()
+
+    # Persistance des paramètres (rechargés comme defaults au prochain démarrage)
+    _save_settings({
+        "google_api_key":    google_key,
+        "crm_type":          crm_type,
+        "notion_api_key":    crm_key if crm_type == "notion" else None,
+        "notion_database_id": crm_extra.get("database_id") if crm_type == "notion" else None,
+        "hubspot_api_key":   crm_key if crm_type == "hubspot" else None,
+        "brevo_api_key":     brevo_key,
+        "gmail_address":     gmail_address,
+        "your_name":         your_name,
+        "your_title":        your_title,
+        "your_email":        your_email,
+        "your_website":      your_website,
+    })
 
     result_container = []
 
