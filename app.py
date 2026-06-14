@@ -350,43 +350,89 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # Titre principal
 # ---------------------------------------------------------------------------
-from profiles import PROFILES, get_profile, CATEGORY_LABELS, SIZE_LABELS
+from profiles import PROFILES, get_profile
+from service_profiles import (
+    SERVICE_PROFILES, SERVICE_CATEGORY_LABELS,
+    get_service, list_services,
+)
+from target_segments import (
+    TARGET_SEGMENTS, TARGET_SECTOR_LABELS, SIZE_LABELS,
+    get_target, list_targets,
+)
 
 st.markdown("# 🎯 Prospection B2B Automatisée")
 st.markdown("Trouve des prospects locaux, analyse leur besoin et génère des cold emails/SMS en un clic.")
 st.markdown("---")
 
 # ---------------------------------------------------------------------------
-# Sélection du profil
+# Sélection service × cible
 # ---------------------------------------------------------------------------
-st.markdown("### 🧩 Choisissez votre profil")
+st.markdown("### 🧩 Votre activité")
 
-# Trier les profils par catégorie puis par target_size
-_category_order = list(CATEGORY_LABELS.keys())
-_size_order = {"tpe": 0, "pme": 1, "all": 2}
-_sorted_profiles = sorted(
-    PROFILES,
-    key=lambda p: (
-        _category_order.index(p.category) if p.category in _category_order else len(_category_order),
-        _size_order.get(p.target_size, 3),
-        p.name,
-    ),
-)
-
-_profile_ids = [p.id for p in _sorted_profiles]
-_profile_by_id = {p.id: p for p in PROFILES}
-
-selected_profile_id = st.selectbox(
-    "Profil de prospection",
-    options=_profile_ids,
-    format_func=lambda pid: (
-        f"{_profile_by_id[pid].emoji} {_profile_by_id[pid].name}  ·  {SIZE_LABELS[_profile_by_id[pid].target_size]}"
-    ),
-    index=0,
+# Sélecteur catégorie de service (radio horizontal)
+_svc_cats = list(SERVICE_CATEGORY_LABELS.keys())
+_saved_svc_cat = _get("service_category", _svc_cats[0])
+_svc_cat_idx = _svc_cats.index(_saved_svc_cat) if _saved_svc_cat in _svc_cats else 0
+selected_svc_cat = st.radio(
+    "Catégorie",
+    options=_svc_cats,
+    format_func=lambda c: SERVICE_CATEGORY_LABELS[c],
+    index=_svc_cat_idx,
+    horizontal=True,
     label_visibility="collapsed",
+    key="svc_cat_radio",
 )
-selected_profile = _profile_by_id[selected_profile_id]
-st.caption(f"*{selected_profile.description}*")
+
+# Sélecteur service (filtré par catégorie)
+_svcs_in_cat = [s for s in SERVICE_PROFILES if s.category == selected_svc_cat]
+_svc_ids = [s.id for s in _svcs_in_cat]
+_svc_by_id = {s.id: s for s in SERVICE_PROFILES}
+_saved_svc = _get("service_id", _svc_ids[0] if _svc_ids else "web_refonte")
+_svc_idx = _svc_ids.index(_saved_svc) if _saved_svc in _svc_ids else 0
+selected_service_id = st.selectbox(
+    "Service",
+    options=_svc_ids,
+    format_func=lambda sid: f"{_svc_by_id[sid].emoji} {_svc_by_id[sid].name}",
+    index=_svc_idx,
+    label_visibility="collapsed",
+    key="service_selectbox",
+)
+selected_service = _svc_by_id[selected_service_id]
+st.caption(f"*{selected_service.description}*")
+
+st.markdown("---")
+st.markdown("### 🎯 Votre cible")
+
+# Sélecteur secteur cible (radio horizontal)
+_tgt_sectors = list(TARGET_SECTOR_LABELS.keys())
+_saved_tgt_sector = _get("target_sector", _tgt_sectors[0])
+_tgt_sector_idx = _tgt_sectors.index(_saved_tgt_sector) if _saved_tgt_sector in _tgt_sectors else 0
+selected_tgt_sector = st.radio(
+    "Secteur",
+    options=_tgt_sectors,
+    format_func=lambda s: TARGET_SECTOR_LABELS[s],
+    index=_tgt_sector_idx,
+    horizontal=True,
+    label_visibility="collapsed",
+    key="tgt_sector_radio",
+)
+
+# Sélecteur cible (filtré par secteur)
+_tgts_in_sector = [t for t in TARGET_SEGMENTS if t.sector == selected_tgt_sector]
+_tgt_ids = [t.id for t in _tgts_in_sector]
+_tgt_by_id = {t.id: t for t in TARGET_SEGMENTS}
+_saved_tgt = _get("target_id", _tgt_ids[0] if _tgt_ids else "restaurants")
+_tgt_idx = _tgt_ids.index(_saved_tgt) if _saved_tgt in _tgt_ids else 0
+selected_target_id = st.selectbox(
+    "Cible",
+    options=_tgt_ids,
+    format_func=lambda tid: f"{_tgt_by_id[tid].emoji} {_tgt_by_id[tid].name}  ·  {SIZE_LABELS[_tgt_by_id[tid].target_size]}",
+    index=_tgt_idx,
+    label_visibility="collapsed",
+    key="target_selectbox",
+)
+selected_target = _tgt_by_id[selected_target_id]
+st.caption(f"*{selected_target.description}*")
 
 st.markdown("---")
 
@@ -400,12 +446,12 @@ col1, col2 = st.columns([2, 1])
 with col1:
     location = st.text_input(
         "📌 Ville / Zone géographique",
-        value=selected_profile.location or os.getenv("SEARCH_LOCATION", "Lyon, France"),
+        value=selected_target.location_default or os.getenv("SEARCH_LOCATION", "Lyon, France"),
         placeholder="Paris, France",
     )
     keywords_raw = st.text_area(
         "🔑 Mots-clés cibles (un par ligne)",
-        value="\n".join(selected_profile.keywords),
+        value="\n".join(selected_target.keywords),
         height=150,
         placeholder="restaurant\nboulangerie\ncoiffeur",
     )
@@ -414,7 +460,7 @@ with col1:
     st.markdown("**✉️ Accroche email** *(personnalisable)*")
     email_hook = st.text_area(
         "Accroche email",
-        value=selected_profile.email_hook,
+        value=selected_service.email_hook,
         height=100,
         label_visibility="collapsed",
         help="Utilisez {name} pour insérer le nom du prospect",
@@ -423,7 +469,7 @@ with col1:
     st.markdown("**📱 Accroche SMS** *(max 160 caractères)*")
     sms_hook = st.text_input(
         "Accroche SMS",
-        value=selected_profile.sms_hook,
+        value=selected_service.sms_hook,
         label_visibility="collapsed",
     )
     if len(sms_hook) > 160:
@@ -433,7 +479,7 @@ with col2:
     st.markdown("**⚙️ Paramètres**")
     your_offer = st.text_area(
         "🎁 Mon offre",
-        value=selected_profile.your_offer,
+        value=selected_service.your_offer,
         height=80,
         help="Décrivez votre offre en 1-2 phrases",
     )
@@ -443,8 +489,8 @@ with col2:
         min_value=1.0, max_value=5.0, value=3.0, step=0.5,
         help="Les établissements en dessous de cette note sont ignorés (probablement en difficulté)",
     )
-    _score_dir = selected_profile.score_direction
-    _score_default = selected_profile.score_threshold_default
+    _score_dir = selected_service.score_direction
+    _score_default = (selected_target.score_threshold_override or selected_service.score_threshold_default)
     if _score_dir == "desc":
         score_threshold = st.slider(
             "Score min requis",
@@ -881,6 +927,10 @@ if launch and not st.session_state.running:
         "your_title":        your_title,
         "your_email":        your_email,
         "your_website":      your_website,
+        "service_id":        selected_service_id,
+        "service_category":  selected_svc_cat,
+        "target_id":         selected_target_id,
+        "target_sector":     selected_tgt_sector,
     })
 
     result_container = []
@@ -897,16 +947,16 @@ if launch and not st.session_state.running:
         "radius": radius,
         "max_results": max_results,
         "your_name": your_name,
-        "your_title": your_title or selected_profile.your_title,
+        "your_title": your_title or selected_service.your_title,
         "your_email": your_email,
         "your_website": your_website,
         "your_offer": your_offer,
         "email_hook": email_hook,
         "sms_hook": sms_hook,
-        "profile_id": selected_profile.id,
-        "profile_name": f"{selected_profile.emoji} {selected_profile.name}",
-        "weight_overrides": selected_profile.check_weight_overrides,
-        "score_direction": selected_profile.score_direction,
+        "profile_id": f"{selected_service_id}_x_{selected_target_id}",
+        "profile_name": f"{selected_service.emoji} {selected_service.name}  →  {selected_target.emoji} {selected_target.name}",
+        "weight_overrides": selected_service.check_weight_overrides,
+        "score_direction": selected_service.score_direction,
         "min_rating": min_rating,
         "contact_score_threshold": score_threshold,
         "analysis_workers": int(os.getenv("ANALYSIS_WORKERS", "5")),
