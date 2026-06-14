@@ -33,6 +33,37 @@ from services import cache as _cache
 
 
 # ---------------------------------------------------------------------------
+# Mapping clés de problème → patterns textuels (pour personnalisation email)
+# ---------------------------------------------------------------------------
+
+_KEY_PATTERNS = {
+    "no_website":    ["pas de site web", "aucun site"],
+    "site_down":     ["inaccessible", "down", "ne répond pas"],
+    "https":         ["http", "sécurisé", "ssl"],
+    "viewport":      ["mobile", "responsive", "viewport"],
+    "title":         ["balise title", "titre", "<title>"],
+    "meta_description": ["meta description", "description", "snippet"],
+    "tracking":      ["tracking", "analytics", "pixel", "mesure", "gtm", "hotjar"],
+    "lead_form":     ["formulaire", "contact form", "lead"],
+    "free_builder":  ["wix", "jimdo", "squarespace", "shopify", "builder", "weebly", "webnode", "gratuit"],
+    "social_links":  ["réseaux sociaux", "social"],
+    "response_time": ["lent", "chargement", "performance", "pagespeed", "temps de"],
+    "outdated":      ["daté", "obsolète", "ancien", "non mis à jour"],
+}
+
+
+def _extract_issue_keys(issues: List[str]) -> List[str]:
+    """Extrait les clés normalisées à partir des messages d'issues."""
+    keys: List[str] = []
+    for issue_text in issues:
+        lower = issue_text.lower()
+        for key, patterns in _KEY_PATTERNS.items():
+            if any(p in lower for p in patterns) and key not in keys:
+                keys.append(key)
+    return keys
+
+
+# ---------------------------------------------------------------------------
 # Seuils et constantes
 # ---------------------------------------------------------------------------
 
@@ -467,6 +498,7 @@ def analyze_prospect(
         prospect.issues = [
             "Pas de site web référencé → opportunité directe de création de site"
         ]
+        prospect.issue_keys = ["no_website"]
         prospect.score = 0
         logger.info("  📵 %s : pas de site web → opportunité maximale.", prospect.name)
         return prospect
@@ -480,6 +512,7 @@ def analyze_prospect(
         prospect.score  = cached["score"]
         prospect.email  = cached.get("email")
         prospect.cms    = cached.get("cms")
+        prospect.issue_keys = _extract_issue_keys(prospect.issues)
         logger.info("  ⚡ %s — résultat en cache (score %d/100)", prospect.name, prospect.score)
         return prospect
 
@@ -493,6 +526,7 @@ def analyze_prospect(
             "Site web inaccessible (erreur réseau ou serveur down) "
             "→ perte de crédibilité et de clients potentiels"
         ]
+        prospect.issue_keys = ["site_down"]
         prospect.score = 5
         return prospect
 
@@ -539,6 +573,7 @@ def analyze_prospect(
     # Score final pondéré : critique = −15, important = −10, mineur = −5
     prospect.issues = [msg for msg, _ in weighted_issues]
     prospect.score = max(0, MAX_SCORE - sum(w for _, w in weighted_issues))
+    prospect.issue_keys = _extract_issue_keys(prospect.issues)
 
     level = "🟢" if prospect.score >= 70 else ("🟡" if prospect.score >= 40 else "🔴")
     logger.info(

@@ -37,6 +37,7 @@ class Prospect:
     maps_url: str = ""          # Lien Google Maps vers la fiche
     # Remplis par analyzer.py
     issues: List[str] = field(default_factory=list)  # Problèmes détectés sur le site
+    issue_keys: List[str] = field(default_factory=list)  # Clés normalisées des problèmes (pour personnalisation email)
     score: int = 0              # Score de 0 à 100 (plus bas = plus d'opportunités)
     email: Optional[str] = None # Email scrapé sur le site du prospect
     cms: Optional[str] = None   # CMS/builder détecté (ex: "WordPress", "Wix")
