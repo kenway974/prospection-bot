@@ -457,14 +457,78 @@ with col1:
     )
     keywords = [k.strip() for k in keywords_raw.splitlines() if k.strip()]
 
-    st.markdown("**✉️ Accroche email** *(personnalisable)*")
-    email_hook = st.text_area(
-        "Accroche email",
-        value=selected_service.email_hook,
-        height=100,
-        label_visibility="collapsed",
-        help="Utilisez {name} pour insérer le nom du prospect",
-    )
+    from services.mailer import EmailStyle, EMAIL_STYLE_LABELS, build_dynamic_email
+    from services.google_maps import Prospect as _PreviewProspect
+
+    with st.expander("✉️ Style des emails", expanded=False):
+        _email_intonation = st.radio(
+            "Intonation",
+            options=list(EMAIL_STYLE_LABELS["intonation"].keys()),
+            format_func=lambda k: EMAIL_STYLE_LABELS["intonation"][k],
+            index=list(EMAIL_STYLE_LABELS["intonation"].keys()).index(
+                _get("email_intonation") if _get("email_intonation") in EMAIL_STYLE_LABELS["intonation"] else "professional"
+            ),
+            horizontal=True,
+            key="email_intonation",
+        )
+        _email_length = st.radio(
+            "Longueur",
+            options=list(EMAIL_STYLE_LABELS["length"].keys()),
+            format_func=lambda k: EMAIL_STYLE_LABELS["length"][k],
+            index=list(EMAIL_STYLE_LABELS["length"].keys()).index(
+                _get("email_length") if _get("email_length") in EMAIL_STYLE_LABELS["length"] else "medium"
+            ),
+            horizontal=True,
+            key="email_length",
+        )
+        _email_salutation = st.selectbox(
+            "Formule d'ouverture",
+            options=list(EMAIL_STYLE_LABELS["salutation"].keys()),
+            format_func=lambda k: EMAIL_STYLE_LABELS["salutation"][k],
+            index=list(EMAIL_STYLE_LABELS["salutation"].keys()).index(
+                _get("email_salutation") if _get("email_salutation") in EMAIL_STYLE_LABELS["salutation"] else "neutral"
+            ),
+            key="email_salutation",
+        )
+        _email_cta = st.selectbox(
+            "Appel à l'action",
+            options=list(EMAIL_STYLE_LABELS["cta"].keys()),
+            format_func=lambda k: EMAIL_STYLE_LABELS["cta"][k],
+            index=list(EMAIL_STYLE_LABELS["cta"].keys()).index(
+                _get("email_cta") if _get("email_cta") in EMAIL_STYLE_LABELS["cta"] else "audit"
+            ),
+            key="email_cta",
+        )
+
+        # Prévisualisation avec un faux prospect
+        _preview_style = EmailStyle(
+            intonation=_email_intonation,
+            length=_email_length,
+            salutation=_email_salutation,
+            cta=_email_cta,
+        )
+        st.markdown("**Aperçu (site sans HTTPS + pas de formulaire) :**")
+        _preview_prospect = _PreviewProspect(
+            place_id="preview",
+            name="Votre Prospect",
+            address="",
+            phone=None,
+            website="http://exemple.com",
+            rating=None,
+            user_ratings_total=0,
+            keyword="",
+            maps_url="",
+        )
+        _preview_prospect.issue_keys = ["https", "lead_form"]
+        _preview_prospect.score = 40
+        _preview_text = build_dynamic_email(
+            _preview_prospect,
+            _preview_style,
+            your_name=_get("your_name", "YOUR_NAME") or "Votre Nom",
+            your_title=_get("your_title", "YOUR_TITLE") or "",
+            your_offer=selected_service.your_offer or "vous aider à améliorer votre présence en ligne",
+        )
+        st.code(_preview_text, language=None)
 
     st.markdown("**📱 Accroche SMS** *(max 160 caractères)*")
     sms_hook = st.text_input(
@@ -474,6 +538,9 @@ with col1:
     )
     if len(sms_hook) > 160:
         st.warning(f"⚠️ SMS trop long : {len(sms_hook)}/160 caractères")
+
+    # Variables de compatibilité (toujours référencées ailleurs dans app.py)
+    email_hook = selected_service.email_hook
 
 with col2:
     st.markdown("**⚙️ Paramètres**")
@@ -626,7 +693,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
 
         from services.google_maps import fetch_raw_candidates, build_prospect
         from services.analyzer import analyze_prospect
-        from services.mailer import enrich_with_email
+        from services.mailer import enrich_with_email, draft_email, EmailStyle as _EmailStyle
         from services.crm import get_exporter
         from history_manager import load_contacted_ids, mark_as_contacted
         from services import cache as _cache_mod
@@ -773,7 +840,16 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         log_q.put(f"[--] 📋 {len(all_prospects)} prospect(s) qualifiés au total.")
 
         # Emails
-        all_prospects = [enrich_with_email(p) for p in all_prospects]
+        style_dict = params.get("email_style", {})
+        _email_style = _EmailStyle(
+            intonation=style_dict.get("intonation", "professional"),
+            length=style_dict.get("length", "medium"),
+            salutation=style_dict.get("salutation", "neutral"),
+            cta=style_dict.get("cta", "audit"),
+        )
+        for _p in all_prospects:
+            _p.email_draft = draft_email(_p, style=_email_style)
+        all_prospects = list(all_prospects)
 
         # 4. Tri
         reverse_sort = (score_direction == "desc")
@@ -931,6 +1007,10 @@ if launch and not st.session_state.running:
         "service_category":  selected_svc_cat,
         "target_id":         selected_target_id,
         "target_sector":     selected_tgt_sector,
+        "email_intonation":  _email_intonation,
+        "email_length":      _email_length,
+        "email_salutation":  _email_salutation,
+        "email_cta":         _email_cta,
     })
 
     result_container = []
@@ -953,6 +1033,12 @@ if launch and not st.session_state.running:
         "your_offer": your_offer,
         "email_hook": email_hook,
         "sms_hook": sms_hook,
+        "email_style": {
+            "intonation": _email_intonation,
+            "length":     _email_length,
+            "salutation": _email_salutation,
+            "cta":        _email_cta,
+        },
         "profile_id": f"{selected_service_id}_x_{selected_target_id}",
         "profile_name": f"{selected_service.emoji} {selected_service.name}  →  {selected_target.emoji} {selected_target.name}",
         "weight_overrides": selected_service.check_weight_overrides,
