@@ -54,6 +54,21 @@ CITY_TO_DEPT: dict = {
     "rouen": "76",
     "besancon": "25",
     "besançon": "25",
+    # DOM-TOM
+    "la réunion": "974",
+    "la reunion": "974",
+    "réunion": "974",
+    "reunion": "974",
+    "saint-denis": "974",   # saint-denis de la réunion (le plus commun)
+    "saint-paul": "974",
+    "saint-pierre": "974",
+    "le tampon": "974",
+    "saint-andré": "974",
+    "saint-andre": "974",
+    "guadeloupe": "971",
+    "martinique": "972",
+    "guyane": "973",
+    "mayotte": "976",
 }
 
 BASE_URL = "https://recherche-entreprises.api.gouv.fr/search"
