@@ -49,11 +49,12 @@ SERVICE_PROFILES: List[ServiceProfile] = [
         your_title="Développeur Web",
         your_offer="Création et refonte de sites web professionnels pour TPE et artisans",
         email_hook=(
-            "En cherchant {name} sur Google, j'ai analysé votre présence en ligne "
-            "et identifié plusieurs points qui freinent votre visibilité et vos conversions."
+            "En cherchant {name} sur Google, j'ai constaté que votre présence en ligne "
+            "pourrait être largement améliorée — que ce soit pour créer votre premier site "
+            "ou moderniser celui que vous avez déjà."
         ),
-        sms_hook="J'ai analysé votre site et trouvé des axes d'amélioration. Dispo pour un retour gratuit ?",
-        score_threshold_default=100,
+        sms_hook="Votre présence en ligne peut être boostée. Site à créer ou refaire ? Je m'en occupe.",
+        score_threshold_default=60,
     ),
 
     ServiceProfile(
