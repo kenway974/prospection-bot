@@ -14,9 +14,236 @@ from __future__ import annotations
 
 import hashlib
 import os
+from dataclasses import dataclass, field
 from config import config, logger
 from services.google_maps import Prospect
 
+
+# ---------------------------------------------------------------------------
+# Style configurable des emails dynamiques
+# ---------------------------------------------------------------------------
+
+@dataclass
+class EmailStyle:
+    intonation: str = "professional"  # "formal" | "professional" | "direct" | "casual"
+    length: str = "medium"            # "short" | "medium" | "long"
+    salutation: str = "neutral"       # "formal" | "neutral" | "first_name"
+    cta: str = "audit"               # "audit" | "call" | "meeting" | "reply"
+
+
+EMAIL_STYLE_LABELS = {
+    "intonation": {
+        "formal":       "Formel",
+        "professional": "Professionnel",
+        "direct":       "Direct",
+        "casual":       "Décontracté",
+    },
+    "length": {
+        "short":  "Court (3-4 lignes)",
+        "medium": "Moyen (2 paragraphes)",
+        "long":   "Long (3 paragraphes)",
+    },
+    "salutation": {
+        "formal":     "Madame, Monsieur,",
+        "neutral":    "Bonjour,",
+        "first_name": "Bonjour [Prénom],",
+    },
+    "cta": {
+        "audit":   "Je vous propose un audit gratuit — sans engagement.",
+        "call":    "Seriez-vous disponible pour un appel de 15 min cette semaine ?",
+        "meeting": "Je serais ravi(e) d'en discuter lors d'un rapide échange.",
+        "reply":   "N'hésitez pas à me répondre pour en savoir plus.",
+    },
+}
+
+# Structure : issue_key → {intonation: sentence}
+# {name} sera remplacé par le nom du prospect, {cms} par le CMS détecté
+ISSUE_COPY = {
+    "no_website": {
+        "formal":       "Il m'est apparu que {name} ne dispose pas encore de site internet. Dans votre secteur d'activité, cette absence constitue un frein significatif à l'acquisition de nouveaux clients.",
+        "professional": "En cherchant {name} en ligne, j'ai constaté l'absence de site web. Dans votre secteur, une présence web est devenue incontournable pour capter de nouveaux clients.",
+        "direct":       "{name} n'a pas de site web — vos concurrents captent chaque jour les clients qui vous cherchent sur Google.",
+        "casual":       "J'ai voulu consulter votre site web... et je n'en ai pas trouvé ! Dans votre domaine, c'est une vraie opportunité à saisir avant vos concurrents.",
+    },
+    "site_down": {
+        "formal":       "Votre site internet semble actuellement inaccessible, ce qui prive vos clients potentiels de tout accès à votre activité en ligne.",
+        "professional": "Votre site est actuellement inaccessible — vos visiteurs tombent sur une erreur et repartent chez la concurrence.",
+        "direct":       "Votre site est down. Vos clients ne peuvent pas vous trouver en ligne.",
+        "casual":       "Mauvaise nouvelle : votre site est actuellement inaccessible ! Vos clients arrivent sur une page d'erreur...",
+    },
+    "https": {
+        "formal":       "Votre site fonctionne en HTTP non sécurisé, ce qui entraîne l'affichage d'un avertissement de sécurité dans les navigateurs et pénalise votre référencement.",
+        "professional": "Votre site n'est pas sécurisé (HTTP) : Google affiche un avertissement à vos visiteurs et pénalise les sites sans HTTPS dans ses résultats.",
+        "direct":       "Votre site est en HTTP — pas en HTTPS. Google le déclasse et vos visiteurs voient un avertissement de sécurité.",
+        "casual":       "Votre site n'a pas le cadenas HTTPS — les navigateurs affichent un message d'alerte à vos visiteurs, ce qui fait fuir beaucoup de monde.",
+    },
+    "viewport": {
+        "formal":       "Votre site n'est pas optimisé pour les appareils mobiles, alors que plus de 60 % des recherches locales sont effectuées depuis un smartphone.",
+        "professional": "Votre site n'est pas adapté aux mobiles — or plus de 60% de vos clients potentiels vous cherchent depuis leur téléphone.",
+        "direct":       "Votre site n'est pas responsive. Sur mobile, il est illisible — 60% de vos visiteurs potentiels partent immédiatement.",
+        "casual":       "Sur téléphone, votre site est vraiment difficile à lire... Et c'est sur mobile que la plupart des gens vous cherchent !",
+    },
+    "tracking": {
+        "formal":       "Aucun outil de mesure d'audience n'est installé sur votre site, ce qui vous prive de toute donnée sur le comportement de vos visiteurs.",
+        "professional": "Votre site ne dispose d'aucun analytics — vous ne savez pas combien de personnes vous visitent, ni comment elles vous ont trouvé.",
+        "direct":       "Pas d'analytics sur votre site. Vous pilotez à l'aveugle : impossible de savoir ce qui marche ou non.",
+        "casual":       "Votre site n'a pas de stats ! Vous ne pouvez pas savoir combien de personnes le visitent ni ce qu'elles font dessus.",
+    },
+    "lead_form": {
+        "formal":       "Votre site ne propose pas de formulaire de contact, ce qui complique considérablement la prise de contact pour vos visiteurs.",
+        "professional": "Votre site n'a pas de formulaire de contact visible — vos visiteurs intéressés n'ont aucun moyen simple de vous joindre.",
+        "direct":       "Pas de formulaire sur votre site. Vos visiteurs n'ont aucun moyen facile de vous contacter — vous perdez des leads.",
+        "casual":       "Il n'y a pas de formulaire de contact sur votre site — un visiteur intéressé ne sait pas comment vous écrire facilement !",
+    },
+    "free_builder": {
+        "formal":       "Votre site est actuellement construit avec {cms}, un outil grand public qui présente des limitations importantes en matière de référencement et de personnalisation.",
+        "professional": "Votre site est sur {cms} — ces plateformes limitent vos options SEO, votre vitesse de chargement et la personnalisation de votre image.",
+        "direct":       "Votre site tourne sur {cms}. Ces outils freinent votre référencement Google et donnent une image peu professionnelle.",
+        "casual":       "Votre site est sur {cms} — c'est bien pour démarrer, mais ça bloque votre référencement et ça se voit visuellement.",
+    },
+    "response_time": {
+        "formal":       "Votre site présente des temps de chargement élevés, ce qui nuit à l'expérience utilisateur et pénalise votre positionnement dans les résultats Google.",
+        "professional": "Votre site est lent à charger sur mobile — Google pénalise les sites qui mettent plus de 3 secondes, et vos visiteurs abandonnent avant même de voir votre contenu.",
+        "direct":       "Votre site est lent. Google déclasse les sites lents, et vos visiteurs partent avant que la page charge.",
+        "casual":       "Votre site met beaucoup de temps à charger... 3 secondes, c'est le maximum avant que les gens partent sans même voir votre contenu.",
+    },
+    "title": {
+        "formal":       "La balise titre de votre site n'est pas optimisée, ce qui limite significativement votre visibilité dans les résultats de recherche Google.",
+        "professional": "La balise titre de votre site (ce qui apparaît dans Google) est absente ou mal renseignée — vous n'apparaissez pas sur vos mots-clés cibles.",
+        "direct":       "Votre balise titre est mal configurée — vous n'apparaissez pas sur Google pour les recherches de vos clients.",
+        "casual":       "Sur Google, le titre de votre site n'est pas optimisé — du coup vous n'apparaissez pas quand vos clients vous cherchent.",
+    },
+    "meta_description": {
+        "formal":       "La méta-description de votre site est absente ou générique, réduisant votre taux de clics depuis les résultats Google.",
+        "professional": "Votre méta-description (le texte affiché sous votre lien dans Google) est absente — c'est une occasion manquée de convaincre les visiteurs de cliquer.",
+        "direct":       "Votre description dans Google est vide ou générique. Personne ne clique sur un lien sans description.",
+        "casual":       "Dans Google, sous le lien de votre site, il n'y a pas de description... ça donne peu envie de cliquer !",
+    },
+    "social_links": {
+        "formal":       "Votre site ne référence aucun réseau social, privant vos visiteurs d'un moyen de vous suivre et de maintenir le contact avec votre marque.",
+        "professional": "Votre site n'affiche aucun lien vers vos réseaux sociaux — une opportunité manquée de fidéliser vos visiteurs.",
+        "direct":       "Pas de liens réseaux sociaux sur votre site. Vous perdez des followers potentiels à chaque visite.",
+        "casual":       "Vos réseaux sociaux ne sont pas liés depuis votre site — dommage, vous ratez des abonnés !",
+    },
+    "outdated": {
+        "formal":       "Le design de votre site semble dater de plusieurs années, ce qui peut nuire à la perception de professionnalisme et de modernité de votre activité.",
+        "professional": "Visuellement, votre site date — un design moderne renforce immédiatement la confiance de vos visiteurs et reflète mieux la qualité de vos services.",
+        "direct":       "Votre site est visuellement daté. En 2024, un site vieillissant fait fuir les clients avant même qu'ils lisent votre offre.",
+        "casual":       "Honnêtement, votre site a un peu vieilli visuellement — ça peut donner l'impression que votre activité n'est plus très active.",
+    },
+}
+
+INTRO_TEMPLATES = {
+    "formal": (
+        "Je me permets de vous contacter suite à l'analyse de la présence en ligne de {name}. "
+        "Voici les principaux points que j'ai identifiés :"
+    ),
+    "professional": (
+        "En analysant la présence en ligne de {name}, j'ai identifié plusieurs points "
+        "qui méritent votre attention :"
+    ),
+    "direct": "En deux mots, voilà ce que j'ai trouvé sur {name} :",
+    "casual": "J'ai jeté un œil à votre présence en ligne, et voilà ce que j'ai vu :",
+}
+
+SIGN_OFF = {
+    "formal":       "Dans l'attente de votre retour, je reste à votre disposition.\n\nCordialement,",
+    "professional": "Je reste disponible pour toute question.\n\nBien cordialement,",
+    "direct":       "Au plaisir d'échanger,",
+    "casual":       "À bientôt j'espère !",
+}
+
+
+# ---------------------------------------------------------------------------
+# Génération dynamique selon audit + style
+# ---------------------------------------------------------------------------
+
+def build_dynamic_email(
+    prospect: Prospect,
+    style: EmailStyle,
+    your_name: str,
+    your_title: str,
+    your_offer: str,
+) -> str:
+    """
+    Génère un email personnalisé selon les résultats de l'audit ET le style choisi.
+    """
+    intonation = style.intonation
+    length = style.length
+
+    # --- Salutation ---
+    salutation_map = {
+        "formal":     "Madame, Monsieur,",
+        "neutral":    "Bonjour,",
+        "first_name": "Bonjour,",  # prénom non disponible en général
+    }
+    salutation = salutation_map.get(style.salutation, "Bonjour,")
+
+    # --- Problèmes à mentionner ---
+    keys = list(prospect.issue_keys) if prospect.issue_keys else []
+
+    # Nombre de problèmes selon la longueur
+    n_issues = {"short": 1, "medium": 2, "long": 3}.get(length, 2)
+    keys_to_use = keys[:n_issues]
+
+    # --- Corps des problèmes ---
+    issue_paragraphs = []
+    cms = prospect.cms or "cet outil"
+    for key in keys_to_use:
+        if key in ISSUE_COPY:
+            sentence = ISSUE_COPY[key].get(intonation, ISSUE_COPY[key]["professional"])
+            sentence = sentence.format(name=prospect.name, cms=cms)
+            issue_paragraphs.append(sentence)
+
+    # Si aucun problème détecté → message générique
+    if not issue_paragraphs:
+        issue_paragraphs = [
+            f"En analysant la présence en ligne de {prospect.name}, j'ai identifié "
+            "des opportunités d'amélioration qui pourraient booster votre visibilité."
+        ]
+
+    # --- Intro ---
+    if length == "short":
+        intro = ""
+    else:
+        intro_template = INTRO_TEMPLATES.get(intonation, INTRO_TEMPLATES["professional"])
+        intro = intro_template.format(name=prospect.name)
+
+    # --- Proposition de valeur ---
+    if length != "short" and your_offer:
+        value_prop = f"{your_offer}."
+    else:
+        value_prop = ""
+
+    # --- CTA ---
+    cta = EMAIL_STYLE_LABELS["cta"].get(style.cta, EMAIL_STYLE_LABELS["cta"]["audit"])
+
+    # --- Signature ---
+    sign_off = SIGN_OFF.get(intonation, SIGN_OFF["professional"])
+    signature = f"{sign_off}\n{your_name}"
+    if your_title:
+        signature += f"\n{your_title}"
+
+    # --- Assemblage ---
+    parts = [salutation, ""]
+    if intro:
+        parts.append(intro)
+        parts.append("")
+    parts.extend(issue_paragraphs)
+    parts.append("")
+    if value_prop:
+        parts.append(value_prop)
+        parts.append("")
+    parts.append(cta)
+    parts.append("")
+    parts.append(signature)
+
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# A/B test helpers
+# ---------------------------------------------------------------------------
 
 def get_template_variant(place_id: str) -> str:
     """Assigne le variant A ou B de façon déterministe via le hash du place_id (50/50)."""
@@ -287,8 +514,17 @@ def _draft_email_a(prospect: Prospect) -> str:
     return "\n".join(parts).strip()
 
 
-def draft_email(prospect: Prospect) -> str:
-    """Dispatche vers le template A ou B selon le hash du place_id (test A/B 50/50)."""
+def draft_email(prospect: Prospect, style: "EmailStyle | None" = None) -> str:
+    """Dispatche vers le template A ou B selon le hash du place_id (test A/B 50/50).
+    Si `style` est fourni, utilise build_dynamic_email à la place des templates A/B."""
+    if style is not None:
+        return build_dynamic_email(
+            prospect,
+            style,
+            your_name=config.your_name,
+            your_title=config.your_title,
+            your_offer=os.getenv("YOUR_OFFER", "").strip(),
+        )
     variant = get_template_variant(prospect.place_id)
     return _draft_email_b(prospect) if variant == "B" else _draft_email_a(prospect)
 
