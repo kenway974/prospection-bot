@@ -142,20 +142,22 @@ with st.sidebar:
     st.markdown("## 🎯 Prospection B2B")
     st.markdown("---")
 
-    st.markdown("### 📡 Source de prospection")
+    st.markdown("### 📡 Sources de prospection")
     from services.sources import SOURCE_LABELS as _SRC_LABELS
-    source_type = st.selectbox(
-        "Source",
+    source_types = st.multiselect(
+        "Sources",
         options=list(_SRC_LABELS.keys()),
+        default=[s for s in (_get("source_types") or "google_maps").split(",") if s in _SRC_LABELS],
         format_func=lambda x: _SRC_LABELS[x],
-        index=list(_SRC_LABELS.keys()).index(_get("source_type") or "google_maps"),
         label_visibility="collapsed",
     )
+    if not source_types:
+        source_types = ["google_maps"]
 
     # Config spécifique à la source
     ft_client_id = ft_client_secret = google_cx = ""
 
-    if source_type == "france_travail":
+    if "france_travail" in source_types:
         st.markdown("**Client ID France Travail**")
         ft_client_id = st.text_input(
             "FT Client ID", value=_get("ft_client_id", "FT_CLIENT_ID"),
@@ -175,7 +177,7 @@ with st.sidebar:
 4. Récupère **Client ID** et **Client Secret** dans l'onglet **Mes applications**
 """)
 
-    elif source_type == "google_search":
+    if "google_search" in source_types:
         st.markdown("**Custom Search Engine ID (cx)**")
         google_cx = st.text_input(
             "CX", value=_get("google_cx", "GOOGLE_CX"),
@@ -189,19 +191,19 @@ with st.sidebar:
 4. La clé Google API existante est réutilisée automatiquement
 """)
 
-    elif source_type == "sirene":
-        st.caption("✅ Aucune clé requise — API officielle data.gouv.fr (gratuite).")
+    if "sirene" in source_types:
+        st.caption("✅ Aucune clé requise — Sirene (gratuite)")
 
-    elif source_type == "pages_jaunes":
-        st.caption("✅ Aucune clé requise — scraping de l'annuaire public Pages Jaunes.")
+    if "pages_jaunes" in source_types:
+        st.caption("✅ Aucune clé requise — Pages Jaunes")
 
-    elif source_type == "linkedin_csv":
-        st.caption("📎 Le fichier CSV LinkedIn s'importe dans la zone principale.")
+    if "linkedin_csv" in source_types:
+        st.caption("📎 Le fichier CSV s'importe en bas")
 
     st.markdown("---")
     st.markdown("### 🔑 Clés API")
 
-    google_key_required = source_type in ("google_maps", "google_search")
+    google_key_required = "google_maps" in source_types or "google_search" in source_types
     st.markdown(
         "**Google Places / Search API Key** "
         "— [Obtenir ici ↗](https://console.cloud.google.com/apis/credentials)"
@@ -507,7 +509,16 @@ with col1:
             salutation=_email_salutation,
             cta=_email_cta,
         )
-        st.markdown("**Aperçu (site sans HTTPS + pas de formulaire) :**")
+        _preview_issue_map = {
+            "web_digital":  (["https", "lead_form"],       "site sans HTTPS + pas de formulaire"),
+            "creatif":      (["no_gallery", "no_video"],   "pas de galerie + pas de vidéo"),
+            "conseil_b2b":  (["tracking", "no_blog"],      "pas de tracking + pas de blog"),
+            "sante":        (["no_service_mention"],        "service non mentionné sur le site"),
+            "terrain":      (["no_service_mention"],        "service non mentionné sur le site"),
+            "special":      (["no_service_mention"],        "service non mentionné sur le site"),
+        }
+        _pkeys, _plabel = _preview_issue_map.get(selected_svc_cat, (["https", "lead_form"], "site sans HTTPS"))
+        st.markdown(f"**Aperçu ({_plabel}) :**")
         _preview_prospect = _PreviewProspect(
             place_id="preview",
             name="Votre Prospect",
@@ -519,7 +530,7 @@ with col1:
             keyword="",
             maps_url="",
         )
-        _preview_prospect.issue_keys = ["https", "lead_form"]
+        _preview_prospect.issue_keys = _pkeys
         _preview_prospect.score = 40
         _preview_text = build_dynamic_email(
             _preview_prospect,
@@ -527,6 +538,8 @@ with col1:
             your_name=_get("your_name", "YOUR_NAME") or "Votre Nom",
             your_title=_get("your_title", "YOUR_TITLE") or "",
             your_offer=selected_service.your_offer or "vous aider à améliorer votre présence en ligne",
+            service_id=selected_service_id,
+            service_category=selected_svc_cat,
         )
         st.code(_preview_text, language=None)
 
@@ -604,7 +617,7 @@ with col2:
 
 # LinkedIn CSV uploader (visible seulement si source linkedin_csv sélectionnée)
 linkedin_content = ""
-if source_type == "linkedin_csv":
+if "linkedin_csv" in source_types:
     st.markdown("---")
     st.markdown("### 📎 Import CSV LinkedIn")
     st.caption(
@@ -712,7 +725,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         score_direction = params.get("score_direction", "asc")
         weight_overrides = params.get("weight_overrides", {})
         already_contacted = load_contacted_ids()
-        source           = params.get("source_type", "google_maps")
+        sources = params.get("source_types", [params.get("source_type", "google_maps")])
 
         all_qualified: list = []
         seen: set = set()
@@ -723,8 +736,12 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             if not candidates:
                 return []
             batch = candidates[:target_per_kw * 3]
+            detection_kws = params.get("detection_keywords", [])
             with ThreadPoolExecutor(max_workers=min(workers, len(batch))) as ex:
-                analyzed = list(ex.map(partial(analyze_prospect, weight_overrides=weight_overrides), batch))
+                analyzed = list(ex.map(
+                    partial(analyze_prospect, weight_overrides=weight_overrides, detection_keywords=detection_kws or None),
+                    batch,
+                ))
             qualified = []
             for p in analyzed:
                 qualifies = (p.score >= threshold if score_direction == "desc" else p.score <= threshold)
@@ -744,92 +761,102 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             return out
 
         # ── LinkedIn CSV : traitement hors boucle mots-clés ──────────────────
-        if source == "linkedin_csv":
+        if "linkedin_csv" in sources:
             csv_content = params.get("linkedin_content", "")
             if not csv_content:
-                log_q.put("[--] ❌ Aucun fichier CSV LinkedIn fourni.")
+                if len(sources) == 1:
+                    log_q.put("[--] ❌ Aucun fichier CSV LinkedIn fourni.")
             else:
                 raw_li = parse_linkedin_csv(csv_content, "LinkedIn")
                 li_ok = _dedup(raw_li)
                 log_q.put(f"[--] 📎 {len(li_ok)} contact(s) LinkedIn à analyser…")
                 all_qualified.extend(_analyse_and_filter(li_ok, "LinkedIn"))
 
-        else:
-            # ── Boucle par mot-clé (Google Maps + Sirene + PJ + FT + GS) ────
+        # ── Boucle par mot-clé (toutes sources hors LinkedIn) ────────────────
+        kw_sources = [s for s in sources if s != "linkedin_csv"]
+        if kw_sources:
             for kw in params["keywords"]:
-                src_label = SOURCE_LABELS.get(source, source)
-                log_q.put(f"[--] 🔍 [{src_label}] '{kw}' — objectif {target_per_kw}…")
+                src_labels_str = " + ".join(SOURCE_LABELS.get(s, s) for s in kw_sources)
+                log_q.put(f"[--] 🔍 [{src_labels_str}] '{kw}' — objectif {target_per_kw}…")
 
-                if source == "google_maps":
-                    # ── Phase 1 : Text Search ──
-                    raw_candidates = fetch_raw_candidates(kw)
-                    if not raw_candidates:
-                        log_q.put(f"[--] ❌ Aucun résultat Google pour '{kw}'.")
-                        continue
+                candidates: list = []
 
-                    skip_contacted = skip_seen = skip_api = skip_rating = 0
-                    raw_to_build: list = []
-                    for raw in raw_candidates:
-                        if len(raw_to_build) >= target_per_kw * 4:
-                            break
-                        pid = raw.get("place_id", "")
-                        if not pid:
+                for source in kw_sources:
+                    if source == "google_maps":
+                        # ── Phase 1 : Text Search ──
+                        raw_candidates = fetch_raw_candidates(kw)
+                        if not raw_candidates:
+                            log_q.put(f"[--] ❌ Aucun résultat Google Maps pour '{kw}'.")
                             continue
-                        if pid in seen:
-                            skip_seen += 1; continue
-                        if pid in already_contacted:
-                            skip_contacted += 1; continue
-                        seen.add(pid)
-                        raw_to_build.append(raw)
 
-                    if not raw_to_build:
-                        log_q.put(f"[--] ⚠️  0/{target_per_kw} — tous déjà contactés ou vus.")
-                        continue
+                        skip_contacted = skip_seen = 0
+                        raw_to_build: list = []
+                        for raw in raw_candidates:
+                            if len(raw_to_build) >= target_per_kw * 4:
+                                break
+                            pid = raw.get("place_id", "")
+                            if not pid:
+                                continue
+                            if pid in seen:
+                                skip_seen += 1; continue
+                            if pid in already_contacted:
+                                skip_contacted += 1; continue
+                            seen.add(pid)
+                            raw_to_build.append(raw)
 
-                    # ── Phase 2 : Place Details en parallèle ──
-                    with ThreadPoolExecutor(max_workers=min(workers, len(raw_to_build))) as ex:
-                        built_list = list(ex.map(partial(build_prospect, keyword=kw), raw_to_build))
+                        if not raw_to_build:
+                            log_q.put(f"[--] ⚠️  [Google Maps] tous déjà contactés ou vus pour '{kw}'.")
+                            continue
 
-                    candidates: list = []
-                    for p in built_list:
-                        if p is None:
-                            skip_api += 1
-                        elif p.rating is not None and p.rating < min_rating:
-                            skip_rating += 1
-                        else:
-                            candidates.append(p)
+                        # ── Phase 2 : Place Details en parallèle ──
+                        with ThreadPoolExecutor(max_workers=min(workers, len(raw_to_build))) as ex:
+                            built_list = list(ex.map(partial(build_prospect, keyword=kw), raw_to_build))
 
-                    if not candidates:
-                        reasons = []
-                        if skip_api:    reasons.append(f"{skip_api} erreur(s) API")
-                        if skip_rating: reasons.append(f"{skip_rating} note(s) trop basse(s)")
-                        log_q.put(f"[--] ⚠️  0/{target_per_kw} — {' | '.join(reasons) or 'Google épuisé'}.")
-                        continue
+                        skip_api = skip_rating = 0
+                        for p in built_list:
+                            if p is None:
+                                skip_api += 1
+                            elif p.rating is not None and p.rating < min_rating:
+                                skip_rating += 1
+                            else:
+                                candidates.append(p)
 
-                else:
-                    # ── Sources alternatives : retournent directement des Prospects ──
-                    if source == "sirene":
-                        raw = search_sirene(kw, params["location"], target_per_kw * 3)
-                    elif source == "pages_jaunes":
-                        raw = search_pages_jaunes(kw, params["location"], target_per_kw * 3)
-                    elif source == "france_travail":
-                        raw = search_france_travail(
-                            kw, params["location"], target_per_kw * 3,
-                            client_id=params.get("ft_client_id", ""),
-                            client_secret=params.get("ft_client_secret", ""),
-                        )
-                    elif source == "google_search":
-                        raw = search_google_custom(
-                            kw, params["location"], target_per_kw * 3,
-                            cx=params.get("google_cx", ""),
-                        )
+                        if skip_api or skip_rating:
+                            reasons = []
+                            if skip_api:    reasons.append(f"{skip_api} erreur(s) API")
+                            if skip_rating: reasons.append(f"{skip_rating} note(s) trop basse(s)")
+                            log_q.put(f"[--] ⚠️  [Google Maps] {' | '.join(reasons)} pour '{kw}'.")
+
                     else:
-                        raw = []
+                        # ── Sources alternatives : retournent directement des Prospects ──
+                        src_label = SOURCE_LABELS.get(source, source)
+                        if source == "sirene":
+                            raw = search_sirene(kw, params["location"], target_per_kw * 3)
+                        elif source == "pages_jaunes":
+                            raw = search_pages_jaunes(kw, params["location"], target_per_kw * 3)
+                        elif source == "france_travail":
+                            raw = search_france_travail(
+                                kw, params["location"], target_per_kw * 3,
+                                client_id=params.get("ft_client_id", ""),
+                                client_secret=params.get("ft_client_secret", ""),
+                            )
+                        elif source == "google_search":
+                            raw = search_google_custom(
+                                kw, params["location"], target_per_kw * 3,
+                                cx=params.get("google_cx", ""),
+                            )
+                        else:
+                            raw = []
 
-                    candidates = _dedup(raw)
-                    if not candidates:
-                        log_q.put(f"[--] ⚠️  0 résultat {src_label} pour '{kw}'.")
-                        continue
+                        deduped = _dedup(raw)
+                        if not deduped:
+                            log_q.put(f"[--] ⚠️  0 résultat {src_label} pour '{kw}'.")
+                        else:
+                            candidates.extend(deduped)
+
+                if not candidates:
+                    log_q.put(f"[--] ⚠️  0 candidat(s) au total pour '{kw}'.")
+                    continue
 
                 # ── Phase 3+4 : Analyse + filtre score (commun toutes sources) ──
                 kw_qualified = _analyse_and_filter(candidates, kw)[:target_per_kw]
@@ -847,8 +874,10 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             salutation=style_dict.get("salutation", "neutral"),
             cta=style_dict.get("cta", "audit"),
         )
+        _svc_id  = params.get("service_id", "")
+        _svc_cat = params.get("service_category", "web_digital")
         for _p in all_prospects:
-            _p.email_draft = draft_email(_p, style=_email_style)
+            _p.email_draft = draft_email(_p, style=_email_style, service_id=_svc_id, service_category=_svc_cat)
         all_prospects = list(all_prospects)
 
         # 4. Tri
@@ -954,26 +983,28 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
 col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
 with col_btn2:
     _launch_disabled = st.session_state.running
-    if source_type == "google_maps":
-        _launch_disabled = _launch_disabled or not google_key or not keywords or not location
-    elif source_type == "google_search":
-        _launch_disabled = _launch_disabled or not google_key or not google_cx or not keywords or not location
-    elif source_type == "france_travail":
-        _launch_disabled = _launch_disabled or not ft_client_id or not ft_client_secret or not keywords or not location
-    elif source_type == "linkedin_csv":
-        _launch_disabled = _launch_disabled or not linkedin_content
-    else:  # sirene, pages_jaunes
+    if not source_types:
+        _launch_disabled = True
+    if ("google_maps" in source_types or "google_search" in source_types) and not google_key:
+        _launch_disabled = True
+    if "google_search" in source_types and not google_cx:
+        _launch_disabled = True
+    if "france_travail" in source_types and (not ft_client_id or not ft_client_secret):
+        _launch_disabled = True
+    if "linkedin_csv" in source_types and not linkedin_content:
+        _launch_disabled = True
+    if not keywords and not ("linkedin_csv" in source_types and len(source_types) == 1):
         _launch_disabled = _launch_disabled or not keywords or not location
 
     launch = st.button("🚀 Lancer la prospection", disabled=_launch_disabled)
 
-if source_type == "google_maps" and not google_key:
+if ("google_maps" in source_types or "google_search" in source_types) and not google_key:
     st.info("👈 Renseigne ta clé Google Places dans la barre latérale pour commencer.")
-elif source_type == "google_search" and not google_cx:
+if "google_search" in source_types and not google_cx:
     st.info("👈 Renseigne ton Custom Search Engine ID (cx) dans la barre latérale.")
-elif source_type == "france_travail" and (not ft_client_id or not ft_client_secret):
+if "france_travail" in source_types and (not ft_client_id or not ft_client_secret):
     st.info("👈 Renseigne tes identifiants France Travail dans la barre latérale.")
-elif source_type == "linkedin_csv" and not linkedin_content:
+if "linkedin_csv" in source_types and not linkedin_content:
     st.info("👆 Importe un fichier CSV LinkedIn ci-dessus pour commencer.")
 
 # ---------------------------------------------------------------------------
@@ -989,7 +1020,8 @@ if launch and not st.session_state.running:
     # Persistance des paramètres (rechargés comme defaults au prochain démarrage)
     _save_settings({
         "google_api_key":    google_key,
-        "source_type":       source_type,
+        "source_types":      ",".join(source_types),
+        "source_type":       source_types[0] if source_types else "google_maps",
         "ft_client_id":      ft_client_id or None,
         "ft_client_secret":  ft_client_secret or None,
         "google_cx":         google_cx or None,
@@ -1041,6 +1073,9 @@ if launch and not st.session_state.running:
         },
         "profile_id": f"{selected_service_id}_x_{selected_target_id}",
         "profile_name": f"{selected_service.emoji} {selected_service.name}  →  {selected_target.emoji} {selected_target.name}",
+        "service_id": selected_service_id,
+        "service_category": selected_svc_cat,
+        "detection_keywords": selected_service.detection_keywords,
         "weight_overrides": selected_service.check_weight_overrides,
         "score_direction": selected_service.score_direction,
         "min_rating": min_rating,
@@ -1054,7 +1089,8 @@ if launch and not st.session_state.running:
         "email_send_mode": _email_mode,
         "sched_date": _sched_date.isoformat() if _sched_date else None,
         "sched_time": _sched_time.strftime("%H:%M") if _sched_time else None,
-        "source_type":       source_type,
+        "source_types":      source_types,
+        "source_type":       source_types[0] if source_types else "google_maps",
         "ft_client_id":      ft_client_id,
         "ft_client_secret":  ft_client_secret,
         "google_cx":         google_cx,

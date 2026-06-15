@@ -49,6 +49,12 @@ _KEY_PATTERNS = {
     "social_links":  ["réseaux sociaux", "social"],
     "response_time": ["lent", "chargement", "performance", "pagespeed", "temps de"],
     "outdated":      ["daté", "obsolète", "ancien", "non mis à jour"],
+    # Enrichissement sémantique (weight=0 — n'affectent pas le score)
+    "no_video":      ["aucune vidéo", "valorisation par la vidéo"],
+    "no_gallery":    ["aucune galerie", "valorisation visuelle"],
+    "no_blog":       ["aucun blog", "stratégie de contenu"],
+    "french_only":   ["uniquement en français", "version traduite"],
+    # no_service_mention : ajouté directement dans issue_keys (check dynamique)
 }
 
 
@@ -390,6 +396,77 @@ def _check_outdated_site(html: str, issues: _IssueList, weight: int = MAJOR_WEIG
 
 
 # ---------------------------------------------------------------------------
+# Checks d'enrichissement sémantique (weight=0 — n'affectent pas le score)
+# ---------------------------------------------------------------------------
+
+_GALLERY_SIGNALS = [
+    "gallery", "galerie", "carousel", "slider", "lightbox",
+    "swiper", "splide", "isotope", "masonry", "portfolio", "photos",
+]
+
+def _check_no_video(html: str, soup: BeautifulSoup, issues: _IssueList, weight: int = 0) -> None:
+    """Absence de vidéo = opportunité pour un vidéaste / motion designer."""
+    video_signals = ["<video", "youtube.com/embed", "player.vimeo.com", "youtu.be", "dailymotion.com"]
+    if any(s in html.lower() for s in video_signals):
+        return
+    iframes = soup.find_all("iframe", src=True)
+    if any(any(v in (f.get("src") or "").lower() for v in ["youtube", "vimeo", "youtu.be"]) for f in iframes):
+        return
+    issues.append((
+        "Aucune vidéo de présentation détectée → opportunité de valorisation par la vidéo",
+        weight,
+    ))
+
+
+def _check_no_gallery(soup: BeautifulSoup, issues: _IssueList, weight: int = 0) -> None:
+    """Absence de galerie photo = opportunité pour un photographe / graphiste."""
+    html_lower = str(soup).lower()
+    if any(s in html_lower for s in _GALLERY_SIGNALS):
+        return
+    # Beaucoup d'images = galerie implicite
+    imgs = soup.find_all("img", src=True)
+    non_icon_imgs = [
+        img for img in imgs
+        if not any(s in (img.get("src") or "").lower() for s in ["icon", "logo", "favicon", "sprite"])
+    ]
+    if len(non_icon_imgs) >= 6:
+        return
+    issues.append((
+        "Aucune galerie photo ou portfolio détecté → opportunité de valorisation visuelle",
+        weight,
+    ))
+
+
+def _check_no_blog(soup: BeautifulSoup, html: str, issues: _IssueList, weight: int = 0) -> None:
+    """Absence de blog ou contenus éditoriaux."""
+    blog_signals = ["blog", "actualités", "actualites", "nos articles", "nos conseils", "publications"]
+    if any(s in html.lower() for s in blog_signals):
+        return
+    if soup.find("article"):
+        return
+    if soup.find_all("a", href=lambda h: h and "blog" in h.lower()):
+        return
+    issues.append((
+        "Aucun blog ou section actualités détecté → opportunité de stratégie de contenu",
+        weight,
+    ))
+
+
+def _check_french_only(html: str, issues: _IssueList, weight: int = 0) -> None:
+    """Site uniquement en français — opportunité pour un traducteur."""
+    intl_signals = [
+        "english", "español", "deutsch", "italiano", "português",
+        "/en/", "/es/", 'lang="en"', "lang='en'",
+        "in english", "en anglais", "translate",
+    ]
+    if not any(s in html.lower() for s in intl_signals):
+        issues.append((
+            "Site uniquement en français — pas de version traduite détectée → opportunité de traduction",
+            weight,
+        ))
+
+
+# ---------------------------------------------------------------------------
 # Vérification MX d'email
 # ---------------------------------------------------------------------------
 
@@ -474,6 +551,7 @@ def _scrape_email(url: str, soup: BeautifulSoup) -> Optional[str]:
 def analyze_prospect(
     prospect: Prospect,
     weight_overrides: Dict[str, int] | None = None,
+    detection_keywords: Optional[List[str]] = None,
 ) -> Prospect:
     """
     Analyse complète du prospect.
@@ -481,12 +559,12 @@ def analyze_prospect(
     Cas particuliers gérés :
     - Pas de site → score 0, problème unique "pas de site web"
     - Site inaccessible → score 5, problème unique "site down"
-    - Site normal → 10 checks pondérés + scraping email + calcul du score
+    - Site normal → checks pondérés + enrichissement sémantique + scraping email
 
     weight_overrides : dict optionnel pour surcharger les poids par défaut.
-    Exemple : {"social_links": 15} pour rendre ce check critique.
+    detection_keywords : mots-clés métier du profil ; leur absence → no_service_mention.
 
-    Retourne le prospect enrichi (issues, score, email).
+    Retourne le prospect enrichi (issues, score, email, issue_keys).
     """
     # Construction du dict de poids (défauts + surcharges du profil)
     weights = dict(_DEFAULT_WEIGHTS)
@@ -534,7 +612,7 @@ def analyze_prospect(
     soup = BeautifulSoup(html, "lxml")
     weighted_issues: _IssueList = []
 
-    # Cas 3 : site accessible → lancement des 10 checks pondérés
+    # Cas 3 : site accessible → lancement des checks pondérés
     _check_https(url, weighted_issues,              weights[CHECK_HTTPS])
     _check_response_time(elapsed, weighted_issues,  weights[CHECK_RESPONSE_TIME])
     _check_viewport(soup, weighted_issues,          weights[CHECK_VIEWPORT])
@@ -547,6 +625,12 @@ def analyze_prospect(
     _check_outdated_site(html, weighted_issues,     weights[CHECK_OUTDATED])
     _check_delivery_covered(soup, html, weighted_issues, weights[CHECK_DELIVERY_COVERED])
     _check_pagespeed(url, weighted_issues,          weights[CHECK_PAGESPEED])
+
+    # Enrichissement sémantique (weight=0 — stocké en cache, enrichit les emails)
+    _check_no_video(html, soup, weighted_issues)
+    _check_no_gallery(soup, weighted_issues)
+    _check_no_blog(soup, html, weighted_issues)
+    _check_french_only(html, weighted_issues)
 
     # Détection du CMS (pas un check, pas de pénalité — utilisé pour personnaliser l'email)
     prospect.cms = _detect_cms(url, html)
@@ -570,10 +654,14 @@ def analyze_prospect(
     else:
         logger.debug("  📭 Aucun email trouvé pour %s", prospect.name)
 
-    # Score final pondéré : critique = −15, important = −10, mineur = −5
+    # Score final pondéré (les enrichissements à weight=0 n'impactent pas le score)
     prospect.issues = [msg for msg, _ in weighted_issues]
     prospect.score = max(0, MAX_SCORE - sum(w for _, w in weighted_issues))
     prospect.issue_keys = _extract_issue_keys(prospect.issues)
+
+    # no_service_mention : check dynamique non mis en cache (dépend du profil courant)
+    if detection_keywords and not any(kw.lower() in html.lower() for kw in detection_keywords):
+        prospect.issue_keys.append("no_service_mention")
 
     level = "🟢" if prospect.score >= 70 else ("🟡" if prospect.score >= 40 else "🔴")
     logger.info(

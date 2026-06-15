@@ -22,6 +22,8 @@ class ServiceProfile:
     check_weight_overrides: dict = field(default_factory=dict)
     score_direction: str = "asc"           # "asc" = site mauvais = bon prospect
     score_threshold_default: int = 100
+    # Mots-clés : si ABSENTS du site prospect → opportunité (no_service_mention)
+    detection_keywords: List[str] = field(default_factory=list)
 
 
 SERVICE_CATEGORY_LABELS: Dict[str, str] = {
@@ -55,6 +57,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
         ),
         sms_hook="Votre présence en ligne peut être boostée. Site à créer ou refaire ? Je m'en occupe.",
         score_threshold_default=60,
+        detection_keywords=[],
     ),
 
     ServiceProfile(
@@ -71,6 +74,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "Un audit rapide m'a permis d'identifier plusieurs points bloquants pour votre référencement."
         ),
         sms_hook="Votre site n'apparaît pas dans le top Google local. Audit SEO offert — 15 min suffisent.",
+        detection_keywords=[],
         check_weight_overrides={
             "title": 15,
             "meta_description": 15,
@@ -97,6 +101,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "Vos concurrents vous prennent des clients chaque jour grâce à Google Ads et Meta Ads."
         ),
         sms_hook="Pas de tracking sur votre site = vous perdez des clients face à vos concurrents. On corrige ça ?",
+        detection_keywords=[],
         check_weight_overrides={
             "tracking": 30,
             "lead_form": 20,
@@ -126,6 +131,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "qui ne peuvent pas se déplacer — et augmenter votre chiffre d'affaires sans coût fixe supplémentaire."
         ),
         sms_hook="Vendre vos produits en ligne peut doubler votre CA. Je crée des boutiques clé en main. Dispo ?",
+        detection_keywords=[],
         check_weight_overrides={
             "lead_form": 15,
             "tracking": 15,
@@ -155,6 +161,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "je peux vous aider à faire pareil."
         ),
         sms_hook="Votre présence sur les réseaux peut être boostée facilement. Je m'en occupe pour vous ?",
+        detection_keywords=[],
         check_weight_overrides={"social_links": 15},
         score_threshold_default=100,
     ),
@@ -173,6 +180,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "Un bon texte peut doubler le taux de conversion d'une page."
         ),
         sms_hook="Vos pages web pourraient convertir bien mieux avec des textes optimisés. On en parle ?",
+        detection_keywords=[],
         check_weight_overrides={
             "title": 15,
             "meta_description": 15,
@@ -199,6 +207,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "répétitives que l'on peut automatiser facilement avec Notion, Make ou Zapier."
         ),
         sms_hook="Vous perdez du temps sur des tâches répétitives ? Je les automatise en 1 semaine. On en parle ?",
+        detection_keywords=[],
         score_threshold_default=100,
     ),
 
@@ -221,6 +230,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "avant même qu'ils franchissent votre porte."
         ),
         sms_hook="Votre identité visuelle mérite d'être à la hauteur de votre activité. Logo pro — intéressé(e) ?",
+        detection_keywords=[],
         check_weight_overrides={
             "free_builder": 25,
             "outdated": 20,
@@ -246,6 +256,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "Des photos professionnelles peuvent augmenter vos réservations de 30% en moyenne."
         ),
         sms_hook="Photographe pro disponible pour shooter votre établissement. Tarif découverte ce mois-ci.",
+        detection_keywords=[],
         check_weight_overrides={
             "outdated": 15,
             "social_links": 10,
@@ -267,6 +278,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "Un court film de 60 secondes suffit pour faire la différence face à vos concurrents."
         ),
         sms_hook="Une vidéo de 60 sec sur votre site peut doubler vos demandes. Je filme ce mois-ci dans votre secteur.",
+        detection_keywords=[],
         check_weight_overrides={
             "outdated": 15,
             "social_links": 10,
@@ -289,6 +301,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "en clients que ceux qui n'en publient pas."
         ),
         sms_hook="Un podcast vous poserait en expert et vous amènerait des clients. Je lance ça pour vous en 2 semaines.",
+        detection_keywords=["podcast", "épisodes", "soundcloud.com", "spotify.com", "apple podcasts"],
         score_threshold_default=100,
     ),
 
@@ -307,6 +320,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "de vos concurrents et renforce la mémorisation de votre marque."
         ),
         sms_hook="Des illustrations originales pour démarquer votre marque. Dispo pour un brief cette semaine ?",
+        detection_keywords=[],
         score_threshold_default=100,
     ),
 
@@ -328,6 +342,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "Un audit rapide suffit pour savoir où concentrer vos efforts."
         ),
         sms_hook="Audit marketing offert pour votre entreprise. Je vous dis exactement quoi améliorer en 30 min.",
+        detection_keywords=[],
         score_threshold_default=100,
     ),
 
@@ -346,6 +361,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "pour que vous puissiez vous concentrer sur votre cœur de métier."
         ),
         sms_hook="Recrutement ou structuration RH pour votre équipe en croissance. Échange 20 min cette semaine ?",
+        detection_keywords=["drh", "direction des ressources humaines", "responsable rh", "recrutement interne"],
         score_threshold_default=100,
     ),
 
@@ -364,6 +380,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "immédiat sur la productivité et la qualité de travail de vos collaborateurs."
         ),
         sms_hook="Formations courtes et opérationnelles pour vos équipes. Devis gratuit en 24h. Dispo ?",
+        detection_keywords=["organisme de formation", "e-learning", "modules de formation", "certification qualiopi"],
         score_threshold_default=100,
     ),
 
@@ -382,6 +399,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "pouvant aller jusqu'à 20 000 €. Je peux régulariser tout ça rapidement."
         ),
         sms_hook="Votre site est-il conforme RGPD et CGV ? Je vérifie gratuitement en 10 min.",
+        detection_keywords=[],
         check_weight_overrides={
             "lead_form": 20,
             "tracking": 15,
@@ -410,6 +428,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "pour que vous puissiez vous concentrer sur votre activité."
         ),
         sms_hook="Comptabilité et déclarations gérées pour vous. Tarif adapté aux indépendants. On en parle ?",
+        detection_keywords=[],
         score_threshold_default=100,
     ),
 
@@ -428,6 +447,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "je prends en charge tout ça à distance pour que vous puissiez vous concentrer sur l'essentiel."
         ),
         sms_hook="Déléguez vos tâches admin à distance. Gestion d'agenda, emails, relances. Dispo pour en parler ?",
+        detection_keywords=[],
         score_threshold_default=100,
     ),
 
@@ -446,6 +466,8 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "Je traduis sites web, contrats et documents officiels avec précision et rapidité."
         ),
         sms_hook="Votre site en anglais ou espagnol peut ouvrir de nouveaux marchés. Devis sous 24h.",
+        # Absence de ces signaux → site uniquement FR → french_only détecté dans analyzer
+        detection_keywords=["english", "español", "deutsch", "/en/", "in english", "en anglais"],
         score_threshold_default=100,
     ),
 
@@ -464,6 +486,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "améliore votre image auprès de vos clients et facilite vos appels d'offres publics."
         ),
         sms_hook="Bilan RSE et plan développement durable pour votre entreprise. Diagnostic gratuit. Intéressé(e) ?",
+        detection_keywords=["rse", "responsabilité sociétale", "bilan carbone", "développement durable", "politique environnementale"],
         score_threshold_default=100,
     ),
 
@@ -485,6 +508,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "directement sur votre lieu de travail."
         ),
         sms_hook="Coach sportif pro. Sessions bien-être en entreprise. Vos équipes méritent ça. On en parle ?",
+        detection_keywords=["coach sportif", "yoga", "sport en entreprise", "fitness", "bien-être au travail", "wellness", "sport corporate"],
         check_weight_overrides={
             "https": 0, "tracking": 0, "viewport": 0, "title": 0,
             "meta_description": 0, "lead_form": 0, "free_builder": 0,
@@ -508,6 +532,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "une collaboration nous permettrait d'offrir un accompagnement vraiment complet à vos clients."
         ),
         sms_hook="Partenariat nutrition pour vos adhérents ? Je propose des consultations sur place. On en parle ?",
+        detection_keywords=["nutritionniste", "diététicien", "bilan nutritionnel", "programme alimentaire", "coach nutrition", "suivi diététique"],
         check_weight_overrides={
             "https": 0, "tracking": 0, "viewport": 0, "title": 0,
             "meta_description": 0, "lead_form": 0, "free_builder": 0,
@@ -531,6 +556,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "une collaboration pourrait apporter une vraie valeur ajoutée à votre offre."
         ),
         sms_hook="Suivi ostéopathique pour vos sportifs. Séances sur place possibles. Partenariat ?",
+        detection_keywords=["ostéopathe", "kinésithérapeute", "kiné", "ostéopathie", "prévention blessures", "récupération sportive"],
         check_weight_overrides={
             "https": 0, "tracking": 0, "viewport": 0, "title": 0,
             "meta_description": 0, "lead_form": 0, "free_builder": 0,
@@ -554,6 +580,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "renforcer la cohésion de vos équipes."
         ),
         sms_hook="Programme bien-être mental pour vos équipes. Prévention burnout et QVT. Échange rapide ?",
+        detection_keywords=["psychologue", "bien-être mental", "burnout", "qvt", "santé mentale", "accompagnement psychologique"],
         check_weight_overrides={
             "https": 0, "tracking": 0, "viewport": 0, "title": 0,
             "meta_description": 0, "lead_form": 0, "free_builder": 0,
@@ -580,6 +607,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "produits certifiés, tarifs compétitifs."
         ),
         sms_hook="Service nettoyage pro pour vos locaux. Disponible 7j/7. Devis gratuit en 24h.",
+        detection_keywords=["nettoyage professionnel", "société de nettoyage", "prestataire nettoyage", "entretien des locaux", "agent d'entretien"],
         check_weight_overrides={
             "https": 0, "tracking": 0, "viewport": 0, "title": 0,
             "meta_description": 0, "lead_form": 0, "free_builder": 0,
@@ -603,6 +631,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "pour que vous et vos clients vous sentiez en sécurité."
         ),
         sms_hook="Gardiennage pour votre établissement. Agents certifiés, tarifs compétitifs. Devis gratuit ?",
+        detection_keywords=["gardiennage", "sécurité privée", "agent de sécurité", "vidéosurveillance", "alarme", "société de sécurité"],
         check_weight_overrides={
             "https": 0, "tracking": 0, "viewport": 0, "title": 0,
             "meta_description": 0, "lead_form": 0, "free_builder": 0,
@@ -626,6 +655,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "je m'occupe de tout pour que votre événement soit mémorable."
         ),
         sms_hook="Plateaux repas et buffets pour vos réunions d'entreprise. Devis sous 2h. Disponible ?",
+        detection_keywords=["traiteur", "plateaux repas", "buffet", "restauration d'entreprise", "chef à domicile", "cocktail dînatoire"],
         check_weight_overrides={
             "https": 0, "tracking": 0, "viewport": 0, "title": 0,
             "meta_description": 0, "lead_form": 0, "free_builder": 0,
@@ -649,6 +679,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "et incite les clients à s'y attarder — je peux vous proposer un devis adapté à votre budget."
         ),
         sms_hook="Entretien de vos espaces verts professionnel et régulier. Devis gratuit sous 48h.",
+        detection_keywords=["paysagiste", "espaces verts", "entretien jardin", "jardinier", "terrasse fleurie"],
         check_weight_overrides={
             "https": 0, "tracking": 0, "viewport": 0, "title": 0,
             "meta_description": 0, "lead_form": 0, "free_builder": 0,
@@ -672,6 +703,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "je serais ravi de vous présenter quelques idées sans engagement."
         ),
         sms_hook="Un réaménagement de votre espace peut booster vos ventes. Visite conseil offerte cette semaine.",
+        detection_keywords=["architecte d'intérieur", "décoration intérieure", "agencement commercial", "rénovation intérieure"],
         check_weight_overrides={
             "outdated": 20,
             "free_builder": 15,
@@ -698,6 +730,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "avec un résultat professionnel garanti."
         ),
         sms_hook="Flyers, enseignes, PLV en 48h. Qualité pro, prix compétitifs. Devis gratuit ?",
+        detection_keywords=["imprimerie", "impression numérique", "signalétique intégrée", "enseigne lumineuse"],
         check_weight_overrides={
             "free_builder": 15,
             "outdated": 15,
@@ -723,6 +756,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "pourrait sublimer vos événements et apporter une vraie valeur ajoutée à vos clients."
         ),
         sms_hook="Fleuriste événementiel disponible pour vos mariages et événements. Collaboration possible ?",
+        detection_keywords=["fleuriste", "décoration florale", "art floral", "bouquets", "compositions florales"],
         check_weight_overrides={
             "https": 0, "tracking": 0, "viewport": 0, "title": 0,
             "meta_description": 0, "lead_form": 0, "free_builder": 0,
@@ -746,6 +780,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "et les fidélise sur le long terme."
         ),
         sms_hook="Animations enfants pour votre établissement. Magie, ateliers, jeux. Devis gratuit sous 24h.",
+        detection_keywords=["animation enfants", "espace enfants", "activités enfants", "coin enfants", "coin jeux", "ateliers enfants"],
         check_weight_overrides={
             "https": 0, "tracking": 0, "viewport": 0, "title": 0,
             "meta_description": 0, "lead_form": 0, "free_builder": 0,
@@ -772,6 +807,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "c'est exactement ce que nous proposons, sans les contraintes d'un prestataire généraliste."
         ),
         sms_hook="Course express discrète pour docs et colis sensibles. Intervention en 2h. Dispo pour en parler ?",
+        detection_keywords=[],
         check_weight_overrides={
             "https": 0, "response_time": 0, "viewport": 0, "title": 0,
             "meta_description": 0, "tracking": 0, "lead_form": 0,
@@ -798,6 +834,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "une collaboration avec votre établissement bénéficierait directement à vos élèves."
         ),
         sms_hook="Cours particuliers pour élèves en difficulté. Partenariat établissement possible. On en discute ?",
+        detection_keywords=["cours particuliers", "soutien scolaire", "tutorat", "aide aux devoirs", "répétiteur"],
         check_weight_overrides={
             "https": 0, "tracking": 0, "viewport": 0, "title": 0,
             "meta_description": 0, "lead_form": 0, "free_builder": 0,
@@ -820,6 +857,7 @@ SERVICE_PROFILES: List[ServiceProfile] = [
             "je vous adresse ma candidature spontanée."
         ),
         sms_hook="Candidature spontanée pour rejoindre votre équipe. Mon profil pourrait vous intéresser ?",
+        detection_keywords=[],
         score_threshold_default=100,
     ),
 

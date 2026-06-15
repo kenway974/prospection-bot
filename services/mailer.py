@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import os
 from dataclasses import dataclass, field
+from typing import Dict
 from config import config, logger
 from services.google_maps import Prospect
 
@@ -133,6 +134,204 @@ ISSUE_COPY = {
     },
 }
 
+# ---------------------------------------------------------------------------
+# Copy créatif (catégorie "creatif") — angle : vos visuels ne reflètent pas votre qualité
+# ---------------------------------------------------------------------------
+
+CREATIVE_ISSUE_COPY = {
+    "no_gallery": {
+        "formal":       "Votre site ne présente pas de galerie de réalisations, ce qui limite significativement la perception de votre savoir-faire par vos visiteurs.",
+        "professional": "Votre site n'a pas de galerie photo — vos réalisations sont pourtant votre meilleure carte de visite pour convaincre de nouveaux clients.",
+        "direct":       "Pas de galerie sur votre site. Vos clients ne peuvent pas voir votre travail — vous perdez des demandes chaque jour.",
+        "casual":       "Dommage, votre site n'a pas de galerie ! Vos clients veulent voir vos créations avant de vous contacter.",
+    },
+    "no_video": {
+        "formal":       "Votre site ne contient pas de vidéo de présentation, alors que ce format génère en moyenne 80 % de conversions supplémentaires.",
+        "professional": "Votre site n'a pas de vidéo de présentation — c'est pourtant le format le plus efficace pour convaincre en quelques secondes.",
+        "direct":       "Pas de vidéo sur votre site. Les pages avec vidéo convertissent 80 % mieux. Vous laissez des clients partir.",
+        "casual":       "Votre site n'a pas de vidéo de présentation — c'est dommage, c'est ce qui convainc le plus vite !",
+    },
+    "outdated": {
+        "formal":       "L'esthétique de votre site ne reflète pas la qualité de vos réalisations — un design moderne renforcerait immédiatement votre crédibilité.",
+        "professional": "Visuellement, votre site a vieilli — alors que vos créations méritent un écrin à la hauteur de leur qualité.",
+        "direct":       "Votre site est daté visuellement. Un créatif avec un vieux site, ça interroge les clients.",
+        "casual":       "Franchement, votre site mériterait un coup de jeune ! Vos créations valent bien mieux que ça.",
+    },
+    "free_builder": {
+        "formal":       "Votre site est construit avec {cms}, un outil qui limite considérablement les possibilités créatives et les performances.",
+        "professional": "Votre site tourne sur {cms} — ces plateformes limitent la créativité et donnent une image générique difficile à personnaliser.",
+        "direct":       "Votre site est sur {cms}. Pour un créatif, c'est un signal négatif — trop peu personnalisable.",
+        "casual":       "Ah, votre site est sur {cms}... Pour quelqu'un dans le créatif, ça peut paraître contradictoire aux clients !",
+    },
+    "social_links": {
+        "formal":       "Votre site ne renvoie vers aucun réseau social, alors que ces plateformes sont essentielles pour valoriser votre travail.",
+        "professional": "Votre site n'a pas de liens vers vos réseaux — Instagram et Pinterest sont pourtant essentiels pour valoriser votre travail créatif.",
+        "direct":       "Pas de liens réseaux sociaux. Dans le créatif, Instagram est votre vitrine — vous perdez des abonnés à chaque visite.",
+        "casual":       "Vos réseaux ne sont pas liés depuis votre site... Dans votre domaine, c'est une vraie vitrine à ne pas négliger !",
+    },
+    "no_blog": {
+        "formal":       "Votre site ne propose pas de contenu éditorial régulier, ce qui limite votre référencement et votre positionnement en tant qu'expert.",
+        "professional": "Votre site n'a pas de blog — publier vos coulisses et réflexions renforcerait votre positionnement et votre SEO.",
+        "direct":       "Pas de blog sur votre site. Les créatifs qui publient régulièrement sont mieux référencés et perçus comme experts.",
+        "casual":       "Un blog ou section actu sur votre site vous aiderait vraiment à vous positionner comme référence dans votre domaine !",
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Copy conseil B2B (catégorie "conseil_b2b") — angle : impact business mesurable
+# ---------------------------------------------------------------------------
+
+CONSEIL_ISSUE_COPY = {
+    "tracking": {
+        "formal":       "L'absence d'outils de mesure sur votre site vous prive de toute donnée sur l'efficacité de vos actions commerciales et marketing.",
+        "professional": "Votre site n'a pas d'analytics — impossible de mesurer votre ROI ou de savoir quelles actions amènent réellement des prospects.",
+        "direct":       "Pas d'analytics. Vous pilotez votre activité à l'aveugle — impossible de savoir ce qui ramène des clients.",
+        "casual":       "Votre site n'a pas de stats ! Vous ne savez pas ce qui marche vraiment dans votre stratégie commerciale.",
+    },
+    "lead_form": {
+        "formal":       "L'absence de formulaire de capture sur votre site vous prive d'un levier essentiel de génération de leads qualifiés.",
+        "professional": "Votre site n'a pas de formulaire de prise de contact — chaque visiteur intéressé qui ne peut pas vous contacter facilement est un prospect perdu.",
+        "direct":       "Pas de formulaire. Vos visiteurs intéressés n'ont aucun moyen de vous contacter simplement — vous perdez des leads.",
+        "casual":       "Il n'y a pas de formulaire sur votre site ! Un prospect qui cherche à vous contacter et n'y arrive pas... il va ailleurs.",
+    },
+    "title": {
+        "formal":       "L'absence de balise titre optimisée compromet votre visibilité sur vos mots-clés professionnels dans les résultats de recherche.",
+        "professional": "Votre balise titre n'est pas optimisée — vous n'apparaissez pas quand vos clients cibles cherchent vos services sur Google.",
+        "direct":       "Votre titre Google n'est pas configuré. Vos prospects ne vous trouvent pas quand ils cherchent vos services.",
+        "casual":       "Sur Google, votre site n'est pas bien référencé sur vos mots-clés pros — vos clients ont du mal à vous trouver.",
+    },
+    "no_blog": {
+        "formal":       "L'absence de contenu à valeur ajoutée prive votre site d'un levier de crédibilité et de génération de trafic organique B2B.",
+        "professional": "Votre site n'a pas de blog ou études de cas — c'est pourtant le levier le plus efficace pour générer des prospects B2B qualifiés.",
+        "direct":       "Pas de blog, pas de cas clients. Vos prospects B2B cherchent des preuves de votre expertise avant de vous contacter.",
+        "casual":       "Un blog avec vos conseils et cas clients vous amènerait bien plus de prospects qualifiés — et vous positionnerait en expert !",
+    },
+    "https": {
+        "formal":       "Votre site opère en HTTP non sécurisé, ce qui peut susciter des réserves légitimes de la part de vos prospects professionnels.",
+        "professional": "Votre site n'est pas sécurisé (HTTP) — dans un contexte B2B, cela questionne votre rigueur auprès de vos prospects.",
+        "direct":       "Votre site est en HTTP, pas HTTPS. Pour du B2B, ça donne une image peu sérieuse dès le premier regard.",
+        "casual":       "Votre site n'a pas le cadenas sécurisé — pour des prospects professionnels, ça peut faire hésiter.",
+    },
+    "no_service_mention": {
+        "formal":       "Votre site ne détaille pas clairement les domaines d'expertise que vous couvrez, ce qui peut freiner la décision d'achat de vos prospects.",
+        "professional": "Votre offre de services n'est pas clairement présentée sur votre site — un prospect qui ne comprend pas en 10 secondes ce que vous faites va voir ailleurs.",
+        "direct":       "Votre offre n'est pas claire sur votre site. Les prospects B2B abandonnent s'ils ne trouvent pas rapidement ce qu'ils cherchent.",
+        "casual":       "Sur votre site, ce que vous faites exactement n'est pas super clair... Vos prospects doivent le deviner !",
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Copy no_service_mention par service_id (sante / terrain / special)
+# Angle : je propose quelque chose qui manque à votre offre / organisation
+# ---------------------------------------------------------------------------
+
+NO_SERVICE_MENTION_COPY: Dict[str, Dict[str, str]] = {
+    "coaching_sportif": {
+        "formal":       "En consultant le site de {name}, je n'ai pas trouvé de programme de bien-être ou de coaching sportif à destination de vos équipes — un levier reconnu pour améliorer la productivité et réduire l'absentéisme.",
+        "professional": "Je n'ai pas trouvé de programme sport ou bien-être en entreprise sur le site de {name} — c'est souvent là que se joue la différence sur la rétention et la performance des équipes.",
+        "direct":       "{name} ne semble pas proposer de programme sport ou bien-être à ses équipes — vos concurrents le font déjà, et ça se voit sur leurs indicateurs RH.",
+        "casual":       "Je n'ai rien vu sur le sport ou le bien-être pour vos équipes sur votre site... C'est pourtant un vrai levier de motivation et de productivité !",
+    },
+    "nutrition": {
+        "formal":       "Il ne semble pas que {name} propose d'accompagnement nutritionnel à ses adhérents, alors que la nutrition est le complément naturel à toute démarche sportive ou bien-être.",
+        "professional": "Je n'ai pas trouvé de service de nutrition ou diététique sur le site de {name} — une collaboration pourrait enrichir votre offre sans effort supplémentaire de votre part.",
+        "direct":       "{name} ne propose pas de suivi nutritionnel — c'est pourtant ce qui fait la différence entre une offre basique et une offre premium.",
+        "casual":       "Je n'ai pas trouvé de coach nutrition associé à {name} — ça compléterait super bien ce que vous proposez déjà !",
+    },
+    "osteopathie": {
+        "formal":       "Votre site ne mentionne pas de partenariat ostéopathique ou kinésithérapeutique, alors que le suivi corporel est essentiel à la performance et à la prévention des blessures.",
+        "professional": "Je n'ai pas trouvé de service ostéopathique mentionné pour {name} — un partenariat améliorerait concrètement l'expérience et les résultats de vos sportifs.",
+        "direct":       "{name} ne propose pas de suivi ostéo à ses sportifs — c'est pourtant ce qui prévient les blessures et fidélise les clients sur le long terme.",
+        "casual":       "Pas d'ostéopathe mentionné sur votre site ! Vos sportifs en ont besoin, et ça valorise vraiment votre offre.",
+    },
+    "psychologie_travail": {
+        "formal":       "Votre site ne fait pas mention d'un programme de soutien psychologique ou de prévention du burnout — un investissement que de nombreuses entreprises considèrent désormais comme prioritaire.",
+        "professional": "Je n'ai pas trouvé de programme bien-être mental sur le site de {name} — avec les niveaux d'absentéisme et de turnover actuels, c'est devenu un investissement stratégique.",
+        "direct":       "{name} ne propose pas de soutien psychologique à ses équipes — vos concurrents le font et constatent une baisse mesurable de l'absentéisme.",
+        "casual":       "Je n'ai rien vu sur le bien-être mental ou la prévention burnout sur votre site... C'est un enjeu majeur aujourd'hui pour fidéliser vos équipes.",
+    },
+    "nettoyage": {
+        "formal":       "En consultant le site de {name}, je n'ai pas trouvé mention d'un prestataire de nettoyage professionnel, ce qui laisse penser que vous gérez peut-être cette problématique en interne.",
+        "professional": "Je n'ai pas trouvé de prestataire nettoyage mentionné pour {name} — déléguer à un professionnel permettrait de garantir un résultat irréprochable et de libérer du temps à vos équipes.",
+        "direct":       "{name} ne semble pas avoir de prestataire nettoyage pro. Déléguer, c'est garantir un environnement impeccable pour vos clients.",
+        "casual":       "Votre site ne mentionne pas de service de nettoyage — si vous cherchez un prestataire fiable et flexible, je suis là !",
+    },
+    "securite_gardiennage": {
+        "formal":       "Il ne semble pas que {name} ait mis en place de dispositif de gardiennage ou de sécurité professionnel, ce qui mérite peut-être une attention particulière au regard de vos actifs.",
+        "professional": "Je n'ai pas trouvé de prestataire sécurité mentionné pour {name} — la protection de vos locaux et marchandises mérite une solution professionnelle adaptée à votre activité.",
+        "direct":       "{name} ne semble pas avoir de prestataire sécurité. Vos locaux et marchandises méritent mieux qu'une solution improvisée.",
+        "casual":       "Pas de mention d'un service de gardiennage sur votre site... La sécurité de vos locaux, c'est pas à négliger !",
+    },
+    "traiteur": {
+        "formal":       "En consultant votre site, je n'ai pas trouvé de solution de restauration pour vos événements professionnels — une collaboration pourrait valoriser significativement votre offre.",
+        "professional": "Je n'ai pas trouvé de mention d'un traiteur ou service de restauration sur le site de {name} — pour vos réunions et événements, c'est un confort important pour vos équipes et invités.",
+        "direct":       "{name} ne semble pas avoir de solution restauration pour ses événements. Vos réunions méritent mieux que des sandwichs commandés en urgence.",
+        "casual":       "Pas de traiteur mentionné sur votre site pour vos événements ! Je m'occupe de tout — plateaux repas, buffets, cocktails.",
+    },
+    "paysagisme": {
+        "formal":       "Votre site ne présente pas d'espaces verts aménagés, alors que la qualité des abords d'un établissement contribue directement à la première impression de vos clients et visiteurs.",
+        "professional": "Je n'ai pas trouvé de mention d'espaces verts ou de paysagiste pour {name} — une terrasse ou un jardin bien entretenu valorise immédiatement votre image.",
+        "direct":       "{name} ne semble pas avoir de solution paysagère. Vos espaces verts sont la première chose que voient vos clients.",
+        "casual":       "Pas d'espaces verts mentionnés sur votre site ! Un peu de verdure autour de votre établissement, ça change vraiment l'atmosphère et attire les clients.",
+    },
+    "architecture_interieure": {
+        "formal":       "En consultant le site de {name}, j'ai pensé qu'un réaménagement de vos espaces commerciaux pourrait renforcer l'expérience client et optimiser votre chiffre d'affaires au m².",
+        "professional": "Je n'ai pas trouvé de mention d'un projet de décoration ou d'agencement récent pour {name} — un espace bien pensé augmente le panier moyen et la durée de visite de vos clients.",
+        "direct":       "L'espace de {name} pourrait être mieux agencé pour maximiser l'expérience client et vos ventes — j'ai quelques idées concrètes à vous proposer.",
+        "casual":       "En regardant votre site, je me suis dit que votre espace mériterait peut-être un coup de fraîcheur ! Un bon aménagement, ça booste vraiment les ventes.",
+    },
+    "impression_signaletique": {
+        "formal":       "En regardant la présence de {name}, j'ai pensé que vos supports de communication print pourraient être optimisés pour mieux attirer et informer vos clients.",
+        "professional": "Je n'ai pas trouvé mention de supports print récents pour {name} — flyers, enseignes et signalétique bien conçus peuvent augmenter significativement votre trafic en point de vente.",
+        "direct":       "{name} pourrait bénéficier de supports print plus percutants. Une bonne enseigne et des flyers bien faits, ça fait la différence en local.",
+        "casual":       "Vous avez pensé à mettre à jour vos supports print ? Flyers, enseignes, PLV — ça peut vraiment booster votre visibilité locale !",
+    },
+    "fleuriste": {
+        "formal":       "En consultant le site de {name}, je n'ai pas trouvé de partenariat floral — une collaboration pourrait sublimer vos événements et offrir une expérience mémorable à vos invités.",
+        "professional": "Je n'ai pas trouvé de mention d'un fleuriste ou décorateur floral pour {name} — pour vos événements, une décoration florale soignée laisse une impression durable.",
+        "direct":       "{name} ne semble pas avoir de fleuriste pour ses événements. Une belle décoration florale, ça se souvient longtemps.",
+        "casual":       "Pas de fleuriste mentionné pour vos événements ! Des fleurs fraîches, ça change toute l'ambiance — je serais ravi de collaborer.",
+    },
+    "animation_enfants": {
+        "formal":       "Votre site ne fait pas mention d'animations ou d'espace dédié aux enfants, alors que c'est un levier direct de fidélisation et d'augmentation du panier moyen des familles.",
+        "professional": "Je n'ai pas trouvé d'animations enfants sur le site de {name} — les établissements qui proposent des activités pour enfants constatent en moyenne une hausse de 40 % du panier moyen des familles.",
+        "direct":       "{name} n'a pas d'animations enfants. Les familles restent plus longtemps et dépensent plus quand les enfants sont occupés.",
+        "casual":       "Pas d'espace ou d'animations pour les enfants sur votre site ! C'est vraiment ce qui fidélise les familles et les fait revenir.",
+    },
+    "coursier": {
+        "formal":       "En analysant votre présence en ligne, je n'ai pas trouvé de solution de course express ou de livraison rapide associée à {name}.",
+        "professional": "Votre site ne mentionne pas de service de course express — pour des envois sensibles ou urgents, un coursier dédié est souvent plus fiable et discret qu'un prestataire généraliste.",
+        "direct":       "{name} n'a pas l'air d'avoir de solution course express. Pour des envois sensibles ou urgents, un prestataire dédié fait la différence.",
+        "casual":       "Je n'ai pas vu de service de livraison express pour votre activité — si vous avez des courses urgentes ou discrètes à faire, c'est mon domaine !",
+    },
+    "cours_particuliers": {
+        "formal":       "Votre établissement ne semble pas proposer de dispositif de soutien scolaire ou de cours particuliers, alors qu'une telle offre constituerait un avantage différenciant pour vos familles.",
+        "professional": "Je n'ai pas trouvé de mention de cours particuliers associés à {name} — un partenariat enrichirait votre offre et apporterait une vraie valeur ajoutée aux familles que vous accompagnez.",
+        "direct":       "{name} ne propose pas de soutien scolaire. C'est pourtant ce que beaucoup de familles recherchent en premier.",
+        "casual":       "Pas de cours particuliers sur votre site ! Beaucoup de familles en cherchent — une collaboration serait naturelle.",
+    },
+    "candidature_spontanee": {
+        "formal":       "Je me permets de vous contacter car {name} correspond exactement au type de structure dans laquelle je souhaiterais contribuer et évoluer.",
+        "professional": "En consultant le site de {name}, j'ai été convaincu que mon profil et mes compétences pourraient apporter une vraie valeur ajoutée à votre équipe.",
+        "direct":       "J'ai regardé ce que fait {name} — et je suis convaincu que mon profil peut apporter quelque chose de concret à votre équipe.",
+        "casual":       "J'ai bien regardé ce que vous faites chez {name} et je me suis dit que mon profil pourrait vraiment matcher avec ce dont vous avez besoin !",
+    },
+    "traduction": {
+        "formal":       "Votre site est exclusivement disponible en français, ce qui restreint votre accessibilité aux clients et partenaires internationaux.",
+        "professional": "Votre site n'est disponible qu'en français — si vous avez une clientèle ou des partenaires internationaux, une version traduite peut ouvrir rapidement de nouveaux marchés.",
+        "direct":       "{name} n'a pas de site en anglais. Vos prospects internationaux ne peuvent pas vous comprendre — vous manquez des opportunités.",
+        "casual":       "Votre site n'est qu'en français ! Si vous avez des clients ou partenaires étrangers, une traduction peut vraiment changer la donne.",
+    },
+}
+
+# Intro neutre pour les services non-web (sante / terrain / special / candidature)
+_SERVICE_INTRO = {
+    "formal":       "Je me permets de vous contacter au sujet d'une proposition qui pourrait intéresser {name}.",
+    "professional": "Je prends contact avec vous car j'ai pensé à une collaboration qui pourrait bénéficier directement à {name}.",
+    "direct":       "Je voulais vous parler d'une opportunité concrète pour {name}.",
+    "casual":       "Je voulais vous écrire directement parce que j'ai une idée qui pourrait vraiment intéresser {name} !",
+}
+
 INTRO_TEMPLATES = {
     "formal": (
         "Je me permets de vous contacter suite à l'analyse de la présence en ligne de {name}. "
@@ -158,62 +357,104 @@ SIGN_OFF = {
 # Génération dynamique selon audit + style
 # ---------------------------------------------------------------------------
 
+_NON_WEB_CATEGORIES = {"sante", "terrain", "special"}
+
+
 def build_dynamic_email(
     prospect: Prospect,
     style: EmailStyle,
     your_name: str,
     your_title: str,
     your_offer: str,
+    service_id: str = "",
+    service_category: str = "web_digital",
 ) -> str:
     """
     Génère un email personnalisé selon les résultats de l'audit ET le style choisi.
+    Adapte le copy au profil de service (catégorie + service_id).
     """
     intonation = style.intonation
     length = style.length
+    cms = prospect.cms or "cet outil"
 
     # --- Salutation ---
     salutation_map = {
         "formal":     "Madame, Monsieur,",
         "neutral":    "Bonjour,",
-        "first_name": "Bonjour,",  # prénom non disponible en général
+        "first_name": "Bonjour,",
     }
     salutation = salutation_map.get(style.salutation, "Bonjour,")
 
-    # --- Problèmes à mentionner ---
+    # --- Sélection du dictionnaire de copy principal ---
+    if service_category == "creatif":
+        primary_copy = CREATIVE_ISSUE_COPY
+    elif service_category == "conseil_b2b":
+        primary_copy = CONSEIL_ISSUE_COPY
+    else:
+        primary_copy = ISSUE_COPY
+
     keys = list(prospect.issue_keys) if prospect.issue_keys else []
-
-    # Nombre de problèmes selon la longueur
     n_issues = {"short": 1, "medium": 2, "long": 3}.get(length, 2)
-    keys_to_use = keys[:n_issues]
+    issue_paragraphs: list = []
 
-    # --- Corps des problèmes ---
-    issue_paragraphs = []
-    cms = prospect.cms or "cet outil"
-    for key in keys_to_use:
-        if key in ISSUE_COPY:
-            sentence = ISSUE_COPY[key].get(intonation, ISSUE_COPY[key]["professional"])
+    # --- Priorité 1 : no_service_mention (services non-web + conseil_b2b) ---
+    if "no_service_mention" in keys:
+        per_service = NO_SERVICE_MENTION_COPY.get(service_id, {})
+        if per_service:
+            sentence = per_service.get(intonation, per_service.get("professional", ""))
+        else:
+            # Fallback générique conseil_b2b si pas de copy spécifique
+            fallback = CONSEIL_ISSUE_COPY.get("no_service_mention", {})
+            sentence = fallback.get(intonation, fallback.get("professional", ""))
+        if sentence:
             sentence = sentence.format(name=prospect.name, cms=cms)
             issue_paragraphs.append(sentence)
+        keys = [k for k in keys if k != "no_service_mention"]
 
-    # Si aucun problème détecté → message générique
+    # --- Priorité 2 : french_only spécial traduction (évite doublon avec no_service_mention) ---
+    if "french_only" in keys and service_id == "traduction" and not issue_paragraphs:
+        per_service = NO_SERVICE_MENTION_COPY.get("traduction", {})
+        sentence = per_service.get(intonation, per_service.get("professional", ""))
+        if sentence:
+            sentence = sentence.format(name=prospect.name, cms=cms)
+            issue_paragraphs.append(sentence)
+        keys = [k for k in keys if k not in ("french_only", "no_service_mention")]
+
+    # --- Remplissage des autres slots ---
+    for key in keys:
+        if len(issue_paragraphs) >= n_issues:
+            break
+        # Essai dans le copy primaire, fallback sur ISSUE_COPY
+        copy_dict = primary_copy if key in primary_copy else ISSUE_COPY
+        if key in copy_dict:
+            sentence = copy_dict[key].get(intonation, copy_dict[key].get("professional", ""))
+            if sentence:
+                sentence = sentence.format(name=prospect.name, cms=cms)
+                issue_paragraphs.append(sentence)
+
+    # --- Fallback : message générique si aucun problème trouvé ---
     if not issue_paragraphs:
-        issue_paragraphs = [
-            f"En analysant la présence en ligne de {prospect.name}, j'ai identifié "
-            "des opportunités d'amélioration qui pourraient booster votre visibilité."
-        ]
+        if service_category in _NON_WEB_CATEGORIES and service_id in NO_SERVICE_MENTION_COPY:
+            per_service = NO_SERVICE_MENTION_COPY[service_id]
+            sentence = per_service.get(intonation, per_service.get("professional", ""))
+            issue_paragraphs = [sentence.format(name=prospect.name, cms=cms)]
+        else:
+            issue_paragraphs = [
+                f"En analysant la présence en ligne de {prospect.name}, j'ai identifié "
+                "des opportunités d'amélioration qui pourraient booster votre visibilité."
+            ]
 
     # --- Intro ---
     if length == "short":
         intro = ""
+    elif service_category in _NON_WEB_CATEGORIES:
+        intro = ""  # le copy no_service_mention est auto-suffisant comme intro
     else:
         intro_template = INTRO_TEMPLATES.get(intonation, INTRO_TEMPLATES["professional"])
         intro = intro_template.format(name=prospect.name)
 
     # --- Proposition de valeur ---
-    if length != "short" and your_offer:
-        value_prop = f"{your_offer}."
-    else:
-        value_prop = ""
+    value_prop = f"{your_offer}." if length != "short" and your_offer else ""
 
     # --- CTA ---
     cta = EMAIL_STYLE_LABELS["cta"].get(style.cta, EMAIL_STYLE_LABELS["cta"]["audit"])
@@ -514,9 +755,14 @@ def _draft_email_a(prospect: Prospect) -> str:
     return "\n".join(parts).strip()
 
 
-def draft_email(prospect: Prospect, style: "EmailStyle | None" = None) -> str:
+def draft_email(
+    prospect: Prospect,
+    style: "EmailStyle | None" = None,
+    service_id: str = "",
+    service_category: str = "web_digital",
+) -> str:
     """Dispatche vers le template A ou B selon le hash du place_id (test A/B 50/50).
-    Si `style` est fourni, utilise build_dynamic_email à la place des templates A/B."""
+    Si `style` est fourni, utilise build_dynamic_email adapté au profil de service."""
     if style is not None:
         return build_dynamic_email(
             prospect,
@@ -524,6 +770,8 @@ def draft_email(prospect: Prospect, style: "EmailStyle | None" = None) -> str:
             your_name=config.your_name,
             your_title=config.your_title,
             your_offer=os.getenv("YOUR_OFFER", "").strip(),
+            service_id=service_id,
+            service_category=service_category,
         )
     variant = get_template_variant(prospect.place_id)
     return _draft_email_b(prospect) if variant == "B" else _draft_email_a(prospect)
