@@ -350,43 +350,89 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # Titre principal
 # ---------------------------------------------------------------------------
-from profiles import PROFILES, get_profile, CATEGORY_LABELS, SIZE_LABELS
+from profiles import PROFILES, get_profile
+from service_profiles import (
+    SERVICE_PROFILES, SERVICE_CATEGORY_LABELS,
+    get_service, list_services,
+)
+from target_segments import (
+    TARGET_SEGMENTS, TARGET_SECTOR_LABELS, SIZE_LABELS,
+    get_target, list_targets,
+)
 
 st.markdown("# 🎯 Prospection B2B Automatisée")
 st.markdown("Trouve des prospects locaux, analyse leur besoin et génère des cold emails/SMS en un clic.")
 st.markdown("---")
 
 # ---------------------------------------------------------------------------
-# Sélection du profil
+# Sélection service × cible
 # ---------------------------------------------------------------------------
-st.markdown("### 🧩 Choisissez votre profil")
+st.markdown("### 🧩 Votre activité")
 
-# Trier les profils par catégorie puis par target_size
-_category_order = list(CATEGORY_LABELS.keys())
-_size_order = {"tpe": 0, "pme": 1, "all": 2}
-_sorted_profiles = sorted(
-    PROFILES,
-    key=lambda p: (
-        _category_order.index(p.category) if p.category in _category_order else len(_category_order),
-        _size_order.get(p.target_size, 3),
-        p.name,
-    ),
-)
-
-_profile_ids = [p.id for p in _sorted_profiles]
-_profile_by_id = {p.id: p for p in PROFILES}
-
-selected_profile_id = st.selectbox(
-    "Profil de prospection",
-    options=_profile_ids,
-    format_func=lambda pid: (
-        f"{_profile_by_id[pid].emoji} {_profile_by_id[pid].name}  ·  {SIZE_LABELS[_profile_by_id[pid].target_size]}"
-    ),
-    index=0,
+# Sélecteur catégorie de service (radio horizontal)
+_svc_cats = list(SERVICE_CATEGORY_LABELS.keys())
+_saved_svc_cat = _get("service_category", _svc_cats[0])
+_svc_cat_idx = _svc_cats.index(_saved_svc_cat) if _saved_svc_cat in _svc_cats else 0
+selected_svc_cat = st.radio(
+    "Catégorie",
+    options=_svc_cats,
+    format_func=lambda c: SERVICE_CATEGORY_LABELS[c],
+    index=_svc_cat_idx,
+    horizontal=True,
     label_visibility="collapsed",
+    key="svc_cat_radio",
 )
-selected_profile = _profile_by_id[selected_profile_id]
-st.caption(f"*{selected_profile.description}*")
+
+# Sélecteur service (filtré par catégorie)
+_svcs_in_cat = [s for s in SERVICE_PROFILES if s.category == selected_svc_cat]
+_svc_ids = [s.id for s in _svcs_in_cat]
+_svc_by_id = {s.id: s for s in SERVICE_PROFILES}
+_saved_svc = _get("service_id", _svc_ids[0] if _svc_ids else "web_refonte")
+_svc_idx = _svc_ids.index(_saved_svc) if _saved_svc in _svc_ids else 0
+selected_service_id = st.selectbox(
+    "Service",
+    options=_svc_ids,
+    format_func=lambda sid: f"{_svc_by_id[sid].emoji} {_svc_by_id[sid].name}",
+    index=_svc_idx,
+    label_visibility="collapsed",
+    key="service_selectbox",
+)
+selected_service = _svc_by_id[selected_service_id]
+st.caption(f"*{selected_service.description}*")
+
+st.markdown("---")
+st.markdown("### 🎯 Votre cible")
+
+# Sélecteur secteur cible (radio horizontal)
+_tgt_sectors = list(TARGET_SECTOR_LABELS.keys())
+_saved_tgt_sector = _get("target_sector", _tgt_sectors[0])
+_tgt_sector_idx = _tgt_sectors.index(_saved_tgt_sector) if _saved_tgt_sector in _tgt_sectors else 0
+selected_tgt_sector = st.radio(
+    "Secteur",
+    options=_tgt_sectors,
+    format_func=lambda s: TARGET_SECTOR_LABELS[s],
+    index=_tgt_sector_idx,
+    horizontal=True,
+    label_visibility="collapsed",
+    key="tgt_sector_radio",
+)
+
+# Sélecteur cible (filtré par secteur)
+_tgts_in_sector = [t for t in TARGET_SEGMENTS if t.sector == selected_tgt_sector]
+_tgt_ids = [t.id for t in _tgts_in_sector]
+_tgt_by_id = {t.id: t for t in TARGET_SEGMENTS}
+_saved_tgt = _get("target_id", _tgt_ids[0] if _tgt_ids else "restaurants")
+_tgt_idx = _tgt_ids.index(_saved_tgt) if _saved_tgt in _tgt_ids else 0
+selected_target_id = st.selectbox(
+    "Cible",
+    options=_tgt_ids,
+    format_func=lambda tid: f"{_tgt_by_id[tid].emoji} {_tgt_by_id[tid].name}  ·  {SIZE_LABELS[_tgt_by_id[tid].target_size]}",
+    index=_tgt_idx,
+    label_visibility="collapsed",
+    key="target_selectbox",
+)
+selected_target = _tgt_by_id[selected_target_id]
+st.caption(f"*{selected_target.description}*")
 
 st.markdown("---")
 
@@ -400,40 +446,118 @@ col1, col2 = st.columns([2, 1])
 with col1:
     location = st.text_input(
         "📌 Ville / Zone géographique",
-        value=selected_profile.location or os.getenv("SEARCH_LOCATION", "Lyon, France"),
+        value=selected_target.location_default or os.getenv("SEARCH_LOCATION", "Lyon, France"),
         placeholder="Paris, France",
     )
     keywords_raw = st.text_area(
         "🔑 Mots-clés cibles (un par ligne)",
-        value="\n".join(selected_profile.keywords),
+        value="\n".join(selected_target.keywords),
         height=150,
         placeholder="restaurant\nboulangerie\ncoiffeur",
     )
     keywords = [k.strip() for k in keywords_raw.splitlines() if k.strip()]
 
-    st.markdown("**✉️ Accroche email** *(personnalisable)*")
-    email_hook = st.text_area(
-        "Accroche email",
-        value=selected_profile.email_hook,
-        height=100,
-        label_visibility="collapsed",
-        help="Utilisez {name} pour insérer le nom du prospect",
-    )
+    from services.mailer import EmailStyle, EMAIL_STYLE_LABELS, build_dynamic_email
+    from services.google_maps import Prospect as _PreviewProspect
+
+    with st.expander("✉️ Style des emails", expanded=False):
+        _email_intonation = st.radio(
+            "Intonation",
+            options=list(EMAIL_STYLE_LABELS["intonation"].keys()),
+            format_func=lambda k: EMAIL_STYLE_LABELS["intonation"][k],
+            index=list(EMAIL_STYLE_LABELS["intonation"].keys()).index(
+                _get("email_intonation") if _get("email_intonation") in EMAIL_STYLE_LABELS["intonation"] else "professional"
+            ),
+            horizontal=True,
+            key="email_intonation",
+        )
+        _email_length = st.radio(
+            "Longueur",
+            options=list(EMAIL_STYLE_LABELS["length"].keys()),
+            format_func=lambda k: EMAIL_STYLE_LABELS["length"][k],
+            index=list(EMAIL_STYLE_LABELS["length"].keys()).index(
+                _get("email_length") if _get("email_length") in EMAIL_STYLE_LABELS["length"] else "medium"
+            ),
+            horizontal=True,
+            key="email_length",
+        )
+        _email_salutation = st.selectbox(
+            "Formule d'ouverture",
+            options=list(EMAIL_STYLE_LABELS["salutation"].keys()),
+            format_func=lambda k: EMAIL_STYLE_LABELS["salutation"][k],
+            index=list(EMAIL_STYLE_LABELS["salutation"].keys()).index(
+                _get("email_salutation") if _get("email_salutation") in EMAIL_STYLE_LABELS["salutation"] else "neutral"
+            ),
+            key="email_salutation",
+        )
+        _email_cta = st.selectbox(
+            "Appel à l'action",
+            options=list(EMAIL_STYLE_LABELS["cta"].keys()),
+            format_func=lambda k: EMAIL_STYLE_LABELS["cta"][k],
+            index=list(EMAIL_STYLE_LABELS["cta"].keys()).index(
+                _get("email_cta") if _get("email_cta") in EMAIL_STYLE_LABELS["cta"] else "audit"
+            ),
+            key="email_cta",
+        )
+
+        # Prévisualisation avec un faux prospect
+        _preview_style = EmailStyle(
+            intonation=_email_intonation,
+            length=_email_length,
+            salutation=_email_salutation,
+            cta=_email_cta,
+        )
+        _preview_issue_map = {
+            "web_digital":  (["https", "lead_form"],       "site sans HTTPS + pas de formulaire"),
+            "creatif":      (["no_gallery", "no_video"],   "pas de galerie + pas de vidéo"),
+            "conseil_b2b":  (["tracking", "no_blog"],      "pas de tracking + pas de blog"),
+            "sante":        (["no_service_mention"],        "service non mentionné sur le site"),
+            "terrain":      (["no_service_mention"],        "service non mentionné sur le site"),
+            "special":      (["no_service_mention"],        "service non mentionné sur le site"),
+        }
+        _pkeys, _plabel = _preview_issue_map.get(selected_svc_cat, (["https", "lead_form"], "site sans HTTPS"))
+        st.markdown(f"**Aperçu ({_plabel}) :**")
+        _preview_prospect = _PreviewProspect(
+            place_id="preview",
+            name="Votre Prospect",
+            address="",
+            phone=None,
+            website="http://exemple.com",
+            rating=None,
+            user_ratings_total=0,
+            keyword="",
+            maps_url="",
+        )
+        _preview_prospect.issue_keys = _pkeys
+        _preview_prospect.score = 40
+        _preview_text = build_dynamic_email(
+            _preview_prospect,
+            _preview_style,
+            your_name=_get("your_name", "YOUR_NAME") or "Votre Nom",
+            your_title=_get("your_title", "YOUR_TITLE") or "",
+            your_offer=selected_service.your_offer or "vous aider à améliorer votre présence en ligne",
+            service_id=selected_service_id,
+            service_category=selected_svc_cat,
+        )
+        st.code(_preview_text, language=None)
 
     st.markdown("**📱 Accroche SMS** *(max 160 caractères)*")
     sms_hook = st.text_input(
         "Accroche SMS",
-        value=selected_profile.sms_hook,
+        value=selected_service.sms_hook,
         label_visibility="collapsed",
     )
     if len(sms_hook) > 160:
         st.warning(f"⚠️ SMS trop long : {len(sms_hook)}/160 caractères")
 
+    # Variables de compatibilité (toujours référencées ailleurs dans app.py)
+    email_hook = selected_service.email_hook
+
 with col2:
     st.markdown("**⚙️ Paramètres**")
     your_offer = st.text_area(
         "🎁 Mon offre",
-        value=selected_profile.your_offer,
+        value=selected_service.your_offer,
         height=80,
         help="Décrivez votre offre en 1-2 phrases",
     )
@@ -443,8 +567,8 @@ with col2:
         min_value=1.0, max_value=5.0, value=3.0, step=0.5,
         help="Les établissements en dessous de cette note sont ignorés (probablement en difficulté)",
     )
-    _score_dir = selected_profile.score_direction
-    _score_default = selected_profile.score_threshold_default
+    _score_dir = selected_service.score_direction
+    _score_default = (selected_target.score_threshold_override or selected_service.score_threshold_default)
     if _score_dir == "desc":
         score_threshold = st.slider(
             "Score min requis",
@@ -580,7 +704,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
 
         from services.google_maps import fetch_raw_candidates, build_prospect
         from services.analyzer import analyze_prospect
-        from services.mailer import enrich_with_email
+        from services.mailer import enrich_with_email, draft_email, EmailStyle as _EmailStyle
         from services.crm import get_exporter
         from history_manager import load_contacted_ids, mark_as_contacted
         from services import cache as _cache_mod
@@ -610,8 +734,12 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             if not candidates:
                 return []
             batch = candidates[:target_per_kw * 3]
+            detection_kws = params.get("detection_keywords", [])
             with ThreadPoolExecutor(max_workers=min(workers, len(batch))) as ex:
-                analyzed = list(ex.map(partial(analyze_prospect, weight_overrides=weight_overrides), batch))
+                analyzed = list(ex.map(
+                    partial(analyze_prospect, weight_overrides=weight_overrides, detection_keywords=detection_kws or None),
+                    batch,
+                ))
             qualified = []
             for p in analyzed:
                 qualifies = (p.score >= threshold if score_direction == "desc" else p.score <= threshold)
@@ -727,7 +855,18 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         log_q.put(f"[--] 📋 {len(all_prospects)} prospect(s) qualifiés au total.")
 
         # Emails
-        all_prospects = [enrich_with_email(p) for p in all_prospects]
+        style_dict = params.get("email_style", {})
+        _email_style = _EmailStyle(
+            intonation=style_dict.get("intonation", "professional"),
+            length=style_dict.get("length", "medium"),
+            salutation=style_dict.get("salutation", "neutral"),
+            cta=style_dict.get("cta", "audit"),
+        )
+        _svc_id  = params.get("service_id", "")
+        _svc_cat = params.get("service_category", "web_digital")
+        for _p in all_prospects:
+            _p.email_draft = draft_email(_p, style=_email_style, service_id=_svc_id, service_category=_svc_cat)
+        all_prospects = list(all_prospects)
 
         # 4. Tri
         reverse_sort = (score_direction == "desc")
@@ -881,6 +1020,14 @@ if launch and not st.session_state.running:
         "your_title":        your_title,
         "your_email":        your_email,
         "your_website":      your_website,
+        "service_id":        selected_service_id,
+        "service_category":  selected_svc_cat,
+        "target_id":         selected_target_id,
+        "target_sector":     selected_tgt_sector,
+        "email_intonation":  _email_intonation,
+        "email_length":      _email_length,
+        "email_salutation":  _email_salutation,
+        "email_cta":         _email_cta,
     })
 
     result_container = []
@@ -897,16 +1044,25 @@ if launch and not st.session_state.running:
         "radius": radius,
         "max_results": max_results,
         "your_name": your_name,
-        "your_title": your_title or selected_profile.your_title,
+        "your_title": your_title or selected_service.your_title,
         "your_email": your_email,
         "your_website": your_website,
         "your_offer": your_offer,
         "email_hook": email_hook,
         "sms_hook": sms_hook,
-        "profile_id": selected_profile.id,
-        "profile_name": f"{selected_profile.emoji} {selected_profile.name}",
-        "weight_overrides": selected_profile.check_weight_overrides,
-        "score_direction": selected_profile.score_direction,
+        "email_style": {
+            "intonation": _email_intonation,
+            "length":     _email_length,
+            "salutation": _email_salutation,
+            "cta":        _email_cta,
+        },
+        "profile_id": f"{selected_service_id}_x_{selected_target_id}",
+        "profile_name": f"{selected_service.emoji} {selected_service.name}  →  {selected_target.emoji} {selected_target.name}",
+        "service_id": selected_service_id,
+        "service_category": selected_svc_cat,
+        "detection_keywords": selected_service.detection_keywords,
+        "weight_overrides": selected_service.check_weight_overrides,
+        "score_direction": selected_service.score_direction,
         "min_rating": min_rating,
         "contact_score_threshold": score_threshold,
         "analysis_workers": int(os.getenv("ANALYSIS_WORKERS", "5")),
