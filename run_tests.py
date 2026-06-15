@@ -27,8 +27,8 @@ def run_unit_tests() -> bool:
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
 
-    # Charge les 3 modules de tests unitaires
-    for module in ["tests.test_analyzer", "tests.test_mailer", "tests.test_profiles"]:
+    # Charge les modules de tests unitaires
+    for module in ["tests.test_analyzer", "tests.test_mailer", "tests.test_profiles", "tests.test_service_profiles"]:
         try:
             suite.addTests(loader.loadTestsFromName(module))
         except Exception as e:

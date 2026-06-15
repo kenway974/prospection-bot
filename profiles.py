@@ -36,22 +36,6 @@ class Profile:
     target_size: str = "all"    # "tpe", "pme", "all"
 
 
-CATEGORY_LABELS = {
-    "web_digital":        "🌐 Web & Digital",
-    "creatif":            "🎨 Créatif & Visuel",
-    "conseil":            "💼 Conseil & Services B2B",
-    "sante":              "🏥 Santé & Bien-être",
-    "services_physiques": "🔧 Services Physiques",
-    "special":            "⭐ Spéciaux",
-    "autre":              "📋 Autre",
-}
-
-SIZE_LABELS = {
-    "tpe": "TPE / Artisans",
-    "pme": "PME / Entreprises",
-    "all": "Tous secteurs",
-}
-
 
 PROFILES: List[Profile] = [
 
