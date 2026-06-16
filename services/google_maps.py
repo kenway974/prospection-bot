@@ -61,6 +61,7 @@ class Prospect:
             "keyword": self.keyword,
             "maps_url": self.maps_url,
             "issues": self.issues,
+            "issue_keys": self.issue_keys,
             "score": self.score,
             "email": self.email,
             "cms": self.cms,

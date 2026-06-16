@@ -1307,7 +1307,8 @@ if st.session_state.prospects:
     with col_e2:
         csv_buffer = io.StringIO()
         fieldnames = ["name", "keyword", "address", "phone", "email", "website",
-                      "cms", "rating", "score", "issues_count", "issues_summary", "maps_url"]
+                      "cms", "rating", "score", "issue_keys", "issues_count", "issues_summary",
+                      "maps_url", "email_draft"]
         writer = csv.DictWriter(csv_buffer, fieldnames=fieldnames)
         writer.writeheader()
         for p in filtered:
@@ -1321,9 +1322,11 @@ if st.session_state.prospects:
                 "cms": p.cms or "",
                 "rating": p.rating or "",
                 "score": p.score,
+                "issue_keys": ",".join(p.issue_keys),
                 "issues_count": len(p.issues),
                 "issues_summary": " | ".join(p.issues[:3]),
                 "maps_url": p.maps_url,
+                "email_draft": p.email_draft,
             })
         st.download_button(
             label="⬇️ Télécharger CSV",
@@ -1344,8 +1347,8 @@ if st.session_state.prospects:
             ws.title = "Prospects"
 
             headers = ["Nom", "Mot-clé", "Adresse", "Téléphone", "Email",
-                       "Site", "CMS", "Note ⭐", "Score", "Nb problèmes", "Problèmes (top 3)", "Google Maps"]
-            col_widths = [30, 15, 40, 15, 32, 40, 12, 8, 8, 12, 70, 50]
+                       "Site", "CMS", "Note ⭐", "Score", "Signaux", "Nb problèmes", "Problèmes (top 3)", "Google Maps"]
+            col_widths = [30, 15, 40, 15, 32, 40, 12, 8, 8, 30, 12, 70, 50]
 
             header_fill = PatternFill(start_color="4F46E5", end_color="4F46E5", fill_type="solid")
             header_font = Font(color="FFFFFF", bold=True)
@@ -1372,18 +1375,38 @@ if st.session_state.prospects:
                 row_vals = [
                     p.name, p.keyword, p.address, p.phone or "",
                     p.email or "", p.website or "", p.cms or "",
-                    p.rating or "", p.score, len(p.issues),
-                    " | ".join(p.issues[:3]), p.maps_url,
+                    p.rating or "", p.score, ",".join(p.issue_keys),
+                    len(p.issues), " | ".join(p.issues[:3]), p.maps_url,
                 ]
                 for ci, val in enumerate(row_vals, 1):
                     cell = ws.cell(row=ri, column=ci, value=val)
                     cell.border = thin_border
-                    cell.alignment = Alignment(vertical="center", wrap_text=(ci == 11))
+                    cell.alignment = Alignment(vertical="center", wrap_text=(ci == 12))
                     if ci == 9:  # Score
                         cell.fill = score_fill
                         cell.font = Font(bold=True)
 
             ws.freeze_panes = "A2"
+
+            # Sheet 2 : Emails
+            ws2 = wb.create_sheet("Emails")
+            email_headers = ["Nom", "Email", "Brouillon cold email"]
+            email_widths  = [30, 32, 100]
+            for ci, (h, w) in enumerate(zip(email_headers, email_widths), 1):
+                cell = ws2.cell(row=1, column=ci, value=h)
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                cell.border = thin_border
+                ws2.column_dimensions[get_column_letter(ci)].width = w
+            ws2.row_dimensions[1].height = 20
+            for ri2, p in enumerate(filtered, 2):
+                for ci, val in enumerate([p.name, p.email or "", p.email_draft], 1):
+                    cell = ws2.cell(row=ri2, column=ci, value=val)
+                    cell.border = thin_border
+                    cell.alignment = Alignment(vertical="top", wrap_text=(ci == 3))
+                ws2.row_dimensions[ri2].height = max(15, p.email_draft.count("\n") * 14)
+            ws2.freeze_panes = "A2"
 
             _xls_buf = io.BytesIO()
             wb.save(_xls_buf)
