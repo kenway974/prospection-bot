@@ -122,7 +122,12 @@ def _fetch_page(params: dict, attempt_max: int = 3) -> Optional[dict]:
     return None
 
 
-def search_sirene(keyword: str, location: str, max_results: int = 20) -> List[Prospect]:
+def search_sirene(
+    keyword: str,
+    location: str,
+    max_results: int = 20,
+    naf_code: str = "",
+) -> List[Prospect]:
     """
     Recherche des entreprises via l'API Recherche Entreprises (data.gouv.fr).
 
@@ -130,11 +135,12 @@ def search_sirene(keyword: str, location: str, max_results: int = 20) -> List[Pr
         keyword:     Mot-clé métier (ex: "boulangerie").
         location:    Ville ou région (ex: "Lyon").
         max_results: Nombre maximum de prospects à retourner.
+        naf_code:    Code APE/NAF pour filtrer par activité (ex: "47.11Z"). Optionnel.
 
     Returns:
         Liste d'objets Prospect.
     """
-    logger.info("🏛️  Sirene : '%s' à %s", keyword, location)
+    logger.info("🏛️  Sirene : '%s' à %s%s", keyword, location, f" [NAF {naf_code}]" if naf_code else "")
 
     dept = _get_dept(location)
     per_page = 25
@@ -150,6 +156,9 @@ def search_sirene(keyword: str, location: str, max_results: int = 20) -> List[Pr
             "q": f"{keyword} {location}",
             "per_page": per_page,
         }
+
+    if naf_code:
+        base_params["activite_principale"] = naf_code
 
     prospects: List[Prospect] = []
     page = 1

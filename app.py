@@ -193,6 +193,15 @@ with st.sidebar:
 
     if "sirene" in source_types:
         st.caption("✅ Aucune clé requise — Sirene (gratuite)")
+        sirene_naf = st.text_input(
+            "Code NAF (optionnel)",
+            value=_get("sirene_naf"),
+            placeholder="ex: 47.11Z, 56.10A, 86.21Z…",
+            help="Filtre par activité principale APE. Laisse vide pour tous secteurs.",
+            label_visibility="visible",
+        ).strip()
+    else:
+        sirene_naf = ""
 
     if "pages_jaunes" in source_types:
         st.caption("✅ Aucune clé requise — Pages Jaunes")
@@ -730,6 +739,8 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         all_qualified: list = []
         seen: set = set()
         workers = params.get("analysis_workers", 5)
+        _maps_text_calls = 0
+        _maps_detail_calls = 0
 
         def _analyse_and_filter(candidates: list, label: str) -> list:
             """Analyse un lot de prospects et filtre par score. Retourne la liste qualifiée."""
@@ -785,6 +796,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                     if source == "google_maps":
                         # ── Phase 1 : Text Search ──
                         raw_candidates = fetch_raw_candidates(kw)
+                        _maps_text_calls += 1
                         if not raw_candidates:
                             log_q.put(f"[--] ❌ Aucun résultat Google Maps pour '{kw}'.")
                             continue
@@ -809,6 +821,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                             continue
 
                         # ── Phase 2 : Place Details en parallèle ──
+                        _maps_detail_calls += len(raw_to_build)
                         with ThreadPoolExecutor(max_workers=min(workers, len(raw_to_build))) as ex:
                             built_list = list(ex.map(partial(build_prospect, keyword=kw), raw_to_build))
 
@@ -831,7 +844,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                         # ── Sources alternatives : retournent directement des Prospects ──
                         src_label = SOURCE_LABELS.get(source, source)
                         if source == "sirene":
-                            raw = search_sirene(kw, params["location"], target_per_kw * 3)
+                            raw = search_sirene(kw, params["location"], target_per_kw * 3, naf_code=params.get("sirene_naf", ""))
                         elif source == "pages_jaunes":
                             raw = search_pages_jaunes(kw, params["location"], target_per_kw * 3)
                         elif source == "france_travail":
@@ -864,6 +877,13 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                 all_qualified.extend(kw_qualified)
 
         all_prospects = all_qualified
+        if _maps_text_calls:
+            _maps_cost = _maps_text_calls * 0.032 + _maps_detail_calls * 0.017
+            log_q.put(
+                f"[--] 🗺️  Google Maps : {_maps_text_calls} Text Search"
+                f" + {_maps_detail_calls} Place Details"
+                f" ≈ ${_maps_cost:.2f} ce run"
+            )
         log_q.put(f"[--] 📋 {len(all_prospects)} prospect(s) qualifiés au total.")
 
         # Emails
@@ -1043,6 +1063,7 @@ if launch and not st.session_state.running:
         "email_length":      _email_length,
         "email_salutation":  _email_salutation,
         "email_cta":         _email_cta,
+        "sirene_naf":        sirene_naf or None,
     })
 
     result_container = []
@@ -1095,6 +1116,7 @@ if launch and not st.session_state.running:
         "ft_client_secret":  ft_client_secret,
         "google_cx":         google_cx,
         "linkedin_content":  linkedin_content,
+        "sirene_naf":        sirene_naf,
     }
 
     thread = threading.Thread(
@@ -1204,6 +1226,8 @@ if st.session_state.prospects:
         filtered = sorted(filtered, key=lambda p: p.name)
     elif sort_opt == "Note Google (↓)":
         filtered = sorted(filtered, key=lambda p: p.rating or 0, reverse=True)
+    else:
+        filtered = sorted(filtered, key=lambda p: p.score)
 
     st.markdown(f"### 🏆 {len(filtered)} prospect(s) — triés par {sort_opt.lower()}")
 
