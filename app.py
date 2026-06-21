@@ -549,6 +549,7 @@ with col1:
             your_offer=selected_service.your_offer or "vous aider à améliorer votre présence en ligne",
             service_id=selected_service_id,
             service_category=selected_svc_cat,
+            target_sector=selected_tgt_sector,
         )
         st.code(_preview_text, language=None)
 
@@ -896,8 +897,9 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         )
         _svc_id  = params.get("service_id", "")
         _svc_cat = params.get("service_category", "web_digital")
+        _tgt_sec = params.get("target_sector", "")
         for _p in all_prospects:
-            _p.email_draft = draft_email(_p, style=_email_style, service_id=_svc_id, service_category=_svc_cat)
+            _p.email_draft = draft_email(_p, style=_email_style, service_id=_svc_id, service_category=_svc_cat, target_sector=_tgt_sec)
         all_prospects = list(all_prospects)
 
         # 4. Tri
@@ -1096,6 +1098,7 @@ if launch and not st.session_state.running:
         "profile_name": f"{selected_service.emoji} {selected_service.name}  →  {selected_target.emoji} {selected_target.name}",
         "service_id": selected_service_id,
         "service_category": selected_svc_cat,
+        "target_sector": selected_tgt_sector,
         "detection_keywords": selected_service.detection_keywords,
         "weight_overrides": selected_service.check_weight_overrides,
         "score_direction": selected_service.score_direction,

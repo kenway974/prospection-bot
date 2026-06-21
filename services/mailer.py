@@ -368,6 +368,7 @@ def build_dynamic_email(
     your_offer: str,
     service_id: str = "",
     service_category: str = "web_digital",
+    target_sector: str = "",
 ) -> str:
     """
     Génère un email personnalisé selon les résultats de l'audit ET le style choisi.
@@ -453,11 +454,17 @@ def build_dynamic_email(
         intro_template = INTRO_TEMPLATES.get(intonation, INTRO_TEMPLATES["professional"])
         intro = intro_template.format(name=prospect.name)
 
-    # --- Proposition de valeur ---
-    value_prop = f"{your_offer}." if length != "short" and your_offer else ""
-
-    # --- CTA ---
-    cta = EMAIL_STYLE_LABELS["cta"].get(style.cta, EMAIL_STYLE_LABELS["cta"]["audit"])
+    # --- Proposition de valeur + CTA ---
+    # Pour le dev web : le bot formule UNE offre concrète adaptée à l'état du
+    # site et au secteur (cf. offers.py). Sinon, value_prop + CTA génériques.
+    if service_category == "web_digital":
+        from offers import select_offer
+        offer = select_offer(prospect, sector=target_sector)
+        value_prop = offer.pitch
+        cta = offer.cta
+    else:
+        value_prop = f"{your_offer}." if length != "short" and your_offer else ""
+        cta = EMAIL_STYLE_LABELS["cta"].get(style.cta, EMAIL_STYLE_LABELS["cta"]["audit"])
 
     # --- Signature ---
     sign_off = SIGN_OFF.get(intonation, SIGN_OFF["professional"])
@@ -760,6 +767,7 @@ def draft_email(
     style: "EmailStyle | None" = None,
     service_id: str = "",
     service_category: str = "web_digital",
+    target_sector: str = "",
 ) -> str:
     """Dispatche vers le template A ou B selon le hash du place_id (test A/B 50/50).
     Si `style` est fourni, utilise build_dynamic_email adapté au profil de service."""
@@ -772,6 +780,7 @@ def draft_email(
             your_offer=os.getenv("YOUR_OFFER", "").strip(),
             service_id=service_id,
             service_category=service_category,
+            target_sector=target_sector,
         )
     variant = get_template_variant(prospect.place_id)
     return _draft_email_b(prospect) if variant == "B" else _draft_email_a(prospect)
