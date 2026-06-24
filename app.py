@@ -913,20 +913,38 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             json.dump([p.to_dict() for p in all_prospects], f, ensure_ascii=False, indent=2)
 
         # 6. Export CRM
+        _crm_type = params.get("crm_type", "aucun")
         crm_exporter = get_exporter(
-            params.get("crm_type", "aucun"),
+            _crm_type,
             params.get("crm_key", ""),
             **params.get("crm_extra", {}),
         )
         notion_page_ids: dict = {}
-        if crm_exporter:
-            crm_exporter.export(all_prospects)
-            if hasattr(crm_exporter, "_last_exported_ids"):
-                notion_page_ids = crm_exporter._last_exported_ids
+        if _crm_type not in ("aucun", ""):
+            if not params.get("crm_key", ""):
+                log_q.put(f"[--] ⚠️  CRM {_crm_type} : clé API manquante — export ignoré.")
+            elif _crm_type == "notion" and not params.get("crm_extra", {}).get("database_id"):
+                log_q.put("[--] ⚠️  Notion : Database ID manquant — export ignoré.")
+            elif crm_exporter:
+                log_q.put(f"[--] 📤 Export CRM ({_crm_type})…")
+                try:
+                    crm_exporter.export(all_prospects)
+                    if hasattr(crm_exporter, "_last_exported_ids"):
+                        notion_page_ids = crm_exporter._last_exported_ids
+                    log_q.put(f"[--] ✅ {len(all_prospects)} prospect(s) exporté(s) vers {_crm_type}.")
+                except Exception as _crm_exc:
+                    log_q.put(f"[--] ❌ Erreur export {_crm_type} : {_crm_exc}")
 
         # 7. Gmail
         if params["send_emails"] and params["gmail_address"] and params["gmail_password"]:
-            if params.get("email_send_mode") == "⏰ Programmé" and params.get("sched_date"):
+            _with_email = [p for p in all_prospects if p.email]
+            _without_email = len(all_prospects) - len(_with_email)
+            if not _with_email:
+                log_q.put(
+                    f"[--] ⚠️  Envoi email activé mais aucun prospect n'a d'adresse email scrapée "
+                    f"({_without_email} prospect(s) sans email trouvé sur leur site)."
+                )
+            elif params.get("email_send_mode") == "⏰ Programmé" and params.get("sched_date"):
                 from datetime import datetime as _dtime
                 from services import scheduler as _sched_mod
                 _send_at = _dtime.strptime(
@@ -954,8 +972,19 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                     f"{params['sched_date']} à {params.get('sched_time', '09:00')}."
                 )
             else:
+                log_q.put(f"[--] 📤 Envoi email vers {len(_with_email)} prospect(s)…")
+                if _without_email:
+                    log_q.put(f"[--] ℹ️  {_without_email} prospect(s) ignoré(s) — email non trouvé sur leur site.")
                 from services.gmail import send_all
-                send_all(all_prospects, params["gmail_address"], params["gmail_password"])
+                _email_stats = send_all(_with_email, params["gmail_address"], params["gmail_password"])
+                log_q.put(
+                    f"[--] {'✅' if _email_stats['sent'] else '⚠️ '} Email : "
+                    f"{_email_stats['sent']} envoyé(s) | "
+                    f"{_email_stats['skipped']} ignoré(s) | "
+                    f"{_email_stats['failed']} échec(s)."
+                )
+                if _email_stats["failed"]:
+                    log_q.put("[--] ❌ Vérifie ton adresse Gmail et le mot de passe d'application (pas le mot de passe habituel).")
                 if notion_page_ids and params.get("crm_type") == "notion" and params.get("crm_key"):
                     from services.crm.notion import NotionExporter
                     _nu = NotionExporter(params["crm_key"], params.get("crm_extra", {}).get("database_id", ""))
@@ -964,11 +993,34 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                             _pid = notion_page_ids.get(_p.place_id)
                             if _pid:
                                 _nu.update_status(_pid, "contacté")
+        elif params["send_emails"]:
+            if not params["gmail_address"]:
+                log_q.put("[--] ⚠️  Envoi email : adresse Gmail manquante.")
+            elif not params["gmail_password"]:
+                log_q.put("[--] ⚠️  Envoi email : mot de passe d'application Gmail manquant.")
 
         # 8. SMS Brevo
         if params["send_sms"] and params["brevo_key"]:
-            from services.sms import send_all_sms
-            send_all_sms(all_prospects)
+            _with_mobile = [p for p in all_prospects if p.phone and (
+                p.phone.replace(" ", "").startswith("06") or
+                p.phone.replace(" ", "").startswith("07")
+            )]
+            if not _with_mobile:
+                log_q.put("[--] ⚠️  SMS activé mais aucun prospect avec numéro mobile (06/07) trouvé.")
+            else:
+                log_q.put(f"[--] 📱 Envoi SMS vers {len(_with_mobile)} mobile(s)…")
+                from services.sms import send_all_sms
+                _sms_stats = send_all_sms(all_prospects)
+                log_q.put(
+                    f"[--] {'✅' if _sms_stats['sent'] else '⚠️ '} SMS : "
+                    f"{_sms_stats['sent']} envoyé(s) | "
+                    f"{_sms_stats['skipped']} ignoré(s) | "
+                    f"{_sms_stats['failed']} échec(s)."
+                )
+                if _sms_stats["failed"]:
+                    log_q.put("[--] ❌ Vérifie ta clé Brevo API dans la sidebar.")
+        elif params["send_sms"] and not params["brevo_key"]:
+            log_q.put("[--] ⚠️  SMS activé mais clé Brevo manquante.")
 
         # 9. Marquage des prospects contactés (avec infos complètes pour les relances)
         mark_as_contacted(all_prospects, notion_page_ids=notion_page_ids)
