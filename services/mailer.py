@@ -338,16 +338,16 @@ INTRO_TEMPLATES = {
         "Voici les principaux points que j'ai identifiés :"
     ),
     "professional": (
-        "En analysant la présence en ligne de {name}, j'ai identifié plusieurs points "
-        "qui méritent votre attention :"
+        "En cherchant {name} en ligne ce matin, j'ai repéré quelques points "
+        "qui méritent une attention rapide :"
     ),
-    "direct": "En deux mots, voilà ce que j'ai trouvé sur {name} :",
-    "casual": "J'ai jeté un œil à votre présence en ligne, et voilà ce que j'ai vu :",
+    "direct": "Voilà ce que j'ai trouvé sur {name} en deux minutes :",
+    "casual": "J'ai jeté un œil à votre présence en ligne — voilà ce que j'ai vu :",
 }
 
 SIGN_OFF = {
     "formal":       "Dans l'attente de votre retour, je reste à votre disposition.\n\nCordialement,",
-    "professional": "Je reste disponible pour toute question.\n\nBien cordialement,",
+    "professional": "N'hésitez pas si vous avez la moindre question.\n\nBien à vous,",
     "direct":       "Au plaisir d'échanger,",
     "casual":       "À bientôt j'espère !",
 }
@@ -368,6 +368,7 @@ def build_dynamic_email(
     your_offer: str,
     service_id: str = "",
     service_category: str = "web_digital",
+    target_sector: str = "",
 ) -> str:
     """
     Génère un email personnalisé selon les résultats de l'audit ET le style choisi.
@@ -453,11 +454,17 @@ def build_dynamic_email(
         intro_template = INTRO_TEMPLATES.get(intonation, INTRO_TEMPLATES["professional"])
         intro = intro_template.format(name=prospect.name)
 
-    # --- Proposition de valeur ---
-    value_prop = f"{your_offer}." if length != "short" and your_offer else ""
-
-    # --- CTA ---
-    cta = EMAIL_STYLE_LABELS["cta"].get(style.cta, EMAIL_STYLE_LABELS["cta"]["audit"])
+    # --- Proposition de valeur + CTA ---
+    # Pour le dev web : le bot formule UNE offre concrète adaptée à l'état du
+    # site et au secteur (cf. offers.py). Sinon, value_prop + CTA génériques.
+    if service_category == "web_digital":
+        from offers import select_offer
+        offer = select_offer(prospect, sector=target_sector)
+        value_prop = offer.pitch
+        cta = offer.cta
+    else:
+        value_prop = f"{your_offer}." if length != "short" and your_offer else ""
+        cta = EMAIL_STYLE_LABELS["cta"].get(style.cta, EMAIL_STYLE_LABELS["cta"]["audit"])
 
     # --- Signature ---
     sign_off = SIGN_OFF.get(intonation, SIGN_OFF["professional"])
@@ -673,33 +680,33 @@ def _draft_email_b(prospect: Prospect) -> str:
     cms = getattr(prospect, "cms", None)
 
     if not prospect.has_website():
-        subject = f"Site web pour {prospect.name} ?"
+        subject = f"{prospect.name} — je n'ai pas trouvé votre site"
         body_lines = [
             "Bonjour,",
             "",
-            f"Votre établissement n'apparaît pas avec de site web sur Google.",
-            "En moyenne, les commerces avec un site reçoivent 70 % de contacts supplémentaires.",
+            f"En cherchant {prospect.name} sur Google, je n'ai pas trouvé de site web.",
+            "C'est souvent la première chose que vos clients vérifient avant d'appeler.",
             "",
-            "Je crée des sites efficaces en moins de 2 semaines. Ça vous intéresse ?",
+            "Je crée des sites clairs et bien référencés en 2 semaines. Vous seriez intéressé(e) ?",
         ]
     elif any("inaccessible" in i for i in prospect.issues):
-        subject = f"Votre site est down — {prospect.name}"
+        subject = f"{prospect.name} — votre site est inaccessible"
         body_lines = [
             "Bonjour,",
             "",
-            f"Votre site est actuellement inaccessible.",
-            "Chaque heure perdue, c'est un client qui va chez un concurrent.",
+            "En visitant votre site aujourd'hui, j'ai constaté qu'il était inaccessible.",
+            "Chaque heure d'indisponibilité, c'est un client potentiel qui part chez un concurrent.",
             "",
-            "15 minutes suffisent pour faire le point. Disponible cette semaine ?",
+            "Un appel de 15 min suffit pour faire le point. Disponible cette semaine ?",
         ]
     else:
-        cms_mention = f" (construit sous {cms})" if cms else ""
+        cms_mention = f" (sous {cms})" if cms else ""
         top = prospect.issues[0].split("→")[0].strip().lower() if prospect.issues else "votre présence en ligne"
-        subject = f"Question rapide — {prospect.name}"
+        subject = f"{prospect.name} — un point rapide sur votre site"
         body_lines = [
             "Bonjour,",
             "",
-            f"J'ai analysé votre site{cms_mention} et relevé {n} point(s) qui vous coûtent des clients :",
+            f"J'ai regardé le site de {prospect.name}{cms_mention} et j'ai noté {n} point(s) qui freinent votre visibilité :",
             f"→ {top}",
         ]
         if n > 1:
@@ -707,8 +714,8 @@ def _draft_email_b(prospect: Prospect) -> str:
             body_lines.append(f"→ {second}")
         body_lines += [
             "",
-            "Je peux vous montrer en 15 min comment corriger ça, sans engagement.",
-            "Disponible cette semaine ?",
+            "Je peux vous montrer en 15 minutes comment corriger ça — sans engagement, sans jargon.",
+            "Dispo cette semaine ?",
         ]
 
     signature_parts = [config.your_name, config.your_title]
@@ -744,9 +751,9 @@ def _draft_email_a(prospect: Prospect) -> str:
         parts += ["", issues_block]
     parts += ["", cta, ""]
     parts += [
-        "Un simple échange de 15 minutes suffit — et si je ne peux pas vous aider, je vous le dirai franchement.",
+        "15 minutes suffisent pour faire le point — et si je ne peux rien pour vous, je vous le dirai clairement.",
         "",
-        "Seriez-vous disponible cette semaine ou la semaine prochaine ?",
+        "Vous seriez disponible cette semaine ?",
         "",
         "Bonne journée,",
         "",
@@ -760,6 +767,7 @@ def draft_email(
     style: "EmailStyle | None" = None,
     service_id: str = "",
     service_category: str = "web_digital",
+    target_sector: str = "",
 ) -> str:
     """Dispatche vers le template A ou B selon le hash du place_id (test A/B 50/50).
     Si `style` est fourni, utilise build_dynamic_email adapté au profil de service."""
@@ -772,6 +780,7 @@ def draft_email(
             your_offer=os.getenv("YOUR_OFFER", "").strip(),
             service_id=service_id,
             service_category=service_category,
+            target_sector=target_sector,
         )
     variant = get_template_variant(prospect.place_id)
     return _draft_email_b(prospect) if variant == "B" else _draft_email_a(prospect)

@@ -730,6 +730,11 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         all_qualified: list = []
         seen: set = set()
         workers = params.get("analysis_workers", 5)
+        _maps_text_calls = 0
+        _maps_detail_calls = 0
+        _emails_sent = 0
+        _sms_sent = 0
+        _crm_synced = 0
 
         def _analyse_and_filter(candidates: list, label: str) -> list:
             """Analyse un lot de prospects et filtre par score. Retourne la liste qualifiée."""
@@ -897,10 +902,21 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             **params.get("crm_extra", {}),
         )
         notion_page_ids: dict = {}
-        if crm_exporter:
-            crm_exporter.export(all_prospects)
-            if hasattr(crm_exporter, "_last_exported_ids"):
-                notion_page_ids = crm_exporter._last_exported_ids
+        if _crm_type not in ("aucun", ""):
+            if not params.get("crm_key", ""):
+                log_q.put(f"[--] ⚠️  CRM {_crm_type} : clé API manquante — export ignoré.")
+            elif _crm_type == "notion" and not params.get("crm_extra", {}).get("database_id"):
+                log_q.put("[--] ⚠️  Notion : Database ID manquant — export ignoré.")
+            elif crm_exporter:
+                log_q.put(f"[--] 📤 Export CRM ({_crm_type})…")
+                try:
+                    crm_exporter.export(all_prospects)
+                    if hasattr(crm_exporter, "_last_exported_ids"):
+                        notion_page_ids = crm_exporter._last_exported_ids
+                    _crm_synced = len(all_prospects)
+                    log_q.put(f"[--] ✅ {len(all_prospects)} prospect(s) exporté(s) vers {_crm_type}.")
+                except Exception as _crm_exc:
+                    log_q.put(f"[--] ❌ Erreur export {_crm_type} : {_crm_exc}")
 
         # 7. Gmail
         if params["send_emails"] and params["gmail_address"] and params["gmail_password"]:
@@ -933,7 +949,16 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                 )
             else:
                 from services.gmail import send_all
-                send_all(all_prospects, params["gmail_address"], params["gmail_password"])
+                _email_stats = send_all(_with_email, params["gmail_address"], params["gmail_password"])
+                _emails_sent = _email_stats["sent"]
+                log_q.put(
+                    f"[--] {'✅' if _email_stats['sent'] else '⚠️ '} Email : "
+                    f"{_email_stats['sent']} envoyé(s) | "
+                    f"{_email_stats['skipped']} ignoré(s) | "
+                    f"{_email_stats['failed']} échec(s)."
+                )
+                if _email_stats["failed"]:
+                    log_q.put("[--] ❌ Vérifie ton adresse Gmail et le mot de passe d'application (pas le mot de passe habituel).")
                 if notion_page_ids and params.get("crm_type") == "notion" and params.get("crm_key"):
                     from services.crm.notion import NotionExporter
                     _nu = NotionExporter(params["crm_key"], params.get("crm_extra", {}).get("database_id", ""))
@@ -945,8 +970,27 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
 
         # 8. SMS Brevo
         if params["send_sms"] and params["brevo_key"]:
-            from services.sms import send_all_sms
-            send_all_sms(all_prospects)
+            _with_mobile = [p for p in all_prospects if p.phone and (
+                p.phone.replace(" ", "").startswith("06") or
+                p.phone.replace(" ", "").startswith("07")
+            )]
+            if not _with_mobile:
+                log_q.put("[--] ⚠️  SMS activé mais aucun prospect avec numéro mobile (06/07) trouvé.")
+            else:
+                log_q.put(f"[--] 📱 Envoi SMS vers {len(_with_mobile)} mobile(s)…")
+                from services.sms import send_all_sms
+                _sms_stats = send_all_sms(all_prospects)
+                _sms_sent = _sms_stats["sent"]
+                log_q.put(
+                    f"[--] {'✅' if _sms_stats['sent'] else '⚠️ '} SMS : "
+                    f"{_sms_stats['sent']} envoyé(s) | "
+                    f"{_sms_stats['skipped']} ignoré(s) | "
+                    f"{_sms_stats['failed']} échec(s)."
+                )
+                if _sms_stats["failed"]:
+                    log_q.put("[--] ❌ Vérifie ta clé Brevo API dans la sidebar.")
+        elif params["send_sms"] and not params["brevo_key"]:
+            log_q.put("[--] ⚠️  SMS activé mais clé Brevo manquante.")
 
         # 9. Marquage des prospects contactés (avec infos complètes pour les relances)
         mark_as_contacted(all_prospects, notion_page_ids=notion_page_ids)
@@ -958,6 +1002,17 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             p.phone.replace(" ", "").startswith("06") or
             p.phone.replace(" ", "").startswith("07")
         ))
+        # Répartition des types d'offres (dev web uniquement)
+        _offer_types: dict = {}
+        if params.get("service_category", "web_digital") == "web_digital":
+            try:
+                from offers import select_offer as _select_offer
+                for _p in all_prospects:
+                    _ot = _select_offer(_p, sector=params.get("target_sector", "")).offer_type
+                    _offer_types[_ot] = _offer_types.get(_ot, 0) + 1
+            except Exception:
+                pass
+        _source_labels = [SOURCE_LABELS.get(s, s) for s in sources]
         save_run(
             profile_name=params.get("profile_name", "Custom"),
             location=params["location"],
@@ -967,6 +1022,12 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             emails_found=emails_found,
             mobiles_found=mobiles_found,
             output_file=json_path,
+            emails_sent=_emails_sent,
+            sms_sent=_sms_sent,
+            crm_synced=_crm_synced,
+            offer_types=_offer_types,
+            sources=_source_labels,
+            target_sector=params.get("target_sector", ""),
         )
 
         result_container.extend(all_prospects)
@@ -1419,17 +1480,20 @@ with st.expander("📊 Dashboard — Statistiques globales"):
         _total_prospects = sum(r.get("total_prospects", 0) for r in _hist)
         _total_emails    = sum(r.get("emails_trouvés", 0)  for r in _hist)
         _total_mobiles   = sum(r.get("mobiles_trouvés", 0) for r in _hist)
+        _total_sent      = sum(r.get("emails_envoyés", 0)  for r in _hist)
+        _total_sms_sent  = sum(r.get("sms_envoyés", 0)     for r in _hist)
         _total_responded = sum(1 for v in _cdata2.values() if v.get("responded"))
         _total_contacted = len(_cdata2)
 
         # Métriques globales
-        dc1, dc2, dc3, dc4, dc5 = st.columns(5)
+        dc1, dc2, dc3, dc4, dc5, dc6 = st.columns(6)
         dc1.metric("Campagnes", _total_runs)
         dc2.metric("Prospects total", _total_prospects)
         dc3.metric("Emails trouvés", _total_emails)
-        dc4.metric("Mobiles trouvés", _total_mobiles)
+        dc4.metric("Emails envoyés", _total_sent)
+        dc5.metric("SMS envoyés", _total_sms_sent)
         _rrate = f"{_total_responded / _total_contacted * 100:.0f}%" if _total_contacted else "—"
-        dc5.metric("Taux de réponse", _rrate)
+        dc6.metric("Taux de réponse", _rrate)
 
         st.markdown("---")
 
@@ -1505,13 +1569,40 @@ with st.expander("🕐 Historique des campagnes"):
     else:
         for run in history:
             kw_str = ", ".join(run.get("keywords", [])[:3])
-            st.markdown(
-                f"**{run['date']}** — {run['profile']} — {run['location']} — "
-                f"`{kw_str}` — "
-                f"**{run['total_prospects']}** prospects | "
-                f"📧 {run['emails_trouvés']} emails | "
-                f"📱 {run['mobiles_trouvés']} mobiles"
-            )
+            extra_kw = len(run.get("keywords", [])) - 3
+            kw_display = kw_str + (f" +{extra_kw}" if extra_kw > 0 else "")
+            src_str = " · ".join(run.get("sources", [])) or "—"
+            sector = run.get("target_sector", "")
+            with st.container():
+                col_h1, col_h2 = st.columns([3, 1])
+                with col_h1:
+                    st.markdown(
+                        f"**{run['date']}** — {run['profile']} — {run['location']}"
+                        + (f" — *{sector}*" if sector else "")
+                    )
+                    st.caption(f"Sources : {src_str} | Mots-clés : {kw_display}")
+                with col_h2:
+                    st.markdown(f"**{run['total_prospects']}** prospects")
+                # Métriques détaillées
+                m1, m2, m3, m4, m5 = st.columns(5)
+                m1.metric("Sans site", run.get("sans_site", 0))
+                m2.metric("Emails scrapés", run.get("emails_trouvés", 0))
+                m3.metric("Mobiles", run.get("mobiles_trouvés", 0))
+                m4.metric("Emails envoyés", run.get("emails_envoyés", 0))
+                m5.metric("SMS envoyés", run.get("sms_envoyés", 0))
+                # Répartition offres
+                _ot = run.get("offer_types", {})
+                if _ot:
+                    _ot_labels = {
+                        "creation": "Création", "migration": "Migration",
+                        "refonte": "Refonte", "widget": "Widget", "audit": "Audit",
+                    }
+                    _ot_str = " | ".join(
+                        f"{_ot_labels.get(k, k)} ×{v}" for k, v in sorted(_ot.items(), key=lambda x: -x[1])
+                    )
+                    st.caption(f"Offres proposées : {_ot_str}")
+                if run.get("crm_synchronisés"):
+                    st.caption(f"CRM : {run['crm_synchronisés']} synchronisé(s)")
             st.divider()
 
 # ---------------------------------------------------------------------------
