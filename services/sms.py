@@ -35,21 +35,49 @@ def _format_phone(phone: str) -> str | None:
     return cleaned
 
 
+_SMS_NO_SITE = [
+    "Bonjour ! {business} n'a pas de site web — vous perdez des clients chaque jour. Je peux en créer un. Dispo ? — {sender}",
+    "Bonjour ! J'ai cherché {business} sur Google… pas de site. Ça vous coûte des clients. On en parle ? — {sender}",
+    "Bonjour ! Je n'ai pas trouvé de site pour {business}. En 2 semaines, je peux en créer un efficace. Dispo ? — {sender}",
+]
+
+_SMS_WITH_ISSUE = [
+    "Bonjour ! J'ai regardé le site de {business} : {issue}. Je peux corriger ça. Un appel de 15 min ? — {sender}",
+    "Bonjour ! Le site de {business} a un point qui coince : {issue}. Je m'en occupe. On en parle ? — {sender}",
+    "Bonjour ! Petit point sur {business} : {issue}. Je peux régler ça rapidement. Dispo cette semaine ? — {sender}",
+]
+
+
+def _sms_variant(place_id: str, n: int) -> int:
+    """Choisit un template de façon déterministe via le hash du place_id."""
+    import hashlib
+    return int(hashlib.md5(place_id.encode()).hexdigest(), 16) % n
+
+
 def _build_sms(prospect: Prospect) -> str:
-    """Génère un SMS court et percutant (max 160 caractères)."""
+    """Génère un SMS naturel et percutant (max 160 caractères)."""
     import os
     custom_hook = os.getenv("SMS_HOOK", "").strip()
     if custom_hook:
-        msg = custom_hook.format(name=prospect.name)
+        return custom_hook.format(name=prospect.name)[:160]
+
+    sender = config.your_name or "un développeur web"
+    business = prospect.name
+
+    if not prospect.has_website():
+        tpl = _SMS_NO_SITE[_sms_variant(prospect.place_id, len(_SMS_NO_SITE))]
+        msg = tpl.format(business=business, sender=sender)
     else:
-        name = config.your_name
-        issue = prospect.issues[0].split("→")[0].strip() if prospect.issues else "votre présence en ligne"
-        msg = (
-            f"Bonjour, je suis {name}. "
-            f"J'ai analysé {prospect.name} : {issue}. "
-            f"Dispo pour un retour gratuit ? {config.your_email}"
-        )
-    # Tronque à 160 caractères si nécessaire
+        issue = prospect.issues[0].split("→")[0].strip() if prospect.issues else None
+        if issue:
+            tpl = _SMS_WITH_ISSUE[_sms_variant(prospect.place_id, len(_SMS_WITH_ISSUE))]
+            msg = tpl.format(business=business, issue=issue.lower(), sender=sender)
+        else:
+            msg = (
+                f"Bonjour ! J'ai quelques idées pour améliorer la visibilité de {business} en ligne. "
+                f"Dispo pour un échange rapide ? — {sender}"
+            )
+
     return msg[:160]
 
 

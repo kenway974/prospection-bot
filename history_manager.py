@@ -221,6 +221,12 @@ def save_run(
     emails_found: int,
     mobiles_found: int,
     output_file: str,
+    emails_sent: int = 0,
+    sms_sent: int = 0,
+    crm_synced: int = 0,
+    offer_types: Optional[Dict[str, int]] = None,
+    sources: Optional[List[str]] = None,
+    target_sector: str = "",
 ) -> None:
     """Enregistre les statistiques d'un run terminé (max 50 entrées conservées)."""
     _ensure_output()
@@ -234,6 +240,12 @@ def save_run(
         "sans_site": no_site,
         "emails_trouvés": emails_found,
         "mobiles_trouvés": mobiles_found,
+        "emails_envoyés": emails_sent,
+        "sms_envoyés": sms_sent,
+        "crm_synchronisés": crm_synced,
+        "offer_types": offer_types or {},
+        "sources": sources or [],
+        "target_sector": target_sector,
         "fichier": output_file,
     })
     history = history[:50]

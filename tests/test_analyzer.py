@@ -24,6 +24,7 @@ from services.analyzer import (
     _check_social_links,
     _check_response_time,
     _check_outdated_site,
+    _check_seo_visibility,
     _scrape_email,
     analyze_prospect,
     SLOW_RESPONSE_THRESHOLD_S,
@@ -401,6 +402,49 @@ class TestAnalyzeProspect(unittest.TestCase):
             result_critique = analyze_prospect(p2)
 
         self.assertLess(result_critique.score, result_mineur.score)
+
+
+class TestCheckSeoVisibility(unittest.TestCase):
+    """Proxy gratuit du trafic organique (noindex / contenu / structure)."""
+
+    def _rich_body(self) -> str:
+        # Page avec H1 + beaucoup de contenu → pas de pénalité contenu/structure
+        return "<h1>Agence</h1>" + "<p>" + ("mot " * 250) + "</p>"
+
+    def test_noindex_detecte(self):
+        soup = make_soup(
+            '<html><head><meta name="robots" content="noindex,nofollow"></head>'
+            f"<body>{self._rich_body()}</body></html>"
+        )
+        issues = []
+        _check_seo_visibility(soup, issues)
+        self.assertEqual(len(issues), 1)
+        self.assertIn("noindex", issues[0][0].lower())
+        self.assertEqual(issues[0][1], CRITICAL_WEIGHT)
+
+    def test_contenu_leger_detecte(self):
+        soup = make_soup("<html><body><h1>Accueil</h1><p>Bienvenue</p></body></html>")
+        issues = []
+        _check_seo_visibility(soup, issues)
+        self.assertTrue(any("léger" in msg.lower() for msg, _ in issues))
+
+    def test_pas_de_h1_detecte(self):
+        soup = make_soup(f"<html><body><p>{'mot ' * 250}</p></body></html>")
+        issues = []
+        _check_seo_visibility(soup, issues)
+        self.assertTrue(any("h1" in msg.lower() for msg, _ in issues))
+
+    def test_site_sain_aucun_probleme(self):
+        soup = make_soup(f"<html><body>{self._rich_body()}</body></html>")
+        issues = []
+        _check_seo_visibility(soup, issues)
+        self.assertEqual(issues, [])
+
+    def test_weight_zero_skip(self):
+        soup = make_soup('<html><head><meta name="robots" content="noindex"></head></html>')
+        issues = []
+        _check_seo_visibility(soup, issues, weight=0)
+        self.assertEqual(issues, [])
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ services/analyzer.py — Analyse du site web d'un prospect.
 Pour chaque prospect avec un site web, ce module :
   1. Charge la page principale (GET HTTP)
   2. Passe BeautifulSoup dessus pour inspecter le HTML
-  3. Lance 10 checks pondérés (HTTPS, mobile, SEO, tracking, obsolescence…)
+  3. Lance des checks pondérés (HTTPS, mobile, SEO, tracking, obsolescence, visibilité…)
   4. Scrape l'email de contact (mailto + page /contact)
   5. Calcule un score pondéré sur 100 (100 = parfait, 0 = aucun site)
 
@@ -49,6 +49,7 @@ _KEY_PATTERNS = {
     "social_links":  ["réseaux sociaux", "social"],
     "response_time": ["lent", "chargement", "performance", "pagespeed", "temps de"],
     "outdated":      ["daté", "obsolète", "ancien", "non mis à jour"],
+    "seo_visibility": ["noindex", "trafic organique", "à indexer", "titre h1", "structure seo", "contenu très léger"],
     # Enrichissement sémantique (weight=0 — n'affectent pas le score)
     "no_video":      ["aucune vidéo", "valorisation par la vidéo"],
     "no_gallery":    ["aucune galerie", "valorisation visuelle"],
@@ -97,6 +98,8 @@ CHECK_DELIVERY_COVERED = "delivery_covered"  # livraison déjà gérée → oppo
 CHECK_LOW_VOLUME       = "low_volume"         # peu d'avis → activité faible
 # Check performance mobile via Lighthouse
 CHECK_PAGESPEED        = "pagespeed"
+# Check visibilité SEO — proxy gratuit du "trafic organique" (noindex, contenu, structure)
+CHECK_SEO_VISIBILITY   = "seo_visibility"
 
 _DEFAULT_WEIGHTS: Dict[str, int] = {
     CHECK_HTTPS:         CRITICAL_WEIGHT,
@@ -114,6 +117,8 @@ _DEFAULT_WEIGHTS: Dict[str, int] = {
     CHECK_LOW_VOLUME:       0,
     # PageSpeed actif par défaut (nécessite GOOGLE_PLACES_API_KEY, skip si absente)
     CHECK_PAGESPEED: MAJOR_WEIGHT,
+    # Visibilité SEO — proxy gratuit du trafic organique (aucune API, 0 €)
+    CHECK_SEO_VISIBILITY: MAJOR_WEIGHT,
 }
 
 # Type interne : liste de (message, poids)
@@ -352,6 +357,47 @@ def _check_pagespeed(url: str, issues: _IssueList, weight: int = MAJOR_WEIGHT) -
                 time.sleep(2 ** (attempt + 1))
             else:
                 logger.debug("    ⚠️  PageSpeed API indisponible pour %s : %s", url, exc)
+
+
+def _check_seo_visibility(soup: BeautifulSoup, issues: _IssueList, weight: int = MAJOR_WEIGHT) -> None:
+    """
+    Proxy GRATUIT du trafic organique (« passages sur le site ») — aucune API.
+
+    On ne peut pas mesurer les visites réelles sans outil payant (SEMrush…),
+    mais on détecte les bloqueurs concrets qui privent un site de trafic Google :
+      1. noindex   → le site est explicitement exclu de Google = 0 trafic organique
+      2. contenu très léger → quasi rien à indexer → faible visibilité
+      3. pas de H1 → structure SEO faible, Google comprend mal la page
+    """
+    if weight == 0:
+        return
+
+    # 1. noindex — bloqueur le plus grave (site volontairement invisible)
+    robots = soup.find("meta", attrs={"name": re.compile(r"^(robots|googlebot)$", re.I)})
+    if robots and "noindex" in (robots.get("content", "") or "").lower():
+        issues.append((
+            "Site en noindex → explicitement exclu de Google, il ne reçoit "
+            "aucun trafic organique (visibilité quasi nulle dans les recherches)",
+            CRITICAL_WEIGHT,
+        ))
+        return  # inutile d'évaluer le reste : la page n'est de toute façon pas indexée
+
+    # 2. Contenu très léger → peu de matière à référencer
+    word_count = len(soup.get_text(separator=" ", strip=True).split())
+    if word_count < 200:
+        issues.append((
+            f"Contenu très léger en page d'accueil (~{word_count} mots) → peu de "
+            "contenu à indexer, donc faible visibilité et trafic organique sur Google",
+            weight,
+        ))
+
+    # 3. Absence de titre H1 → structure SEO faible
+    if not soup.find("h1"):
+        issues.append((
+            "Aucun titre H1 détecté → structure SEO faible, Google identifie mal "
+            "le sujet de la page (pénalise le référencement et le trafic)",
+            MINOR_WEIGHT,
+        ))
 
 
 def _check_delivery_covered(
@@ -625,6 +671,7 @@ def analyze_prospect(
     _check_outdated_site(html, weighted_issues,     weights[CHECK_OUTDATED])
     _check_delivery_covered(soup, html, weighted_issues, weights[CHECK_DELIVERY_COVERED])
     _check_pagespeed(url, weighted_issues,          weights[CHECK_PAGESPEED])
+    _check_seo_visibility(soup, weighted_issues,    weights[CHECK_SEO_VISIBILITY])
 
     # Enrichissement sémantique (weight=0 — stocké en cache, enrichit les emails)
     _check_no_video(html, soup, weighted_issues)

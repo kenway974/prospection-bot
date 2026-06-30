@@ -193,15 +193,6 @@ with st.sidebar:
 
     if "sirene" in source_types:
         st.caption("✅ Aucune clé requise — Sirene (gratuite)")
-        sirene_naf = st.text_input(
-            "Code NAF (optionnel)",
-            value=_get("sirene_naf"),
-            placeholder="ex: 47.11Z, 56.10A, 86.21Z…",
-            help="Filtre par activité principale APE. Laisse vide pour tous secteurs.",
-            label_visibility="visible",
-        ).strip()
-    else:
-        sirene_naf = ""
 
     if "pages_jaunes" in source_types:
         st.caption("✅ Aucune clé requise — Pages Jaunes")
@@ -245,7 +236,7 @@ with st.sidebar:
     if crm_type == "notion":
         crm_key = st.text_input(
             "Notion API Key", type="password",
-            value=_get("notion_api_key", "NOTION_API_KEY"), placeholder="secret_...",
+            value=_get("notion_api_key", "NOTION_API_KEY"), placeholder="ntn_… ou secret_…",
             label_visibility="collapsed",
         )
         crm_extra = {
@@ -264,8 +255,10 @@ with st.sidebar:
 **Database ID :**
 1. Ouvre ta base Notion dans le navigateur
 2. URL : `notion.so/MonEspace/`**`c2507703175647aaf2132a76c00e06`**`?v=…`
-3. Le Database ID est la partie surlignée (32 car. après le dernier `/` avant `?v=`)
-4. ⚠️ Invite l'intégration dans ta base : ouvre la base → **⋯** → **Connexions** → ajoute "ProspectionBot"
+3. Le Database ID est la partie surlignée (32 car.). Tu peux coller le lien entier, l'app extrait l'ID automatiquement.
+
+**⚠️ Cause n°1 quand « rien ne se passe » :**
+L'intégration n'est **pas connectée à la base**. Ouvre ta base → **⋯** (en haut à droite) → **Connexions** → ajoute "ProspectionBot". Sans ça, Notion renvoie une erreur 404 et aucune fiche n'est créée.
 """)
     elif crm_type == "hubspot":
         crm_key = st.text_input(
@@ -549,7 +542,6 @@ with col1:
             your_offer=selected_service.your_offer or "vous aider à améliorer votre présence en ligne",
             service_id=selected_service_id,
             service_category=selected_svc_cat,
-            target_sector=selected_tgt_sector,
         )
         st.code(_preview_text, language=None)
 
@@ -704,10 +696,12 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         import services.analyzer as an_mod
         import services.mailer as ma_mod
         import services.notion_sync as no_mod
+        import services.crm.notion as crmno_mod
         gm_mod.logger = ui_logger
         an_mod.logger = ui_logger
         ma_mod.logger = ui_logger
         no_mod.logger = ui_logger
+        crmno_mod.logger = ui_logger
 
         # Recharge aussi le config dans chaque module
         gm_mod.config = c
@@ -735,6 +729,11 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         score_direction = params.get("score_direction", "asc")
         weight_overrides = params.get("weight_overrides", {})
         already_contacted = load_contacted_ids()
+        if already_contacted:
+            log_q.put(
+                f"[--] 📓 {len(already_contacted)} établissement(s) déjà contacté(s) "
+                "seront ignorés (réinitialisable dans « Historique des contacts »)."
+            )
         sources = params.get("source_types", [params.get("source_type", "google_maps")])
 
         all_qualified: list = []
@@ -742,6 +741,12 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         workers = params.get("analysis_workers", 5)
         _maps_text_calls = 0
         _maps_detail_calls = 0
+        _funnel_raw = 0          # total candidats bruts récupérés (toutes sources)
+        _funnel_candidates = 0   # total candidats après note mini, avant analyse
+        _emails_sent = 0
+        _sms_sent = 0
+        _crm_synced = 0
+        _emails_scheduled = 0
 
         def _analyse_and_filter(candidates: list, label: str) -> list:
             """Analyse un lot de prospects et filtre par score. Retourne la liste qualifiée."""
@@ -755,11 +760,23 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                     batch,
                 ))
             qualified = []
+            rejected_scores: list = []
             for p in analyzed:
                 qualifies = (p.score >= threshold if score_direction == "desc" else p.score <= threshold)
                 if qualifies:
                     qualified.append(p)
                     log_q.put(f"[--] ✅ {p.name} — score {p.score}/100")
+                else:
+                    rejected_scores.append(p.score)
+            # Funnel : on montre noir sur blanc où meurent les prospects
+            if rejected_scores:
+                _op = "≥" if score_direction == "desc" else "≤"
+                log_q.put(
+                    f"[--] 📊 [{label}] analysés {len(analyzed)} → qualifiés {len(qualified)} | "
+                    f"rejetés par le score : {len(rejected_scores)} "
+                    f"(scores {min(rejected_scores)}-{max(rejected_scores)}, "
+                    f"seuil {_op} {threshold})"
+                )
             return qualified
 
         def _dedup(candidates: list) -> list:
@@ -797,7 +814,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                     if source == "google_maps":
                         # ── Phase 1 : Text Search ──
                         raw_candidates = fetch_raw_candidates(kw)
-                        _maps_text_calls += 1
+                        _funnel_raw += len(raw_candidates)
                         if not raw_candidates:
                             log_q.put(f"[--] ❌ Aucun résultat Google Maps pour '{kw}'.")
                             continue
@@ -822,7 +839,6 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                             continue
 
                         # ── Phase 2 : Place Details en parallèle ──
-                        _maps_detail_calls += len(raw_to_build)
                         with ThreadPoolExecutor(max_workers=min(workers, len(raw_to_build))) as ex:
                             built_list = list(ex.map(partial(build_prospect, keyword=kw), raw_to_build))
 
@@ -845,7 +861,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                         # ── Sources alternatives : retournent directement des Prospects ──
                         src_label = SOURCE_LABELS.get(source, source)
                         if source == "sirene":
-                            raw = search_sirene(kw, params["location"], target_per_kw * 3, naf_code=params.get("sirene_naf", ""))
+                            raw = search_sirene(kw, params["location"], target_per_kw * 3)
                         elif source == "pages_jaunes":
                             raw = search_pages_jaunes(kw, params["location"], target_per_kw * 3)
                         elif source == "france_travail":
@@ -872,19 +888,24 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                     log_q.put(f"[--] ⚠️  0 candidat(s) au total pour '{kw}'.")
                     continue
 
+                _funnel_candidates += len(candidates)
+
                 # ── Phase 3+4 : Analyse + filtre score (commun toutes sources) ──
                 kw_qualified = _analyse_and_filter(candidates, kw)[:target_per_kw]
                 log_q.put(f"[--] {'✅' if len(kw_qualified) >= target_per_kw else '⚠️ '} {len(kw_qualified)}/{target_per_kw} qualifiés pour '{kw}'.")
                 all_qualified.extend(kw_qualified)
 
         all_prospects = all_qualified
-        if _maps_text_calls:
-            _maps_cost = _maps_text_calls * 0.032 + _maps_detail_calls * 0.017
-            log_q.put(
-                f"[--] 🗺️  Google Maps : {_maps_text_calls} Text Search"
-                f" + {_maps_detail_calls} Place Details"
-                f" ≈ ${_maps_cost:.2f} ce run"
-            )
+        # Récap funnel : où meurent les prospects, étape par étape
+        log_q.put(
+            f"[--] 🧮 Funnel : {_funnel_raw} bruts récupérés → "
+            f"{_funnel_candidates} candidats analysés (après dédup + note ≥ {min_rating}) → "
+            f"{len(all_prospects)} qualifiés (seuil score {threshold})."
+        )
+        if _funnel_raw > 0 and _funnel_candidates == 0:
+            log_q.put("[--] 💡 Tous les bruts ont été éliminés en amont (déjà contactés, doublons entre mots-clés, ou erreurs API).")
+        elif _funnel_candidates > 0 and len(all_prospects) <= 2:
+            log_q.put("[--] 💡 Assez de candidats mais peu qualifiés : monte « Score max à contacter » (les sites sont trop bons pour le seuil actuel).")
         log_q.put(f"[--] 📋 {len(all_prospects)} prospect(s) qualifiés au total.")
 
         # Emails
@@ -899,12 +920,20 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         _svc_cat = params.get("service_category", "web_digital")
         _tgt_sec = params.get("target_sector", "")
         for _p in all_prospects:
-            _p.email_draft = draft_email(_p, style=_email_style, service_id=_svc_id, service_category=_svc_cat, target_sector=_tgt_sec)
+            _p.email_draft = draft_email(
+                _p, style=_email_style, service_id=_svc_id,
+                service_category=_svc_cat, target_sector=_tgt_sec,
+            )
         all_prospects = list(all_prospects)
 
         # 4. Tri
         reverse_sort = (score_direction == "desc")
         all_prospects.sort(key=lambda p: p.score, reverse=reverse_sort)
+
+        # Les prospects sont prêts pour l'affichage → on remplit le conteneur lu par
+        # l'interface MAINTENANT, avant les étapes à risque (CRM, Gmail, SMS, historique).
+        # Ainsi une erreur réseau en aval ne fait jamais disparaître les résultats.
+        result_container.extend(all_prospects)
 
         # 5. Sauvegarde locale
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -913,9 +942,8 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             json.dump([p.to_dict() for p in all_prospects], f, ensure_ascii=False, indent=2)
 
         # 6. Export CRM
-        _crm_type = params.get("crm_type", "aucun")
         crm_exporter = get_exporter(
-            _crm_type,
+            params.get("crm_type", "aucun"),
             params.get("crm_key", ""),
             **params.get("crm_extra", {}),
         )
@@ -928,23 +956,32 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             elif crm_exporter:
                 log_q.put(f"[--] 📤 Export CRM ({_crm_type})…")
                 try:
-                    crm_exporter.export(all_prospects)
+                    # Pré-vérification d'accès (Notion) pour un diagnostic clair
+                    if _crm_type == "notion" and hasattr(crm_exporter, "verify_access"):
+                        _ok, _msg = crm_exporter.verify_access()
+                        if not _ok:
+                            log_q.put(f"[--] ❌ Notion : {_msg}")
+                            raise RuntimeError("accès Notion refusé")
+                    _created = crm_exporter.export(all_prospects)
                     if hasattr(crm_exporter, "_last_exported_ids"):
                         notion_page_ids = crm_exporter._last_exported_ids
-                    log_q.put(f"[--] ✅ {len(all_prospects)} prospect(s) exporté(s) vers {_crm_type}.")
+                    _crm_synced = _created if isinstance(_created, int) else len(all_prospects)
+                    if _crm_synced > 0:
+                        log_q.put(f"[--] ✅ {_crm_synced} fiche(s) créée(s) dans {_crm_type}.")
+                    else:
+                        log_q.put(
+                            f"[--] ⚠️  Aucune fiche créée dans {_crm_type} — "
+                            "soit tous les prospects sont déjà présents (doublons), "
+                            "soit un nom de propriété ne correspond pas (voir l'erreur ci-dessus)."
+                        )
+                except RuntimeError:
+                    pass  # message déjà loggé par verify_access
                 except Exception as _crm_exc:
                     log_q.put(f"[--] ❌ Erreur export {_crm_type} : {_crm_exc}")
 
         # 7. Gmail
         if params["send_emails"] and params["gmail_address"] and params["gmail_password"]:
-            _with_email = [p for p in all_prospects if p.email]
-            _without_email = len(all_prospects) - len(_with_email)
-            if not _with_email:
-                log_q.put(
-                    f"[--] ⚠️  Envoi email activé mais aucun prospect n'a d'adresse email scrapée "
-                    f"({_without_email} prospect(s) sans email trouvé sur leur site)."
-                )
-            elif params.get("email_send_mode") == "⏰ Programmé" and params.get("sched_date"):
+            if params.get("email_send_mode") == "⏰ Programmé" and params.get("sched_date"):
                 from datetime import datetime as _dtime
                 from services import scheduler as _sched_mod
                 _send_at = _dtime.strptime(
@@ -967,16 +1004,15 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                         notion_api_key=params.get("crm_key", "") if params.get("crm_type") == "notion" else "",
                     )
                     _n_sched += 1
+                _emails_scheduled = _n_sched
                 log_q.put(
                     f"[--] ⏰ {_n_sched} email(s) programmé(s) pour le "
                     f"{params['sched_date']} à {params.get('sched_time', '09:00')}."
                 )
             else:
-                log_q.put(f"[--] 📤 Envoi email vers {len(_with_email)} prospect(s)…")
-                if _without_email:
-                    log_q.put(f"[--] ℹ️  {_without_email} prospect(s) ignoré(s) — email non trouvé sur leur site.")
                 from services.gmail import send_all
                 _email_stats = send_all(_with_email, params["gmail_address"], params["gmail_password"])
+                _emails_sent = _email_stats["sent"]
                 log_q.put(
                     f"[--] {'✅' if _email_stats['sent'] else '⚠️ '} Email : "
                     f"{_email_stats['sent']} envoyé(s) | "
@@ -993,11 +1029,6 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                             _pid = notion_page_ids.get(_p.place_id)
                             if _pid:
                                 _nu.update_status(_pid, "contacté")
-        elif params["send_emails"]:
-            if not params["gmail_address"]:
-                log_q.put("[--] ⚠️  Envoi email : adresse Gmail manquante.")
-            elif not params["gmail_password"]:
-                log_q.put("[--] ⚠️  Envoi email : mot de passe d'application Gmail manquant.")
 
         # 8. SMS Brevo
         if params["send_sms"] and params["brevo_key"]:
@@ -1011,6 +1042,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                 log_q.put(f"[--] 📱 Envoi SMS vers {len(_with_mobile)} mobile(s)…")
                 from services.sms import send_all_sms
                 _sms_stats = send_all_sms(all_prospects)
+                _sms_sent = _sms_stats["sent"]
                 log_q.put(
                     f"[--] {'✅' if _sms_stats['sent'] else '⚠️ '} SMS : "
                     f"{_sms_stats['sent']} envoyé(s) | "
@@ -1022,8 +1054,21 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         elif params["send_sms"] and not params["brevo_key"]:
             log_q.put("[--] ⚠️  SMS activé mais clé Brevo manquante.")
 
-        # 9. Marquage des prospects contactés (avec infos complètes pour les relances)
-        mark_as_contacted(all_prospects, notion_page_ids=notion_page_ids)
+        # 9. Marquage des prospects contactés — UNIQUEMENT si un envoi a réellement
+        # eu lieu (email envoyé/programmé ou SMS). Sinon c'est un run d'exploration :
+        # on ne « brûle » pas les prospects, ils restent disponibles aux prochains runs.
+        _something_sent = (_emails_sent > 0) or (_sms_sent > 0) or (_emails_scheduled > 0)
+        if _something_sent:
+            mark_as_contacted(all_prospects, notion_page_ids=notion_page_ids)
+            log_q.put(
+                f"[--] 📓 {len(all_prospects)} prospect(s) marqué(s) comme contactés "
+                "(ignorés aux prochains runs)."
+            )
+        else:
+            log_q.put(
+                "[--] ℹ️  Run d'exploration (aucun envoi) — prospects NON marqués comme "
+                "contactés, ils resteront disponibles au prochain run."
+            )
 
         # 10. Historique
         from history_manager import save_run
@@ -1032,6 +1077,17 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             p.phone.replace(" ", "").startswith("06") or
             p.phone.replace(" ", "").startswith("07")
         ))
+        # Répartition des types d'offres (dev web uniquement)
+        _offer_types: dict = {}
+        if params.get("service_category", "web_digital") == "web_digital":
+            try:
+                from offers import select_offer as _select_offer
+                for _p in all_prospects:
+                    _ot = _select_offer(_p, sector=params.get("target_sector", "")).offer_type
+                    _offer_types[_ot] = _offer_types.get(_ot, 0) + 1
+            except Exception:
+                pass
+        _source_labels = [SOURCE_LABELS.get(s, s) for s in sources]
         save_run(
             profile_name=params.get("profile_name", "Custom"),
             location=params["location"],
@@ -1041,13 +1097,19 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             emails_found=emails_found,
             mobiles_found=mobiles_found,
             output_file=json_path,
+            emails_sent=_emails_sent,
+            sms_sent=_sms_sent,
+            crm_synced=_crm_synced,
+            offer_types=_offer_types,
+            sources=_source_labels,
+            target_sector=params.get("target_sector", ""),
         )
-
-        result_container.extend(all_prospects)
-        log_q.put("__DONE__")
 
     except Exception as exc:
         log_q.put(f"[--] ❌ Erreur critique : {exc}")
+    finally:
+        # __DONE__ est toujours envoyé, exactement une fois — l'interface ne reste
+        # jamais bloquée sur « en cours », même en cas d'erreur en cours de route.
         log_q.put("__DONE__")
 
 
@@ -1117,7 +1179,6 @@ if launch and not st.session_state.running:
         "email_length":      _email_length,
         "email_salutation":  _email_salutation,
         "email_cta":         _email_cta,
-        "sirene_naf":        sirene_naf or None,
     })
 
     result_container = []
@@ -1171,7 +1232,6 @@ if launch and not st.session_state.running:
         "ft_client_secret":  ft_client_secret,
         "google_cx":         google_cx,
         "linkedin_content":  linkedin_content,
-        "sirene_naf":        sirene_naf,
     }
 
     thread = threading.Thread(
@@ -1191,17 +1251,30 @@ if st.session_state.running or st.session_state.run_done:
     log_placeholder = st.empty()
     status_placeholder = st.empty()
 
-    # Vide la queue dans la liste de logs
+    # Vide la queue dans la liste de logs (drain robuste via queue.Empty)
     q = st.session_state.log_queue
-    while not q.empty():
-        msg = q.get_nowait()
+    done = False
+    while True:
+        try:
+            msg = q.get_nowait()
+        except queue.Empty:
+            break
         if msg == "__DONE__":
-            st.session_state.running = False
-            st.session_state.run_done = True
-            if hasattr(st.session_state, "_results"):
-                st.session_state.prospects = list(st.session_state._results)
+            done = True
         else:
             st.session_state.logs.append(msg)
+
+    # Filet de sécurité : si le thread s'est terminé sans qu'on ait vu __DONE__
+    # (crash dur improbable), on considère quand même le run comme fini.
+    _thr = st.session_state.get("_thread")
+    if not done and _thr is not None and not _thr.is_alive():
+        done = True
+
+    if done:
+        st.session_state.running = False
+        st.session_state.run_done = True
+        if hasattr(st.session_state, "_results"):
+            st.session_state.prospects = list(st.session_state._results)
 
     # Affiche les logs
     log_html = "<div class='log-box'>" + "<br>".join(
@@ -1281,8 +1354,6 @@ if st.session_state.prospects:
         filtered = sorted(filtered, key=lambda p: p.name)
     elif sort_opt == "Note Google (↓)":
         filtered = sorted(filtered, key=lambda p: p.rating or 0, reverse=True)
-    else:
-        filtered = sorted(filtered, key=lambda p: p.score)
 
     st.markdown(f"### 🏆 {len(filtered)} prospect(s) — triés par {sort_opt.lower()}")
 
@@ -1362,8 +1433,7 @@ if st.session_state.prospects:
     with col_e2:
         csv_buffer = io.StringIO()
         fieldnames = ["name", "keyword", "address", "phone", "email", "website",
-                      "cms", "rating", "score", "issue_keys", "issues_count", "issues_summary",
-                      "maps_url", "email_draft"]
+                      "cms", "rating", "score", "issues_count", "issues_summary", "maps_url"]
         writer = csv.DictWriter(csv_buffer, fieldnames=fieldnames)
         writer.writeheader()
         for p in filtered:
@@ -1377,11 +1447,9 @@ if st.session_state.prospects:
                 "cms": p.cms or "",
                 "rating": p.rating or "",
                 "score": p.score,
-                "issue_keys": ",".join(p.issue_keys),
                 "issues_count": len(p.issues),
                 "issues_summary": " | ".join(p.issues[:3]),
                 "maps_url": p.maps_url,
-                "email_draft": p.email_draft,
             })
         st.download_button(
             label="⬇️ Télécharger CSV",
@@ -1402,8 +1470,8 @@ if st.session_state.prospects:
             ws.title = "Prospects"
 
             headers = ["Nom", "Mot-clé", "Adresse", "Téléphone", "Email",
-                       "Site", "CMS", "Note ⭐", "Score", "Signaux", "Nb problèmes", "Problèmes (top 3)", "Google Maps"]
-            col_widths = [30, 15, 40, 15, 32, 40, 12, 8, 8, 30, 12, 70, 50]
+                       "Site", "CMS", "Note ⭐", "Score", "Nb problèmes", "Problèmes (top 3)", "Google Maps"]
+            col_widths = [30, 15, 40, 15, 32, 40, 12, 8, 8, 12, 70, 50]
 
             header_fill = PatternFill(start_color="4F46E5", end_color="4F46E5", fill_type="solid")
             header_font = Font(color="FFFFFF", bold=True)
@@ -1430,38 +1498,18 @@ if st.session_state.prospects:
                 row_vals = [
                     p.name, p.keyword, p.address, p.phone or "",
                     p.email or "", p.website or "", p.cms or "",
-                    p.rating or "", p.score, ",".join(p.issue_keys),
-                    len(p.issues), " | ".join(p.issues[:3]), p.maps_url,
+                    p.rating or "", p.score, len(p.issues),
+                    " | ".join(p.issues[:3]), p.maps_url,
                 ]
                 for ci, val in enumerate(row_vals, 1):
                     cell = ws.cell(row=ri, column=ci, value=val)
                     cell.border = thin_border
-                    cell.alignment = Alignment(vertical="center", wrap_text=(ci == 12))
+                    cell.alignment = Alignment(vertical="center", wrap_text=(ci == 11))
                     if ci == 9:  # Score
                         cell.fill = score_fill
                         cell.font = Font(bold=True)
 
             ws.freeze_panes = "A2"
-
-            # Sheet 2 : Emails
-            ws2 = wb.create_sheet("Emails")
-            email_headers = ["Nom", "Email", "Brouillon cold email"]
-            email_widths  = [30, 32, 100]
-            for ci, (h, w) in enumerate(zip(email_headers, email_widths), 1):
-                cell = ws2.cell(row=1, column=ci, value=h)
-                cell.fill = header_fill
-                cell.font = header_font
-                cell.alignment = Alignment(horizontal="center", vertical="center")
-                cell.border = thin_border
-                ws2.column_dimensions[get_column_letter(ci)].width = w
-            ws2.row_dimensions[1].height = 20
-            for ri2, p in enumerate(filtered, 2):
-                for ci, val in enumerate([p.name, p.email or "", p.email_draft], 1):
-                    cell = ws2.cell(row=ri2, column=ci, value=val)
-                    cell.border = thin_border
-                    cell.alignment = Alignment(vertical="top", wrap_text=(ci == 3))
-                ws2.row_dimensions[ri2].height = max(15, p.email_draft.count("\n") * 14)
-            ws2.freeze_panes = "A2"
 
             _xls_buf = io.BytesIO()
             wb.save(_xls_buf)
@@ -1521,17 +1569,20 @@ with st.expander("📊 Dashboard — Statistiques globales"):
         _total_prospects = sum(r.get("total_prospects", 0) for r in _hist)
         _total_emails    = sum(r.get("emails_trouvés", 0)  for r in _hist)
         _total_mobiles   = sum(r.get("mobiles_trouvés", 0) for r in _hist)
+        _total_sent      = sum(r.get("emails_envoyés", 0)  for r in _hist)
+        _total_sms_sent  = sum(r.get("sms_envoyés", 0)     for r in _hist)
         _total_responded = sum(1 for v in _cdata2.values() if v.get("responded"))
         _total_contacted = len(_cdata2)
 
         # Métriques globales
-        dc1, dc2, dc3, dc4, dc5 = st.columns(5)
+        dc1, dc2, dc3, dc4, dc5, dc6 = st.columns(6)
         dc1.metric("Campagnes", _total_runs)
         dc2.metric("Prospects total", _total_prospects)
         dc3.metric("Emails trouvés", _total_emails)
-        dc4.metric("Mobiles trouvés", _total_mobiles)
+        dc4.metric("Emails envoyés", _total_sent)
+        dc5.metric("SMS envoyés", _total_sms_sent)
         _rrate = f"{_total_responded / _total_contacted * 100:.0f}%" if _total_contacted else "—"
-        dc5.metric("Taux de réponse", _rrate)
+        dc6.metric("Taux de réponse", _rrate)
 
         st.markdown("---")
 
@@ -1607,13 +1658,40 @@ with st.expander("🕐 Historique des campagnes"):
     else:
         for run in history:
             kw_str = ", ".join(run.get("keywords", [])[:3])
-            st.markdown(
-                f"**{run['date']}** — {run['profile']} — {run['location']} — "
-                f"`{kw_str}` — "
-                f"**{run['total_prospects']}** prospects | "
-                f"📧 {run['emails_trouvés']} emails | "
-                f"📱 {run['mobiles_trouvés']} mobiles"
-            )
+            extra_kw = len(run.get("keywords", [])) - 3
+            kw_display = kw_str + (f" +{extra_kw}" if extra_kw > 0 else "")
+            src_str = " · ".join(run.get("sources", [])) or "—"
+            sector = run.get("target_sector", "")
+            with st.container():
+                col_h1, col_h2 = st.columns([3, 1])
+                with col_h1:
+                    st.markdown(
+                        f"**{run['date']}** — {run['profile']} — {run['location']}"
+                        + (f" — *{sector}*" if sector else "")
+                    )
+                    st.caption(f"Sources : {src_str} | Mots-clés : {kw_display}")
+                with col_h2:
+                    st.markdown(f"**{run['total_prospects']}** prospects")
+                # Métriques détaillées
+                m1, m2, m3, m4, m5 = st.columns(5)
+                m1.metric("Sans site", run.get("sans_site", 0))
+                m2.metric("Emails scrapés", run.get("emails_trouvés", 0))
+                m3.metric("Mobiles", run.get("mobiles_trouvés", 0))
+                m4.metric("Emails envoyés", run.get("emails_envoyés", 0))
+                m5.metric("SMS envoyés", run.get("sms_envoyés", 0))
+                # Répartition offres
+                _ot = run.get("offer_types", {})
+                if _ot:
+                    _ot_labels = {
+                        "creation": "Création", "migration": "Migration",
+                        "refonte": "Refonte", "widget": "Widget", "audit": "Audit",
+                    }
+                    _ot_str = " | ".join(
+                        f"{_ot_labels.get(k, k)} ×{v}" for k, v in sorted(_ot.items(), key=lambda x: -x[1])
+                    )
+                    st.caption(f"Offres proposées : {_ot_str}")
+                if run.get("crm_synchronisés"):
+                    st.caption(f"CRM : {run['crm_synchronisés']} synchronisé(s)")
             st.divider()
 
 # ---------------------------------------------------------------------------
@@ -1626,11 +1704,18 @@ with st.expander("🗂️ Historique des contacts"):
     st.write(f"**{len(contacted)}** établissement(s) déjà contacté(s) (ignorés aux prochains runs).")
     if contacted:
         if st.button("🗑️ Réinitialiser l'historique", type="secondary"):
-            import json as _json
-            history_path = os.path.join("output", "contacted_place_ids.json")
-            if os.path.exists(history_path):
-                os.remove(history_path)
-            st.success("Historique effacé. Le prochain run reprospecttra depuis zéro.")
+            # On supprime le fichier principal ET la sauvegarde, sinon _load_contacted_data
+            # restaure aussitôt les données depuis le backup → reset sans effet.
+            removed = 0
+            for _fname in ("contacted_place_ids.json", "contacted_place_ids.bak.json"):
+                _path = os.path.join("output", _fname)
+                if os.path.exists(_path):
+                    os.remove(_path)
+                    removed += 1
+            st.success(
+                f"Historique effacé ({removed} fichier(s)). "
+                "Le prochain run reprospectera depuis zéro."
+            )
             st.rerun()
 
 # ---------------------------------------------------------------------------

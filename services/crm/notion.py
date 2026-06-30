@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+import re
+from typing import Dict, List, Optional, Tuple
 
 import requests
 
@@ -14,11 +15,32 @@ NOTION_API_VERSION = "2022-06-28"
 NOTION_BASE_URL    = "https://api.notion.com/v1"
 
 
+def clean_database_id(raw: str) -> str:
+    """
+    Extrait un Database ID Notion propre, même si l'utilisateur colle l'URL
+    complète ou le lien « Copier le lien » (qui ajoute ?v=...&source=copy_link).
+
+    Exemples acceptés :
+      - c250770317564717aaf2132a76c00e06
+      - c250770317564717aaf2132a76c00e06?v=ca57...&source=copy_link
+      - https://notion.so/MonEspace/c2507703...?v=...
+      - c2507703-1756-4717-aaf2-132a76c00e06
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    # Retire la query string puis garde le dernier segment de chemin
+    raw = raw.split("?")[0].rstrip("/").split("/")[-1]
+    raw = raw.replace("-", "")
+    match = re.search(r"[0-9a-fA-F]{32}", raw)
+    return match.group(0) if match else raw
+
+
 class NotionExporter(CRMExporter):
 
     def __init__(self, api_key: str, database_id: str):
-        self._api_key     = api_key
-        self._database_id = database_id
+        self._api_key     = api_key.strip()
+        self._database_id = clean_database_id(database_id)
 
     @property
     def crm_name(self) -> str:
@@ -30,6 +52,45 @@ class NotionExporter(CRMExporter):
             "Notion-Version": NOTION_API_VERSION,
             "Content-Type": "application/json",
         }
+
+    # ------------------------------------------------------------------
+    # Vérification d'accès — appelée avant l'export pour un diagnostic clair
+    # ------------------------------------------------------------------
+
+    def verify_access(self) -> Tuple[bool, str]:
+        """
+        Vérifie que la clé API peut lire la base.
+        Retourne (ok, message) avec un message d'erreur explicite et actionnable.
+        """
+        if not self._api_key:
+            return False, "Clé API Notion manquante."
+        if not self._database_id:
+            return False, "Database ID Notion manquant ou invalide."
+        try:
+            resp = requests.get(
+                f"{NOTION_BASE_URL}/databases/{self._database_id}",
+                headers=self._headers(),
+                timeout=config.request_timeout,
+            )
+        except requests.RequestException as exc:
+            return False, f"Connexion à Notion impossible : {exc}"
+
+        if resp.status_code == 200:
+            return True, "Accès à la base OK."
+        if resp.status_code == 401:
+            return False, (
+                "Clé API refusée (401). Vérifie le token d'intégration "
+                "(notion.so/my-integrations)."
+            )
+        if resp.status_code == 404:
+            return False, (
+                "Base introuvable (404). Deux causes possibles : "
+                "(1) l'intégration n'est pas connectée à la base — ouvre la base → "
+                "⋯ (en haut à droite) → Connexions → ajoute ton intégration ; "
+                "(2) le Database ID est incorrect (ne colle que les 32 caractères, "
+                "sans le « ?v=… » du lien)."
+            )
+        return False, f"Notion a répondu {resp.status_code} : {resp.text[:200]}"
 
     # ------------------------------------------------------------------
     # Helpers propriétés Notion
@@ -105,11 +166,14 @@ class NotionExporter(CRMExporter):
                 json={"parent": {"database_id": self._database_id}, "properties": properties},
                 timeout=config.request_timeout,
             )
-            resp.raise_for_status()
+            if resp.status_code != 200:
+                # Surface le message d'erreur réel de Notion (propriété manquante, etc.)
+                logger.error("    ❌ Notion %s pour %s : %s", resp.status_code, p.name, resp.text[:300])
+                return None
             logger.info("    ✅ Notion ← %s", p.name)
             return resp.json().get("id")
         except requests.RequestException as exc:
-            logger.error("    ❌ Erreur Notion pour %s : %s", p.name, exc)
+            logger.error("    ❌ Erreur réseau Notion pour %s : %s", p.name, exc)
             return None
 
     # ------------------------------------------------------------------

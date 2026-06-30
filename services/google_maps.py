@@ -108,6 +108,7 @@ def fetch_raw_candidates(keyword: str, max_raw: int = GOOGLE_MAX_RESULTS) -> Lis
     }
     results: List[dict] = []
     is_first_page = True
+    token_retries = 0   # le next_page_token met 2-5s à devenir valide côté Google
 
     while True:
         max_attempts = 3 if is_first_page else 1
@@ -130,14 +131,24 @@ def fetch_raw_candidates(keyword: str, max_raw: int = GOOGLE_MAX_RESULTS) -> Lis
         is_first_page = False
 
         status = data.get("status")
+
+        # Le next_page_token Google n'est pas valide immédiatement (2-5s de propagation).
+        # Sur INVALID_REQUEST avec un token en cours, on patiente et on rejoue le MÊME
+        # token (jusqu'à 3 fois) au lieu d'abandonner la pagination.
+        if status == "INVALID_REQUEST" and "pagetoken" in params and token_retries < 3:
+            token_retries += 1
+            logger.debug("    ⏳ next_page_token pas encore prêt ('%s'), nouvel essai %d/3…", keyword, token_retries)
+            time.sleep(2)
+            continue
+
         if status not in ("OK", "ZERO_RESULTS"):
-            # INVALID_REQUEST sur next_page_token = token expiré, non critique si on a déjà des résultats
             if results:
                 logger.debug("Pagination interrompue (%s) pour '%s' — %d résultats conservés.", status, keyword, len(results))
             else:
                 logger.warning("Statut API inattendu (%s) pour '%s'", status, keyword)
             break
 
+        token_retries = 0
         results.extend(data.get("results", []))
 
         next_token = data.get("next_page_token")
