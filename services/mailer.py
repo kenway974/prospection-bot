@@ -132,6 +132,12 @@ ISSUE_COPY = {
         "direct":       "Votre site est visuellement daté. En 2024, un site vieillissant fait fuir les clients avant même qu'ils lisent votre offre.",
         "casual":       "Honnêtement, votre site a un peu vieilli visuellement — ça peut donner l'impression que votre activité n'est plus très active.",
     },
+    "seo_visibility": {
+        "formal":       "Votre site présente des limitations de visibilité qui restreignent significativement son trafic organique : il apparaît peu, voire pas, dans les résultats de recherche Google.",
+        "professional": "Votre site reçoit probablement très peu de trafic depuis Google — sa structure et son contenu ne sont pas optimisés pour être trouvés par vos clients qui recherchent vos services.",
+        "direct":       "Votre site est quasi invisible sur Google. Concrètement, personne ne tombe dessus en cherchant vos services — vous passez à côté de clients chaque jour.",
+        "casual":       "En l'état, votre site a du mal à être trouvé sur Google — du coup il reçoit peu de visites, alors qu'il y a un vrai potentiel à capter !",
+    },
 }
 
 # ---------------------------------------------------------------------------
