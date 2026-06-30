@@ -885,13 +885,22 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         )
         _svc_id  = params.get("service_id", "")
         _svc_cat = params.get("service_category", "web_digital")
+        _tgt_sec = params.get("target_sector", "")
         for _p in all_prospects:
-            _p.email_draft = draft_email(_p, style=_email_style, service_id=_svc_id, service_category=_svc_cat)
+            _p.email_draft = draft_email(
+                _p, style=_email_style, service_id=_svc_id,
+                service_category=_svc_cat, target_sector=_tgt_sec,
+            )
         all_prospects = list(all_prospects)
 
         # 4. Tri
         reverse_sort = (score_direction == "desc")
         all_prospects.sort(key=lambda p: p.score, reverse=reverse_sort)
+
+        # Les prospects sont prêts pour l'affichage → on remplit le conteneur lu par
+        # l'interface MAINTENANT, avant les étapes à risque (CRM, Gmail, SMS, historique).
+        # Ainsi une erreur réseau en aval ne fait jamais disparaître les résultats.
+        result_container.extend(all_prospects)
 
         # 5. Sauvegarde locale
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1049,11 +1058,11 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             target_sector=params.get("target_sector", ""),
         )
 
-        result_container.extend(all_prospects)
-        log_q.put("__DONE__")
-
     except Exception as exc:
         log_q.put(f"[--] ❌ Erreur critique : {exc}")
+    finally:
+        # __DONE__ est toujours envoyé, exactement une fois — l'interface ne reste
+        # jamais bloquée sur « en cours », même en cas d'erreur en cours de route.
         log_q.put("__DONE__")
 
 
@@ -1155,6 +1164,7 @@ if launch and not st.session_state.running:
         "profile_name": f"{selected_service.emoji} {selected_service.name}  →  {selected_target.emoji} {selected_target.name}",
         "service_id": selected_service_id,
         "service_category": selected_svc_cat,
+        "target_sector": selected_tgt_sector,
         "detection_keywords": selected_service.detection_keywords,
         "weight_overrides": selected_service.check_weight_overrides,
         "score_direction": selected_service.score_direction,
@@ -1194,17 +1204,30 @@ if st.session_state.running or st.session_state.run_done:
     log_placeholder = st.empty()
     status_placeholder = st.empty()
 
-    # Vide la queue dans la liste de logs
+    # Vide la queue dans la liste de logs (drain robuste via queue.Empty)
     q = st.session_state.log_queue
-    while not q.empty():
-        msg = q.get_nowait()
+    done = False
+    while True:
+        try:
+            msg = q.get_nowait()
+        except queue.Empty:
+            break
         if msg == "__DONE__":
-            st.session_state.running = False
-            st.session_state.run_done = True
-            if hasattr(st.session_state, "_results"):
-                st.session_state.prospects = list(st.session_state._results)
+            done = True
         else:
             st.session_state.logs.append(msg)
+
+    # Filet de sécurité : si le thread s'est terminé sans qu'on ait vu __DONE__
+    # (crash dur improbable), on considère quand même le run comme fini.
+    _thr = st.session_state.get("_thread")
+    if not done and _thr is not None and not _thr.is_alive():
+        done = True
+
+    if done:
+        st.session_state.running = False
+        st.session_state.run_done = True
+        if hasattr(st.session_state, "_results"):
+            st.session_state.prospects = list(st.session_state._results)
 
     # Affiche les logs
     log_html = "<div class='log-box'>" + "<br>".join(
