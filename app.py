@@ -729,6 +729,11 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         score_direction = params.get("score_direction", "asc")
         weight_overrides = params.get("weight_overrides", {})
         already_contacted = load_contacted_ids()
+        if already_contacted:
+            log_q.put(
+                f"[--] 📓 {len(already_contacted)} établissement(s) déjà contacté(s) "
+                "seront ignorés (réinitialisable dans « Historique des contacts »)."
+            )
         sources = params.get("source_types", [params.get("source_type", "google_maps")])
 
         all_qualified: list = []
@@ -739,6 +744,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         _emails_sent = 0
         _sms_sent = 0
         _crm_synced = 0
+        _emails_scheduled = 0
 
         def _analyse_and_filter(candidates: list, label: str) -> list:
             """Analyse un lot de prospects et filtre par score. Retourne la liste qualifiée."""
@@ -971,6 +977,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                         notion_api_key=params.get("crm_key", "") if params.get("crm_type") == "notion" else "",
                     )
                     _n_sched += 1
+                _emails_scheduled = _n_sched
                 log_q.put(
                     f"[--] ⏰ {_n_sched} email(s) programmé(s) pour le "
                     f"{params['sched_date']} à {params.get('sched_time', '09:00')}."
@@ -1020,8 +1027,21 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         elif params["send_sms"] and not params["brevo_key"]:
             log_q.put("[--] ⚠️  SMS activé mais clé Brevo manquante.")
 
-        # 9. Marquage des prospects contactés (avec infos complètes pour les relances)
-        mark_as_contacted(all_prospects, notion_page_ids=notion_page_ids)
+        # 9. Marquage des prospects contactés — UNIQUEMENT si un envoi a réellement
+        # eu lieu (email envoyé/programmé ou SMS). Sinon c'est un run d'exploration :
+        # on ne « brûle » pas les prospects, ils restent disponibles aux prochains runs.
+        _something_sent = (_emails_sent > 0) or (_sms_sent > 0) or (_emails_scheduled > 0)
+        if _something_sent:
+            mark_as_contacted(all_prospects, notion_page_ids=notion_page_ids)
+            log_q.put(
+                f"[--] 📓 {len(all_prospects)} prospect(s) marqué(s) comme contactés "
+                "(ignorés aux prochains runs)."
+            )
+        else:
+            log_q.put(
+                "[--] ℹ️  Run d'exploration (aucun envoi) — prospects NON marqués comme "
+                "contactés, ils resteront disponibles au prochain run."
+            )
 
         # 10. Historique
         from history_manager import save_run
@@ -1657,11 +1677,18 @@ with st.expander("🗂️ Historique des contacts"):
     st.write(f"**{len(contacted)}** établissement(s) déjà contacté(s) (ignorés aux prochains runs).")
     if contacted:
         if st.button("🗑️ Réinitialiser l'historique", type="secondary"):
-            import json as _json
-            history_path = os.path.join("output", "contacted_place_ids.json")
-            if os.path.exists(history_path):
-                os.remove(history_path)
-            st.success("Historique effacé. Le prochain run reprospecttra depuis zéro.")
+            # On supprime le fichier principal ET la sauvegarde, sinon _load_contacted_data
+            # restaure aussitôt les données depuis le backup → reset sans effet.
+            removed = 0
+            for _fname in ("contacted_place_ids.json", "contacted_place_ids.bak.json"):
+                _path = os.path.join("output", _fname)
+                if os.path.exists(_path):
+                    os.remove(_path)
+                    removed += 1
+            st.success(
+                f"Historique effacé ({removed} fichier(s)). "
+                "Le prochain run reprospectera depuis zéro."
+            )
             st.rerun()
 
 # ---------------------------------------------------------------------------
