@@ -741,6 +741,8 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         workers = params.get("analysis_workers", 5)
         _maps_text_calls = 0
         _maps_detail_calls = 0
+        _funnel_raw = 0          # total candidats bruts récupérés (toutes sources)
+        _funnel_candidates = 0   # total candidats après note mini, avant analyse
         _emails_sent = 0
         _sms_sent = 0
         _crm_synced = 0
@@ -758,11 +760,23 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                     batch,
                 ))
             qualified = []
+            rejected_scores: list = []
             for p in analyzed:
                 qualifies = (p.score >= threshold if score_direction == "desc" else p.score <= threshold)
                 if qualifies:
                     qualified.append(p)
                     log_q.put(f"[--] ✅ {p.name} — score {p.score}/100")
+                else:
+                    rejected_scores.append(p.score)
+            # Funnel : on montre noir sur blanc où meurent les prospects
+            if rejected_scores:
+                _op = "≥" if score_direction == "desc" else "≤"
+                log_q.put(
+                    f"[--] 📊 [{label}] analysés {len(analyzed)} → qualifiés {len(qualified)} | "
+                    f"rejetés par le score : {len(rejected_scores)} "
+                    f"(scores {min(rejected_scores)}-{max(rejected_scores)}, "
+                    f"seuil {_op} {threshold})"
+                )
             return qualified
 
         def _dedup(candidates: list) -> list:
@@ -800,6 +814,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                     if source == "google_maps":
                         # ── Phase 1 : Text Search ──
                         raw_candidates = fetch_raw_candidates(kw)
+                        _funnel_raw += len(raw_candidates)
                         if not raw_candidates:
                             log_q.put(f"[--] ❌ Aucun résultat Google Maps pour '{kw}'.")
                             continue
@@ -873,12 +888,24 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                     log_q.put(f"[--] ⚠️  0 candidat(s) au total pour '{kw}'.")
                     continue
 
+                _funnel_candidates += len(candidates)
+
                 # ── Phase 3+4 : Analyse + filtre score (commun toutes sources) ──
                 kw_qualified = _analyse_and_filter(candidates, kw)[:target_per_kw]
                 log_q.put(f"[--] {'✅' if len(kw_qualified) >= target_per_kw else '⚠️ '} {len(kw_qualified)}/{target_per_kw} qualifiés pour '{kw}'.")
                 all_qualified.extend(kw_qualified)
 
         all_prospects = all_qualified
+        # Récap funnel : où meurent les prospects, étape par étape
+        log_q.put(
+            f"[--] 🧮 Funnel : {_funnel_raw} bruts récupérés → "
+            f"{_funnel_candidates} candidats analysés (après dédup + note ≥ {min_rating}) → "
+            f"{len(all_prospects)} qualifiés (seuil score {threshold})."
+        )
+        if _funnel_raw > 0 and _funnel_candidates == 0:
+            log_q.put("[--] 💡 Tous les bruts ont été éliminés en amont (déjà contactés, doublons entre mots-clés, ou erreurs API).")
+        elif _funnel_candidates > 0 and len(all_prospects) <= 2:
+            log_q.put("[--] 💡 Assez de candidats mais peu qualifiés : monte « Score max à contacter » (les sites sont trop bons pour le seuil actuel).")
         log_q.put(f"[--] 📋 {len(all_prospects)} prospect(s) qualifiés au total.")
 
         # Emails
