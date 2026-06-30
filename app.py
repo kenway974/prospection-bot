@@ -236,7 +236,7 @@ with st.sidebar:
     if crm_type == "notion":
         crm_key = st.text_input(
             "Notion API Key", type="password",
-            value=_get("notion_api_key", "NOTION_API_KEY"), placeholder="secret_...",
+            value=_get("notion_api_key", "NOTION_API_KEY"), placeholder="ntn_… ou secret_…",
             label_visibility="collapsed",
         )
         crm_extra = {
@@ -255,8 +255,10 @@ with st.sidebar:
 **Database ID :**
 1. Ouvre ta base Notion dans le navigateur
 2. URL : `notion.so/MonEspace/`**`c2507703175647aaf2132a76c00e06`**`?v=…`
-3. Le Database ID est la partie surlignée (32 car. après le dernier `/` avant `?v=`)
-4. ⚠️ Invite l'intégration dans ta base : ouvre la base → **⋯** → **Connexions** → ajoute "ProspectionBot"
+3. Le Database ID est la partie surlignée (32 car.). Tu peux coller le lien entier, l'app extrait l'ID automatiquement.
+
+**⚠️ Cause n°1 quand « rien ne se passe » :**
+L'intégration n'est **pas connectée à la base**. Ouvre ta base → **⋯** (en haut à droite) → **Connexions** → ajoute "ProspectionBot". Sans ça, Notion renvoie une erreur 404 et aucune fiche n'est créée.
 """)
     elif crm_type == "hubspot":
         crm_key = st.text_input(
@@ -694,10 +696,12 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         import services.analyzer as an_mod
         import services.mailer as ma_mod
         import services.notion_sync as no_mod
+        import services.crm.notion as crmno_mod
         gm_mod.logger = ui_logger
         an_mod.logger = ui_logger
         ma_mod.logger = ui_logger
         no_mod.logger = ui_logger
+        crmno_mod.logger = ui_logger
 
         # Recharge aussi le config dans chaque module
         gm_mod.config = c
@@ -910,11 +914,26 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             elif crm_exporter:
                 log_q.put(f"[--] 📤 Export CRM ({_crm_type})…")
                 try:
-                    crm_exporter.export(all_prospects)
+                    # Pré-vérification d'accès (Notion) pour un diagnostic clair
+                    if _crm_type == "notion" and hasattr(crm_exporter, "verify_access"):
+                        _ok, _msg = crm_exporter.verify_access()
+                        if not _ok:
+                            log_q.put(f"[--] ❌ Notion : {_msg}")
+                            raise RuntimeError("accès Notion refusé")
+                    _created = crm_exporter.export(all_prospects)
                     if hasattr(crm_exporter, "_last_exported_ids"):
                         notion_page_ids = crm_exporter._last_exported_ids
-                    _crm_synced = len(all_prospects)
-                    log_q.put(f"[--] ✅ {len(all_prospects)} prospect(s) exporté(s) vers {_crm_type}.")
+                    _crm_synced = _created if isinstance(_created, int) else len(all_prospects)
+                    if _crm_synced > 0:
+                        log_q.put(f"[--] ✅ {_crm_synced} fiche(s) créée(s) dans {_crm_type}.")
+                    else:
+                        log_q.put(
+                            f"[--] ⚠️  Aucune fiche créée dans {_crm_type} — "
+                            "soit tous les prospects sont déjà présents (doublons), "
+                            "soit un nom de propriété ne correspond pas (voir l'erreur ci-dessus)."
+                        )
+                except RuntimeError:
+                    pass  # message déjà loggé par verify_access
                 except Exception as _crm_exc:
                     log_q.put(f"[--] ❌ Erreur export {_crm_type} : {_crm_exc}")
 
