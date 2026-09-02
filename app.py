@@ -1786,17 +1786,22 @@ with st.expander("🔄 Relances — contacts sans réponse"):
     followup_delay = int(os.getenv("FOLLOWUP_DELAY_DAYS", "5"))
     due = get_due_followups(followup_delay)
 
+    from services.mailer import MAX_FOLLOWUPS
     if not due:
         st.success(f"✅ Aucun contact à relancer (seuil : {followup_delay} jours sans réponse).")
     else:
-        st.info(f"**{len(due)} contact(s)** à relancer — contactés il y a plus de {followup_delay} jours sans réponse.")
+        st.info(
+            f"**{len(due)} contact(s)** à relancer — séquence de {MAX_FOLLOWUPS} relances "
+            f"à angles distincts, {followup_delay} jours entre chaque message."
+        )
 
-        # Bouton pour générer tous les emails de relance d'un coup
-        if st.button("📝 Générer tous les emails de relance", key="gen_followup"):
+        # Bouton pour générer la PROCHAINE relance de la séquence pour chaque contact
+        if st.button("📝 Générer les prochaines relances", key="gen_followup"):
             from services.google_maps import Prospect as P
             from services.mailer import draft_followup_email
             drafts = []
             for contact in due:
+                next_step = int(contact.get("followup_step", 0)) + 1
                 p = P(
                     place_id=contact["place_id"],
                     name=contact["name"],
@@ -1808,16 +1813,18 @@ with st.expander("🔄 Relances — contacts sans réponse"):
                     keyword="",
                     email=contact.get("email") or None,
                 )
-                drafts.append((p.name, draft_followup_email(p), contact["place_id"]))
+                label = f"{p.name}  ·  relance {next_step}/{MAX_FOLLOWUPS}"
+                drafts.append((label, draft_followup_email(p, step=next_step), contact["place_id"]))
                 mark_followup_sent(contact["place_id"])
                 if crm_type == "notion" and crm_key:
                     from history_manager import get_notion_page_id
                     from services.crm.notion import NotionExporter
                     _np = get_notion_page_id(contact["place_id"])
                     if _np:
-                        NotionExporter(crm_key, crm_extra.get("database_id", "")).update_status(_np, "relancé")
+                        _status = "clôturé" if next_step >= MAX_FOLLOWUPS else f"relancé ({next_step}/{MAX_FOLLOWUPS})"
+                        NotionExporter(crm_key, crm_extra.get("database_id", "")).update_status(_np, _status)
             st.session_state["followup_drafts"] = drafts
-            st.success(f"✅ {len(drafts)} email(s) de relance générés.")
+            st.success(f"✅ {len(drafts)} relance(s) générée(s).")
             st.rerun()
 
         # Affichage des drafts générés
@@ -1856,3 +1863,30 @@ with st.expander("🔄 Relances — contacts sans réponse"):
                         if _np:
                             NotionExporter(crm_key, crm_extra.get("database_id", "")).update_status(_np, "répondu")
                     st.rerun()
+
+# ---------------------------------------------------------------------------
+# Délivrabilité — la délivrabilité bat le volume
+# ---------------------------------------------------------------------------
+st.markdown("---")
+with st.expander("📬 Délivrabilité — éviter les spams (à lire avant d'envoyer en masse)"):
+    st.markdown("""
+**Règle d'or : la délivrabilité bat le volume.** 100 emails/heure depuis un seul domaine = spam garanti.
+
+**Avant d'envoyer :**
+- ✅ **SPF, DKIM et DMARC** configurés sur ton domaine d'envoi (dans ta zone DNS). Sans ça, tu pars direct en spam.
+- ✅ **Domaine dédié à la prospection** (ex. `mail-tondomaine.fr`), pas ton domaine principal — pour protéger ta réputation.
+- ✅ **Warmup** : monte en charge progressivement — 5 à 10 emails/jour la 1re semaine, puis augmente sur 4 à 6 semaines.
+- ✅ **Petits volumes ciblés** : 20-50 emails/jour très ciblés > 500 génériques.
+
+**Réglages du bot déjà en place :**
+- Délai de 3 s entre chaque envoi (anti-rafale).
+- Emails uniques et personnalisés (pas de template identique) → moins de signaux spam.
+
+**Cap quotidien conseillé** (à respecter côté envoi) :
+""")
+    _daily_cap = st.slider("Nombre max d'emails à envoyer par jour", 5, 100, 30, key="deliv_cap")
+    st.caption(
+        f"Vise ~{_daily_cap}/jour sur un domaine chauffé. En warmup (domaine récent), "
+        f"reste sous 10/jour la 1re semaine."
+    )
+    st.caption("Astuce : teste ta config sur mail-tester.com avant une campagne — un score < 8/10 = risque spam.")

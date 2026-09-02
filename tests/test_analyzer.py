@@ -294,6 +294,11 @@ class TestScrapeEmail(unittest.TestCase):
 
 class TestAnalyzeProspect(unittest.TestCase):
 
+    def setUp(self):
+        # Isolation : le cache d'analyse (par URL) ne doit pas fuiter entre tests.
+        from services import cache
+        cache.clear_all()
+
     def test_prospect_sans_site(self):
         p = make_prospect(website=None)
         result = analyze_prospect(p)
@@ -309,8 +314,13 @@ class TestAnalyzeProspect(unittest.TestCase):
         self.assertIn("inaccessible", result.issues[0])
 
     def test_score_calcule_correctement(self):
-        """Un site parfait (0 problème) doit avoir un score de 100."""
-        html = """
+        """Un site sans défaut pénalisant (h1 + contenu, SEO OK) doit scorer 100.
+
+        Note : des « issues » de poids 0 (pas de vidéo/galerie/blog/traduction)
+        peuvent exister pour enrichir l'email — elles n'entament pas le score.
+        """
+        contenu = " ".join(["contenu"] * 220)  # >200 mots → pas de pénalité contenu léger
+        html = f"""
         <html>
         <head>
             <title>Mon site parfait</title>
@@ -318,6 +328,8 @@ class TestAnalyzeProspect(unittest.TestCase):
             <meta name="viewport" content="width=device-width"/>
         </head>
         <body>
+            <h1>Bienvenue sur mon site</h1>
+            <p>{contenu}</p>
             <form><input type="email"/></form>
             <script>gtag('config', 'UA-XXXXX')</script>
             <a href="https://facebook.com/page">FB</a>
@@ -333,7 +345,6 @@ class TestAnalyzeProspect(unittest.TestCase):
             result = analyze_prospect(p)
 
         self.assertEqual(result.score, 100)
-        self.assertEqual(len(result.issues), 0)
 
     def test_score_diminue_avec_problemes(self):
         """Les problèmes détectés réduisent le score selon leur poids (critique/important/mineur)."""

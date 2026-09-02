@@ -77,7 +77,7 @@ _ENTRY: Dict[str, str] = {
     "creation":  "Pour démarrer sans engagement, je vous prépare une maquette gratuite de votre future page d'accueil — vous voyez le résultat avant toute décision.",
     "migration": "Pour commencer, je vous propose un audit gratuit de votre site actuel avec les gains concrets attendus (vitesse, référencement) — sans engagement.",
     "refonte":   "Je vous propose un audit gratuit de votre site avec 3 à 4 améliorations prioritaires — sans engagement.",
-    "widget":    f"Je peux l'installer en marque blanche {WIDGET_PRICE} — je vous montre une démo en 15 minutes.",
+    "widget":    f"Je peux vous envoyer une courte démo vidéo (90 s) de ce que ça donne — installation en marque blanche {WIDGET_PRICE}, sans engagement.",
     "audit":     "Je vous propose un audit gratuit (quelques captures, points concrets et priorisés) — sans engagement.",
 }
 

@@ -201,5 +201,46 @@ class TestDraftEmail(unittest.TestCase):
         self.assertIn("audit", mail.lower())
 
 
+class TestFollowupSequence(unittest.TestCase):
+    """Séquence de 4 relances à angles distincts + logique donner-d'abord."""
+
+    def test_quatre_etapes_distinctes(self):
+        from services.mailer import draft_followup_email, MAX_FOLLOWUPS
+        self.assertEqual(MAX_FOLLOWUPS, 4)
+        p = make_prospect()
+        mails = [draft_followup_email(p, step=s) for s in range(1, 5)]
+        # Les 4 relances ont des objets/contenus différents
+        self.assertEqual(len(set(mails)), 4)
+        # La dernière est une rupture
+        self.assertIn("dernier message", mails[3].lower())
+
+    def test_step_borne(self):
+        from services.mailer import draft_followup_email
+        p = make_prospect()
+        # step hors bornes → ramené dans [1, 4]
+        self.assertEqual(draft_followup_email(p, step=9), draft_followup_email(p, step=4))
+        self.assertEqual(draft_followup_email(p, step=0), draft_followup_email(p, step=1))
+
+    def test_donner_avant_recevoir(self):
+        from services.mailer import draft_followup_email
+        p = make_prospect()
+        # Les relances proposent d'ENVOYER de la valeur, pas de caler un créneau
+        for s in (1, 2, 3):
+            mail = draft_followup_email(p, step=s).lower()
+            self.assertIn("envoie", mail)
+
+
+class TestReassurance(unittest.TestCase):
+    def test_ligne_reassurance_presente(self):
+        from services.mailer import build_dynamic_email, EmailStyle, REASSURANCE
+        p = make_prospect()
+        mail = build_dynamic_email(
+            p, EmailStyle(intonation="professional", length="medium"),
+            your_name="Moi", your_title="Dev", your_offer="",
+            service_category="web_digital",
+        )
+        self.assertIn(REASSURANCE["professional"], mail)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

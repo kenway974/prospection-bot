@@ -49,6 +49,10 @@ def _ensure_output() -> None:
 # Fonctions internes — gestion du fichier contacted_place_ids.json
 # ---------------------------------------------------------------------------
 
+# Nombre maximal de relances de la séquence (après le 1er contact).
+MAX_FOLLOWUPS = 4
+
+
 def _migrate(data) -> dict:
     """Migre depuis l'ancien format (liste de place_id strings)."""
     if isinstance(data, list):
@@ -59,10 +63,23 @@ def _migrate(data) -> dict:
                 "first_contact_date": "",
                 "responded": False,
                 "followup_sent": False,
+                "followup_step": 0,
+                "last_contact_date": "",
             }
             for pid in data
         }
     return data
+
+
+def _followup_step(info: dict) -> int:
+    """Étape de relance courante, avec compat de l'ancien champ booléen."""
+    if "followup_step" in info:
+        try:
+            return int(info["followup_step"])
+        except (TypeError, ValueError):
+            return 0
+    # Ancien format : followup_sent booléen → 1 relance envoyée si True
+    return 1 if info.get("followup_sent") else 0
 
 
 def _load_contacted_data() -> dict:
@@ -133,8 +150,10 @@ def mark_as_contacted(prospects: List[Prospect], notion_page_ids: Dict[str, str]
                 "name": p.name,
                 "email": p.email or "",
                 "first_contact_date": today,
+                "last_contact_date": today,
                 "responded": False,
                 "followup_sent": False,
+                "followup_step": 0,
                 "email_template": get_template_variant(p.place_id),
             }
             if notion_page_ids and p.place_id in notion_page_ids:
@@ -150,12 +169,13 @@ def get_notion_page_id(place_id: str) -> Optional[str]:
 
 def get_due_followups(delay_days: int = 5) -> List[dict]:
     """
-    Retourne les contacts à relancer :
-    - contactés il y a au moins delay_days jours
+    Retourne les contacts dont la PROCHAINE relance de la séquence est due :
     - n'ont pas répondu
-    - relance pas encore envoyée
+    - n'ont pas déjà reçu les 4 relances
+    - dernier message envoyé il y a au moins delay_days jours
 
-    Chaque entrée retournée contient le place_id + toutes les infos.
+    Chaque entrée contient le place_id, toutes les infos, et `followup_step`
+    (nombre de relances déjà envoyées) pour savoir quelle relance générer ensuite.
     """
     data = _load_contacted_data()
     cutoff = datetime.now() - timedelta(days=delay_days)
@@ -163,17 +183,21 @@ def get_due_followups(delay_days: int = 5) -> List[dict]:
     for place_id, info in data.items():
         if info.get("responded", False):
             continue
-        if info.get("followup_sent", False):
+        step = _followup_step(info)
+        if step >= MAX_FOLLOWUPS:
             continue
-        date_str = info.get("first_contact_date", "")
+        # On se base sur la date du dernier message (relance ou 1er contact)
+        date_str = info.get("last_contact_date") or info.get("first_contact_date", "")
         if not date_str:
             continue
         try:
-            contact_date = datetime.strptime(date_str, "%Y-%m-%d")
-            if contact_date <= cutoff:
-                due.append({"place_id": place_id, **info})
+            last_date = datetime.strptime(date_str, "%Y-%m-%d")
         except ValueError:
             continue
+        if last_date <= cutoff:
+            entry = {"place_id": place_id, **info}
+            entry["followup_step"] = step  # normalise (compat ancien format)
+            due.append(entry)
     return due
 
 
@@ -186,10 +210,13 @@ def mark_as_responded(place_id: str) -> None:
 
 
 def mark_followup_sent(place_id: str) -> None:
-    """Marque qu'une relance a été envoyée pour ce prospect."""
+    """Incrémente l'étape de relance et enregistre la date du dernier message."""
     data = _load_contacted_data()
     if place_id in data:
-        data[place_id]["followup_sent"] = True
+        info = data[place_id]
+        info["followup_step"] = min(_followup_step(info) + 1, MAX_FOLLOWUPS)
+        info["followup_sent"] = True  # conservé pour compat
+        info["last_contact_date"] = datetime.now().strftime("%Y-%m-%d")
         _save_contacted_data(data)
 
 
