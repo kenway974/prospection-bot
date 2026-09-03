@@ -358,6 +358,15 @@ SIGN_OFF = {
     "casual":       "À bientôt j'espère !",
 }
 
+# Élément tangible de réassurance (framework : signal → enjeu → risque → RASSURE).
+# Placé avant le CTA pour lever le risque perçu d'un échange commercial.
+REASSURANCE = {
+    "formal":       "Et pour être transparent : si j'estime ne pas pouvoir vous être utile, je vous le dirai clairement — sans discours commercial.",
+    "professional": "Et rassurez-vous : si je vois que ça ne vous apporterait rien, je vous le dis franchement — pas de blabla commercial.",
+    "direct":       "Et si je ne peux rien pour vous, je vous le dis direct — zéro perte de temps.",
+    "casual":       "Et promis, si je vois que ça ne vaut pas le coup pour vous, je vous le dis franchement !",
+}
+
 
 # ---------------------------------------------------------------------------
 # Génération dynamique selon audit + style
@@ -489,6 +498,10 @@ def build_dynamic_email(
         parts.append(value_prop)
         parts.append("")
     parts.append(cta)
+    # Élément de réassurance tangible (sauf format court, qu'on garde ramassé)
+    if length != "short":
+        parts.append("")
+        parts.append(REASSURANCE.get(intonation, REASSURANCE["professional"]))
     parts.append("")
     parts.append(signature)
 
@@ -803,49 +816,97 @@ def enrich_with_email(prospect: Prospect) -> Prospect:
 # Email de relance
 # ---------------------------------------------------------------------------
 
-def draft_followup_email(prospect: Prospect) -> str:
-    """
-    Email de relance court envoyé ~5 jours après le premier contact sans réponse.
-    Ton plus direct, recentré sur le problème principal.
-    """
-    name = prospect.name
+# Nombre maximal de relances dans la séquence (après le 1er contact).
+MAX_FOLLOWUPS = 4
 
-    if not prospect.has_website():
-        issue_context = "l'absence de site web pour votre établissement"
-    elif prospect.issues:
-        issue_context = prospect.issues[0].split("→")[0].strip().lower()
-    else:
-        issue_context = "votre présence en ligne"
 
-    subject = f"{name} — suite à mon message"
-
-    signature_parts = [config.your_name, config.your_title]
+def _followup_signature() -> str:
+    parts = [config.your_name, config.your_title]
     if config.your_email:
-        signature_parts.append(config.your_email)
-    signature = "\n".join(filter(None, signature_parts))
+        parts.append(config.your_email)
+    return "\n".join(filter(None, parts))
 
-    parts = [
-        f"OBJET : {subject}",
-        "",
-        "Bonjour,",
-        "",
-        f"Je me permets de revenir vers vous suite à mon message de la semaine dernière "
-        f"concernant {issue_context}.",
-        "",
-        "Je sais que votre agenda est chargé — si vous n'êtes pas intéressé(e), "
-        "un simple retour suffit et je n'insisterai pas.",
-        "",
-        "Sinon, 15 minutes suffisent pour faire le point ensemble, sans engagement.",
-        "",
-        "Bonne journée,",
-        "",
-        signature,
-    ]
+
+def draft_followup_email(prospect: Prospect, step: int = 1) -> str:
+    """
+    Génère l'email de relance n°`step` (1 à 4) d'une séquence.
+
+    Chaque relance a un ANGLE distinct (58% des réponses arrivent au 1er email,
+    42% sur les relances) et adopte la logique « donner avant de recevoir » :
+    on propose d'ENVOYER de la valeur plutôt que de demander un créneau.
+
+      1. Rappel doux + offre d'envoyer du concret
+      2. Nouvel angle — le résultat/bénéfice, comme une réponse
+      3. Autre point de douleur — on relance l'intérêt sous un autre angle
+      4. Rupture — dernier message, on referme proprement la porte (mais ouverte)
+    """
+    step = max(1, min(step, MAX_FOLLOWUPS))
+    name = prospect.name
+    signature = _followup_signature()
+
+    if step == 1:
+        subject = f"{name} — suite à mon message"
+        body = [
+            "Bonjour,",
+            "",
+            "Je me permets un petit retour sur mon message de la semaine dernière — "
+            "il a pu passer inaperçu, c'est le genre de choses qui arrive vite.",
+            "",
+            "Pour aller droit au but : je peux vous envoyer 2-3 points concrets et "
+            "priorisés à corriger sur votre présence en ligne. Vous en faites ce que "
+            "vous voulez, même sans travailler avec moi.",
+            "",
+            "Ça vous intéresse que je vous les envoie ?",
+        ]
+    elif step == 2:
+        subject = f"{name} — une idée concrète pour vous"
+        body = [
+            "Bonjour,",
+            "",
+            "Je reviens vers vous sous un autre angle. La plupart des établissements "
+            "que j'accompagne ne cherchent pas « un site » — ils cherchent plus de "
+            "demandes entrantes sans y passer leurs soirées.",
+            "",
+            "Si vous me dites oui, je vous prépare un exemple rapide de ce que ça "
+            "pourrait donner pour vous — concret, pas un discours.",
+            "",
+            "Je vous l'envoie ?",
+        ]
+    elif step == 3:
+        subject = f"{name} — un autre point que j'ai remarqué"
+        body = [
+            "Bonjour,",
+            "",
+            "Un dernier angle avant de vous laisser tranquille : au-delà du point "
+            "que je vous signalais, il y a souvent un manque à gagner invisible — "
+            "des visiteurs intéressés qui repartent sans laisser de trace.",
+            "",
+            "Je peux vous envoyer un mini-diagnostic écrit (5 min de lecture) qui "
+            "pointe où ça fuit. Gratuit, sans rendez-vous à caler.",
+            "",
+            "Je vous l'envoie ?",
+        ]
+    else:  # step == 4 — rupture
+        subject = f"{name} — je referme le dossier"
+        body = [
+            "Bonjour,",
+            "",
+            "Promis, c'est mon dernier message — je ne veux pas encombrer votre boîte "
+            "mail. Sans retour de votre part, j'en conclus que ce n'est pas le moment, "
+            "et c'est parfaitement OK.",
+            "",
+            "Si un jour vous voulez transformer votre site en source de clients, "
+            "ma porte reste ouverte : répondez simplement à ce mail, même dans six mois.",
+            "",
+            "Je vous souhaite une belle continuation.",
+        ]
+
+    parts = [f"OBJET : {subject}", ""] + body + ["", "Bonne journée,", "", signature]
     return "\n".join(parts).strip()
 
 
-def enrich_with_followup(prospect: Prospect) -> Prospect:
-    """Remplace le brouillon existant par un email de relance."""
-    prospect.email_draft = draft_followup_email(prospect)
-    logger.debug("  🔄 Email de relance généré pour %s.", prospect.name)
+def enrich_with_followup(prospect: Prospect, step: int = 1) -> Prospect:
+    """Remplace le brouillon existant par l'email de relance n°`step`."""
+    prospect.email_draft = draft_followup_email(prospect, step=step)
+    logger.debug("  🔄 Relance %d/%d générée pour %s.", step, MAX_FOLLOWUPS, prospect.name)
     return prospect

@@ -95,7 +95,8 @@ class TestServiceProfiles(unittest.TestCase):
         self.assertEqual(len(services), len(SERVICE_PROFILES))
 
     def test_minimum_services(self):
-        self.assertGreaterEqual(len(SERVICE_PROFILES), 20, "Il devrait y avoir au moins 20 services")
+        # Catalogue recentré « build pur » pour dev fullstack
+        self.assertGreaterEqual(len(SERVICE_PROFILES), 5, "Il devrait y avoir au moins 5 services de build")
 
     def test_toutes_categories_representees(self):
         """Chaque catégorie doit avoir au moins un service."""
@@ -103,11 +104,14 @@ class TestServiceProfiles(unittest.TestCase):
         for cat in SERVICE_CATEGORY_LABELS:
             self.assertIn(cat, cats_presentes, f"Catégorie '{cat}' sans aucun service")
 
-    def test_coursier_score_direction_desc(self):
-        """Le coursier doit avoir score_direction='desc' (logique inversée)."""
-        coursier = get_service("coursier")
-        self.assertIsNotNone(coursier)
-        self.assertEqual(coursier.score_direction, "desc")
+    def test_catalogue_recentre_web(self):
+        """Après recentrage : uniquement des services de développement web."""
+        for s in SERVICE_PROFILES:
+            self.assertEqual(s.category, "web_digital", f"Service hors périmètre web : {s.id}")
+        ids = {s.id for s in SERVICE_PROFILES}
+        # Les prestations coeur d'un dev fullstack
+        for expected in ("web_refonte", "web_app", "ecommerce", "api_integration", "maintenance"):
+            self.assertIn(expected, ids)
 
     def test_sms_non_vide(self):
         for s in SERVICE_PROFILES:
