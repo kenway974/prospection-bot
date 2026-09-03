@@ -577,13 +577,18 @@ with col2:
         score_threshold = st.slider(
             "Score min requis",
             min_value=0, max_value=100, value=_score_default,
-            help="Score élevé = bonne opportunité. Ex coursier : 70 = exclure les établissements déjà bien couverts en livraison.",
+            help="Score élevé = bonne opportunité selon ce service.",
         )
     else:
         score_threshold = st.slider(
             "Score max à contacter",
             min_value=0, max_value=100, value=_score_default,
-            help="100 = tous les prospects. Baisse pour ne garder que les sites avec beaucoup de problèmes.",
+            help=(
+                "Le score = qualité du site (100 = parfait, 0 = pas de site). "
+                "Plus le score est BAS, plus le site a de défauts à corriger = meilleur prospect pour toi. "
+                "On ne contacte que les sites au score ≤ cette valeur. "
+                "85 = large (au moins un défaut réel) ; 60 = strict (sites vraiment mauvais)."
+            ),
         )
     radius = st.select_slider(
         "Rayon de recherche",

@@ -445,6 +445,45 @@ TARGET_SEGMENTS: List[TargetSegment] = [
         description="Espaces de coworking et pépinières — traiteur, animation, services aux membres.",
     ),
 
+    TargetSegment(
+        id="editeurs_saas",
+        emoji="🧑‍💻",
+        name="Éditeurs SaaS & Logiciels",
+        sector="entreprises",
+        keywords=[
+            "éditeur de logiciel", "éditeur SaaS", "logiciel métier", "solution SaaS",
+            "plateforme en ligne", "application métier", "startup logicielle",
+        ],
+        target_size="pme",
+        description="Éditeurs SaaS et logiciels — renfort dev, intégrations, features, maintenance applicative.",
+    ),
+
+    TargetSegment(
+        id="ecommercants",
+        emoji="🛒",
+        name="E-commerçants & Marques en ligne",
+        sector="entreprises",
+        keywords=[
+            "boutique en ligne", "e-commerce", "marque en ligne", "vente en ligne",
+            "site marchand", "dropshipping", "marketplace",
+        ],
+        target_size="pme",
+        description="E-commerçants et marques en ligne — dev de boutique, optimisation conversion, intégrations paiement/logistique.",
+    ),
+
+    TargetSegment(
+        id="studios_dev",
+        emoji="⌨️",
+        name="Studios & Agences de dev (sous-traitance)",
+        sector="entreprises",
+        keywords=[
+            "agence de développement web", "studio de développement", "agence digitale",
+            "société de services informatiques", "agence no-code", "développement d'applications",
+        ],
+        target_size="pme",
+        description="Studios et agences qui débordent — partenariat en marque blanche / sous-traitance de dev.",
+    ),
+
     # -----------------------------------------------------------------------
     # Éducation & Formation
     # -----------------------------------------------------------------------
