@@ -414,6 +414,24 @@ class TestAnalyzeProspect(unittest.TestCase):
 
         self.assertLess(result_critique.score, result_mineur.score)
 
+    def test_candidature_pas_audit(self):
+        """Mode candidature : aucun audit, score neutre 100, mais email scrapé."""
+        html = '<html><body><a href="mailto:hello@agence.fr">contact</a></body></html>'
+        mock = MagicMock(); mock.text = html; mock.ok = True
+        p = make_prospect(website="https://agence-top.fr")
+        with patch("services.analyzer._fetch", return_value=(mock, 0.3)):
+            r = analyze_prospect(p, candidacy=True)
+        self.assertEqual(r.score, 100)      # neutre → ne filtre personne
+        self.assertEqual(r.issues, [])      # aucun défaut relevé
+        self.assertEqual(r.email, "hello@agence.fr")  # contact quand même récupéré
+
+    def test_candidature_sans_site_retenue(self):
+        """Une cible sans site est retenue quand même en mode candidature."""
+        p = make_prospect(website=None)
+        r = analyze_prospect(p, candidacy=True)
+        self.assertEqual(r.score, 100)
+        self.assertEqual(r.issues, [])
+
 
 class TestCheckSeoVisibility(unittest.TestCase):
     """Proxy gratuit du trafic organique (noindex / contenu / structure)."""

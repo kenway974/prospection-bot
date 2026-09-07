@@ -574,7 +574,15 @@ with col2:
     )
     _score_dir = selected_service.score_direction
     _score_default = (selected_target.score_threshold_override or selected_service.score_threshold_default)
-    if _score_dir == "desc":
+    if selected_svc_cat == "freelance":
+        # Mode candidature : on n'audite pas les sites, toutes les cibles sont retenues.
+        st.info(
+            "🧑‍💻 **Mode candidature freelance** — on n'audite **pas** le site des cibles. "
+            "Toutes les entreprises trouvées sont retenues, et le bot génère un email de "
+            "candidature (renfort dev). Le filtre de score ne s'applique pas ici."
+        )
+        score_threshold = 100
+    elif _score_dir == "desc":
         score_threshold = st.slider(
             "Score min requis",
             min_value=0, max_value=100, value=_score_default,
@@ -734,6 +742,12 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         threshold       = params.get("contact_score_threshold", 100)
         score_direction = params.get("score_direction", "asc")
         weight_overrides = params.get("weight_overrides", {})
+        candidacy_mode  = params.get("service_category", "") == "freelance"
+        if candidacy_mode:
+            log_q.put(
+                "[--] 🧑‍💻 Mode candidature freelance : on N'AUDITE PAS les sites, "
+                "on récupère toutes les cibles + leur contact."
+            )
         already_contacted = load_contacted_ids()
         if already_contacted:
             log_q.put(
@@ -762,9 +776,19 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             detection_kws = params.get("detection_keywords", [])
             with ThreadPoolExecutor(max_workers=min(workers, len(batch))) as ex:
                 analyzed = list(ex.map(
-                    partial(analyze_prospect, weight_overrides=weight_overrides, detection_keywords=detection_kws or None),
+                    partial(
+                        analyze_prospect,
+                        weight_overrides=weight_overrides,
+                        detection_keywords=detection_kws or None,
+                        candidacy=candidacy_mode,
+                    ),
                     batch,
                 ))
+            # Mode candidature : aucune note, on garde toutes les cibles
+            if candidacy_mode:
+                for p in analyzed:
+                    log_q.put(f"[--] ✅ {p.name} — cible retenue")
+                return analyzed
             qualified = []
             rejected_scores: list = []
             for p in analyzed:
@@ -906,16 +930,25 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
 
         all_prospects = all_qualified
         # Récap funnel : où meurent les prospects, étape par étape
-        log_q.put(
-            f"[--] 🧮 Funnel : {_funnel_raw} bruts récupérés → "
-            f"{_funnel_candidates} candidats analysés (après dédup + note ≥ {min_rating}) → "
-            f"{len(all_prospects)} qualifiés (seuil score {threshold})."
-        )
-        if _funnel_raw > 0 and _funnel_candidates == 0:
-            log_q.put("[--] 💡 Tous les bruts ont été éliminés en amont (déjà contactés, doublons entre mots-clés, ou erreurs API).")
-        elif _funnel_candidates > 0 and len(all_prospects) <= 2:
-            log_q.put("[--] 💡 Assez de candidats mais peu qualifiés : monte « Score max à contacter » (les sites sont trop bons pour le seuil actuel).")
-        log_q.put(f"[--] 📋 {len(all_prospects)} prospect(s) qualifiés au total.")
+        if candidacy_mode:
+            log_q.put(
+                f"[--] 🧮 Funnel : {_funnel_raw} bruts récupérés → "
+                f"{_funnel_candidates} candidats (après dédup + note ≥ {min_rating}) → "
+                f"{len(all_prospects)} cibles retenues (mode candidature, aucun filtre de score)."
+            )
+            if _funnel_raw > 0 and _funnel_candidates == 0:
+                log_q.put("[--] 💡 Tous les bruts ont été éliminés en amont (déjà contactés, doublons entre mots-clés, ou erreurs API).")
+        else:
+            log_q.put(
+                f"[--] 🧮 Funnel : {_funnel_raw} bruts récupérés → "
+                f"{_funnel_candidates} candidats analysés (après dédup + note ≥ {min_rating}) → "
+                f"{len(all_prospects)} qualifiés (seuil score {threshold})."
+            )
+            if _funnel_raw > 0 and _funnel_candidates == 0:
+                log_q.put("[--] 💡 Tous les bruts ont été éliminés en amont (déjà contactés, doublons entre mots-clés, ou erreurs API).")
+            elif _funnel_candidates > 0 and len(all_prospects) <= 2:
+                log_q.put("[--] 💡 Assez de candidats mais peu qualifiés : monte « Score max à contacter » (les sites sont trop bons pour le seuil actuel).")
+        log_q.put(f"[--] 📋 {len(all_prospects)} {'cible(s) retenue(s)' if candidacy_mode else 'prospect(s) qualifiés'} au total.")
 
         # Emails
         style_dict = params.get("email_style", {})
