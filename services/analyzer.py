@@ -598,6 +598,7 @@ def analyze_prospect(
     prospect: Prospect,
     weight_overrides: Dict[str, int] | None = None,
     detection_keywords: Optional[List[str]] = None,
+    candidacy: bool = False,
 ) -> Prospect:
     """
     Analyse complète du prospect.
@@ -609,9 +610,30 @@ def analyze_prospect(
 
     weight_overrides : dict optionnel pour surcharger les poids par défaut.
     detection_keywords : mots-clés métier du profil ; leur absence → no_service_mention.
+    candidacy : mode candidature freelance — on N'AUDITE PAS le site, on récupère
+      juste le contact et on retient toutes les cibles (score neutre).
 
     Retourne le prospect enrichi (issues, score, email, issue_keys).
     """
+    # --- Mode candidature freelance : aucun audit, on veut juste le contact ---
+    if candidacy:
+        prospect.issues = []
+        prospect.issue_keys = []
+        prospect.score = 100  # neutre → ne filtre personne
+        if prospect.has_website():
+            try:
+                resp, _ = _fetch(prospect.website)
+                if resp is not None:
+                    soup = BeautifulSoup(resp.text, "lxml")
+                    prospect.cms = _detect_cms(prospect.website, resp.text)
+                    email = _scrape_email(prospect.website, soup)
+                    if email:
+                        prospect.email = email
+            except Exception:
+                pass
+        logger.info("  ✅ %s — cible retenue (candidature)", prospect.name)
+        return prospect
+
     # Construction du dict de poids (défauts + surcharges du profil)
     weights = dict(_DEFAULT_WEIGHTS)
     if weight_overrides:
