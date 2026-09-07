@@ -31,6 +31,7 @@ class ServiceProfile:
 
 SERVICE_CATEGORY_LABELS: Dict[str, str] = {
     "web_digital": "🌐 Développement Web",
+    "freelance":   "🧑‍💻 Mission freelance",
 }
 
 
@@ -159,6 +160,31 @@ SERVICE_PROFILES: List[ServiceProfile] = [
         ),
         sms_hook="Votre site mérite un suivi (sécurité, mises à jour, perf). Je m'en occupe en continu. Dispo pour en parler ?",
         score_threshold_default=85,
+        detection_keywords=[],
+    ),
+
+    # -----------------------------------------------------------------------
+    # Mission freelance / Renfort — on ne vend pas un site, on propose SES bras
+    # (agences web, startups, SaaS, studios de dev, éditeurs). Pitch = candidature,
+    # pas audit du site. Score neutre (seuil 100) : on veut les boîtes ACTIVES,
+    # peu importe l'état de leur site.
+    # -----------------------------------------------------------------------
+
+    ServiceProfile(
+        id="web_freelance",
+        emoji="🧑‍💻",
+        name="Mission freelance / Renfort dev",
+        category="freelance",
+        description="Candidature freelance : renfort dev fullstack pour agences, startups, SaaS et studios.",
+        your_title="Développeur Web Fullstack — Freelance",
+        your_offer="Renfort dev fullstack en freelance : missions ponctuelles, débordement ou régie",
+        email_hook=(
+            "Je me permets de vous contacter en tant que développeur web fullstack freelance. "
+            "En découvrant {name}, je me suis dit que je pourrais vous être utile en renfort — "
+            "sur du débordement, une mission ponctuelle ou un projet précis."
+        ),
+        sms_hook="Dev web fullstack freelance, dispo pour du renfort / des missions. Je peux vous envoyer mon profil ?",
+        score_threshold_default=100,
         detection_keywords=[],
     ),
 
