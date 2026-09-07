@@ -134,16 +134,19 @@ def fetch_raw_candidates(keyword: str, max_raw: int = GOOGLE_MAX_RESULTS) -> Lis
 
         # Le next_page_token Google n'est pas valide immédiatement (2-5s de propagation).
         # Sur INVALID_REQUEST avec un token en cours, on patiente et on rejoue le MÊME
-        # token (jusqu'à 3 fois) au lieu d'abandonner la pagination.
+        # token (jusqu'à 3 fois) SANS spammer les logs — c'est un comportement normal.
         if status == "INVALID_REQUEST" and "pagetoken" in params and token_retries < 3:
             token_retries += 1
-            logger.debug("    ⏳ next_page_token pas encore prêt ('%s'), nouvel essai %d/3…", keyword, token_retries)
             time.sleep(2)
             continue
 
         if status not in ("OK", "ZERO_RESULTS"):
             if results:
-                logger.debug("Pagination interrompue (%s) pour '%s' — %d résultats conservés.", status, keyword, len(results))
+                # Cas normal : Google ne sert que 20 résultats/page pour ce mot-clé.
+                logger.debug(
+                    "    ℹ️  Google limite à %d résultat(s) pour '%s' (page suivante indisponible) — c'est normal.",
+                    len(results), keyword,
+                )
             else:
                 logger.warning("Statut API inattendu (%s) pour '%s'", status, keyword)
             break
