@@ -659,7 +659,7 @@ class QueueLogger:
         self.q.put(f"[{ts}] {level} {msg}")
 
     def info(self, msg: str, *a):    self._emit("ℹ️ ", msg % a if a else msg)
-    def debug(self, msg: str, *a):   self._emit("🔍", msg % a if a else msg)
+    def debug(self, msg: str, *a):   pass  # bruit interne (pagination, PageSpeed, CMS…) → masqué de l'UI
     def warning(self, msg: str, *a): self._emit("⚠️ ", msg % a if a else msg)
     def error(self, msg: str, *a):   self._emit("❌", msg % a if a else msg)
     def critical(self, msg: str, *a):self._emit("🔴", msg % a if a else msg)
@@ -818,7 +818,10 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                 for source in kw_sources:
                     if source == "google_maps":
                         # ── Phase 1 : Text Search ──
-                        raw_candidates = fetch_raw_candidates(kw)
+                        # On ne récupère que ce qui est utile (≈ objectif × 3, plafonné à 60) :
+                        # évite de paginer inutilement quand l'objectif est petit.
+                        _max_raw = max(20, min(target_per_kw * 3, 60))
+                        raw_candidates = fetch_raw_candidates(kw, max_raw=_max_raw)
                         _funnel_raw += len(raw_candidates)
                         if not raw_candidates:
                             log_q.put(f"[--] ❌ Aucun résultat Google Maps pour '{kw}'.")
