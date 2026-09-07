@@ -104,14 +104,21 @@ class TestServiceProfiles(unittest.TestCase):
         for cat in SERVICE_CATEGORY_LABELS:
             self.assertIn(cat, cats_presentes, f"Catégorie '{cat}' sans aucun service")
 
-    def test_catalogue_recentre_web(self):
-        """Après recentrage : uniquement des services de développement web."""
+    def test_catalogue_recentre_dev(self):
+        """Après recentrage : uniquement des services de dev (build web) ou freelance."""
         for s in SERVICE_PROFILES:
-            self.assertEqual(s.category, "web_digital", f"Service hors périmètre web : {s.id}")
+            self.assertIn(s.category, ("web_digital", "freelance"), f"Service hors périmètre : {s.id}")
         ids = {s.id for s in SERVICE_PROFILES}
-        # Les prestations coeur d'un dev fullstack
-        for expected in ("web_refonte", "web_app", "ecommerce", "api_integration", "maintenance"):
+        # Les prestations coeur d'un dev fullstack + la candidature freelance
+        for expected in ("web_refonte", "web_app", "ecommerce", "api_integration", "maintenance", "web_freelance"):
             self.assertIn(expected, ids)
+
+    def test_freelance_score_neutre(self):
+        """Le service freelance ne filtre pas sur l'état du site (seuil 100)."""
+        fl = get_service("web_freelance")
+        self.assertIsNotNone(fl)
+        self.assertEqual(fl.category, "freelance")
+        self.assertEqual(fl.score_threshold_default, 100)
 
     def test_sms_non_vide(self):
         for s in SERVICE_PROFILES:

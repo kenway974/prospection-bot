@@ -230,6 +230,36 @@ class TestFollowupSequence(unittest.TestCase):
             self.assertIn("envoie", mail)
 
 
+class TestCandidacyFreelance(unittest.TestCase):
+    """Mode candidature freelance : on pitche ses bras, pas le site du prospect."""
+
+    def test_email_candidature_ignore_le_site(self):
+        from services.mailer import build_dynamic_email, EmailStyle
+        p = make_prospect(name="Agence Pixel", website="https://agence-pixel.fr")
+        p.issues = ["Site non sécurisé (HTTPS)"]
+        p.issue_keys = ["https"]
+        p.score = 95
+        email = build_dynamic_email(
+            p, EmailStyle(intonation="professional"),
+            your_name="Kenny", your_title="Dev Fullstack Freelance", your_offer="",
+            service_id="web_freelance", service_category="freelance", target_sector="entreprises",
+        )
+        self.assertIn("freelance", email.lower())
+        # Ne doit PAS auditer/critiquer le site du prospect
+        self.assertNotIn("HTTPS", email)
+        self.assertNotIn("sécurisé", email)
+
+    def test_email_candidature_propose_portfolio(self):
+        from services.mailer import build_dynamic_email, EmailStyle
+        p = make_prospect(name="Startup X")
+        email = build_dynamic_email(
+            p, EmailStyle(intonation="direct"),
+            your_name="Kenny", your_title="Dev", your_offer="",
+            service_id="web_freelance", service_category="freelance",
+        )
+        self.assertIn("portfolio", email.lower())
+
+
 class TestReassurance(unittest.TestCase):
     def test_ligne_reassurance_presente(self):
         from services.mailer import build_dynamic_email, EmailStyle, REASSURANCE

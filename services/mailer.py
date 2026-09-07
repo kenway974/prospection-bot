@@ -375,6 +375,93 @@ REASSURANCE = {
 _NON_WEB_CATEGORIES = {"sante", "terrain", "special"}
 
 
+# ---------------------------------------------------------------------------
+# Email de candidature freelance (catégorie "freelance")
+# On ne pitch PAS un site : on propose ses bras de dev fullstack en renfort.
+# ---------------------------------------------------------------------------
+
+_CANDIDACY_HOOK = {
+    "formal": (
+        "Je me permets de vous contacter en tant que développeur web fullstack indépendant. "
+        "En découvrant {name}, j'ai pensé que mon profil pourrait vous être utile en renfort."
+    ),
+    "professional": (
+        "Je vous écris en tant que développeur web fullstack freelance. En regardant {name}, "
+        "je me suis dit que je pourrais vous épauler — sur du débordement ou une mission précise."
+    ),
+    "direct": (
+        "Dev web fullstack freelance, je vous contacte directement : {name} a le profil de boîte "
+        "avec qui j'aime bosser, et je peux vous filer un vrai coup de main côté dev."
+    ),
+    "casual": (
+        "Je me lance : je suis dev web fullstack freelance et {name} m'a tapé dans l'œil ! "
+        "Je pense pouvoir vous aider en renfort sur vos projets."
+    ),
+}
+
+_CANDIDACY_VALUE = {
+    "formal": (
+        "Je peux intervenir en renfort ponctuel, en régie ou sur un projet dédié (front et back), "
+        "et m'intégrer rapidement à votre équipe et à vos process."
+    ),
+    "professional": (
+        "Concrètement : renfort ponctuel, débordement de charge ou mission dédiée, en front comme "
+        "en back. Je suis autonome, je m'intègre vite à une équipe et je livre proprement."
+    ),
+    "direct": (
+        "Front, back, intégrations, correctifs urgents : je prends ce qui vous fait gagner du temps. "
+        "Autonome, opérationnel tout de suite."
+    ),
+    "casual": (
+        "Front, back, petites features ou gros coups de bourre : je m'adapte à ce dont vous avez besoin, "
+        "et je m'intègre vite à l'équipe."
+    ),
+}
+
+_CANDIDACY_CTA = {
+    "formal": "Si cela vous intéresse, je vous transmets mon portfolio et mon GitHub avec quelques réalisations.",
+    "professional": "Si le timing est bon, je vous envoie mon portfolio + GitHub avec 2-3 réalisations parlantes — vous jugez sur pièces.",
+    "direct": "Je vous envoie mon portfolio + GitHub ? Vous voyez tout de suite ce que je vaux.",
+    "casual": "Je vous envoie mon portfolio et mon GitHub ? Comme ça vous voyez concrètement ce que je fais !",
+}
+
+
+def _build_candidacy_email(
+    prospect: Prospect,
+    style: EmailStyle,
+    salutation: str,
+    your_name: str,
+    your_title: str,
+    your_offer: str,
+) -> str:
+    """Email de candidature freelance — pitch de renfort dev, sans audit du site."""
+    intonation = style.intonation
+    length = style.length
+
+    hook = _CANDIDACY_HOOK.get(intonation, _CANDIDACY_HOOK["professional"]).format(name=prospect.name)
+    value = your_offer.strip() if your_offer.strip() else _CANDIDACY_VALUE.get(intonation, _CANDIDACY_VALUE["professional"])
+    if value and not value.endswith("."):
+        value += "."
+    cta = _CANDIDACY_CTA.get(intonation, _CANDIDACY_CTA["professional"])
+
+    # --- Signature (avec portfolio/GitHub si renseigné) ---
+    sign_off = SIGN_OFF.get(intonation, SIGN_OFF["professional"])
+    signature = f"{sign_off}\n{your_name}"
+    if your_title:
+        signature += f"\n{your_title}"
+    if config.your_website:
+        signature += f"\n{config.your_website}"
+
+    parts = [salutation, "", hook]
+    if length != "short":
+        parts += ["", value]
+    parts += ["", cta]
+    if length != "short":
+        parts += ["", REASSURANCE.get(intonation, REASSURANCE["professional"])]
+    parts += ["", signature]
+    return "\n".join(parts)
+
+
 def build_dynamic_email(
     prospect: Prospect,
     style: EmailStyle,
@@ -400,6 +487,12 @@ def build_dynamic_email(
         "first_name": "Bonjour,",
     }
     salutation = salutation_map.get(style.salutation, "Bonjour,")
+
+    # --- Cas spécial : candidature freelance (on ne vend pas un site) ---
+    if service_category == "freelance":
+        return _build_candidacy_email(
+            prospect, style, salutation, your_name, your_title, your_offer,
+        )
 
     # --- Sélection du dictionnaire de copy principal ---
     if service_category == "creatif":

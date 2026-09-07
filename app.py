@@ -513,6 +513,7 @@ with col1:
         )
         _preview_issue_map = {
             "web_digital":  (["https", "lead_form"],       "site sans HTTPS + pas de formulaire"),
+            "freelance":    ([],                            "candidature freelance (renfort dev)"),
             "creatif":      (["no_gallery", "no_video"],   "pas de galerie + pas de vidéo"),
             "conseil_b2b":  (["tracking", "no_blog"],      "pas de tracking + pas de blog"),
             "sante":        (["no_service_mention"],        "service non mentionné sur le site"),
