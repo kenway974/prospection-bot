@@ -1050,78 +1050,100 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                 except Exception as _crm_exc:
                     log_q.put(f"[--] ❌ Erreur export {_crm_type} : {_crm_exc}")
 
-        # 7. Gmail
+        # 7. Gmail — enveloppé dans try/except : une erreur d'envoi ne doit JAMAIS
+        # empêcher la suite du run (SMS, historique) de s'exécuter.
         if params["send_emails"] and params["gmail_address"] and params["gmail_password"]:
-            if params.get("email_send_mode") == "⏰ Programmé" and params.get("sched_date"):
-                from datetime import datetime as _dtime
-                from services import scheduler as _sched_mod
-                _send_at = _dtime.strptime(
-                    f"{params['sched_date']} {params.get('sched_time', '09:00')}",
-                    "%Y-%m-%d %H:%M",
-                ).timestamp()
-                _n_sched = 0
-                for _p in all_prospects:
-                    if not _p.email or not _p.email_draft:
-                        continue
-                    _sched_mod.add_pending(
-                        place_id=_p.place_id,
-                        name=_p.name,
-                        email=_p.email,
-                        draft=_p.email_draft,
-                        gmail_address=params["gmail_address"],
-                        gmail_password=params["gmail_password"],
-                        send_at=_send_at,
-                        notion_page_id=notion_page_ids.get(_p.place_id, ""),
-                        notion_api_key=params.get("crm_key", "") if params.get("crm_type") == "notion" else "",
-                    )
-                    _n_sched += 1
-                _emails_scheduled = _n_sched
-                log_q.put(
-                    f"[--] ⏰ {_n_sched} email(s) programmé(s) pour le "
-                    f"{params['sched_date']} à {params.get('sched_time', '09:00')}."
-                )
-            else:
-                from services.gmail import send_all
-                _email_stats = send_all(_with_email, params["gmail_address"], params["gmail_password"])
-                _emails_sent = _email_stats["sent"]
-                log_q.put(
-                    f"[--] {'✅' if _email_stats['sent'] else '⚠️ '} Email : "
-                    f"{_email_stats['sent']} envoyé(s) | "
-                    f"{_email_stats['skipped']} ignoré(s) | "
-                    f"{_email_stats['failed']} échec(s)."
-                )
-                if _email_stats["failed"]:
-                    log_q.put("[--] ❌ Vérifie ton adresse Gmail et le mot de passe d'application (pas le mot de passe habituel).")
-                if notion_page_ids and params.get("crm_type") == "notion" and params.get("crm_key"):
-                    from services.crm.notion import NotionExporter
-                    _nu = NotionExporter(params["crm_key"], params.get("crm_extra", {}).get("database_id", ""))
+            try:
+                _with_email = [p for p in all_prospects if p.email]
+                _without_email = len(all_prospects) - len(_with_email)
+                if params.get("email_send_mode") == "⏰ Programmé" and params.get("sched_date"):
+                    from datetime import datetime as _dtime
+                    from services import scheduler as _sched_mod
+                    _send_at = _dtime.strptime(
+                        f"{params['sched_date']} {params.get('sched_time', '09:00')}",
+                        "%Y-%m-%d %H:%M",
+                    ).timestamp()
+                    _n_sched = 0
                     for _p in all_prospects:
-                        if _p.email:
-                            _pid = notion_page_ids.get(_p.place_id)
-                            if _pid:
-                                _nu.update_status(_pid, "contacté")
+                        if not _p.email or not _p.email_draft:
+                            continue
+                        _sched_mod.add_pending(
+                            place_id=_p.place_id,
+                            name=_p.name,
+                            email=_p.email,
+                            draft=_p.email_draft,
+                            gmail_address=params["gmail_address"],
+                            gmail_password=params["gmail_password"],
+                            send_at=_send_at,
+                            notion_page_id=notion_page_ids.get(_p.place_id, ""),
+                            notion_api_key=params.get("crm_key", "") if params.get("crm_type") == "notion" else "",
+                        )
+                        _n_sched += 1
+                    _emails_scheduled = _n_sched
+                    log_q.put(
+                        f"[--] ⏰ {_n_sched} email(s) programmé(s) pour le "
+                        f"{params['sched_date']} à {params.get('sched_time', '09:00')}."
+                    )
+                elif not _with_email:
+                    log_q.put(
+                        f"[--] ⚠️  Envoi email activé mais aucun prospect n'a d'adresse email scrapée "
+                        f"({_without_email} prospect(s) sans email trouvé sur leur site)."
+                    )
+                else:
+                    log_q.put(f"[--] 📤 Envoi email vers {len(_with_email)} prospect(s)…")
+                    if _without_email:
+                        log_q.put(f"[--] ℹ️  {_without_email} prospect(s) ignoré(s) — email non trouvé sur leur site.")
+                    from services.gmail import send_all
+                    _email_stats = send_all(_with_email, params["gmail_address"], params["gmail_password"])
+                    _emails_sent = _email_stats["sent"]
+                    log_q.put(
+                        f"[--] {'✅' if _email_stats['sent'] else '⚠️ '} Email : "
+                        f"{_email_stats['sent']} envoyé(s) | "
+                        f"{_email_stats['skipped']} ignoré(s) | "
+                        f"{_email_stats['failed']} échec(s)."
+                    )
+                    if _email_stats["failed"]:
+                        log_q.put("[--] ❌ Vérifie ton adresse Gmail et le mot de passe d'application (pas le mot de passe habituel).")
+                    if notion_page_ids and params.get("crm_type") == "notion" and params.get("crm_key"):
+                        from services.crm.notion import NotionExporter
+                        _nu = NotionExporter(params["crm_key"], params.get("crm_extra", {}).get("database_id", ""))
+                        for _p in all_prospects:
+                            if _p.email:
+                                _pid = notion_page_ids.get(_p.place_id)
+                                if _pid:
+                                    _nu.update_status(_pid, "contacté")
+            except Exception as _mail_exc:
+                log_q.put(f"[--] ❌ Erreur envoi email : {_mail_exc}")
+        elif params["send_emails"]:
+            if not params["gmail_address"]:
+                log_q.put("[--] ⚠️  Envoi email activé mais adresse Gmail manquante.")
+            elif not params["gmail_password"]:
+                log_q.put("[--] ⚠️  Envoi email activé mais mot de passe d'application Gmail manquant.")
 
-        # 8. SMS Brevo
+        # 8. SMS Brevo — même principe : erreur isolée, ne bloque jamais la suite.
         if params["send_sms"] and params["brevo_key"]:
-            _with_mobile = [p for p in all_prospects if p.phone and (
-                p.phone.replace(" ", "").startswith("06") or
-                p.phone.replace(" ", "").startswith("07")
-            )]
-            if not _with_mobile:
-                log_q.put("[--] ⚠️  SMS activé mais aucun prospect avec numéro mobile (06/07) trouvé.")
-            else:
-                log_q.put(f"[--] 📱 Envoi SMS vers {len(_with_mobile)} mobile(s)…")
-                from services.sms import send_all_sms
-                _sms_stats = send_all_sms(all_prospects)
-                _sms_sent = _sms_stats["sent"]
-                log_q.put(
-                    f"[--] {'✅' if _sms_stats['sent'] else '⚠️ '} SMS : "
-                    f"{_sms_stats['sent']} envoyé(s) | "
-                    f"{_sms_stats['skipped']} ignoré(s) | "
-                    f"{_sms_stats['failed']} échec(s)."
-                )
-                if _sms_stats["failed"]:
-                    log_q.put("[--] ❌ Vérifie ta clé Brevo API dans la sidebar.")
+            try:
+                _with_mobile = [p for p in all_prospects if p.phone and (
+                    p.phone.replace(" ", "").startswith("06") or
+                    p.phone.replace(" ", "").startswith("07")
+                )]
+                if not _with_mobile:
+                    log_q.put("[--] ⚠️  SMS activé mais aucun prospect avec numéro mobile (06/07) trouvé.")
+                else:
+                    log_q.put(f"[--] 📱 Envoi SMS vers {len(_with_mobile)} mobile(s)…")
+                    from services.sms import send_all_sms
+                    _sms_stats = send_all_sms(all_prospects)
+                    _sms_sent = _sms_stats["sent"]
+                    log_q.put(
+                        f"[--] {'✅' if _sms_stats['sent'] else '⚠️ '} SMS : "
+                        f"{_sms_stats['sent']} envoyé(s) | "
+                        f"{_sms_stats['skipped']} ignoré(s) | "
+                        f"{_sms_stats['failed']} échec(s)."
+                    )
+                    if _sms_stats["failed"]:
+                        log_q.put("[--] ❌ Vérifie ta clé Brevo API dans la sidebar.")
+            except Exception as _sms_exc:
+                log_q.put(f"[--] ❌ Erreur envoi SMS : {_sms_exc}")
         elif params["send_sms"] and not params["brevo_key"]:
             log_q.put("[--] ⚠️  SMS activé mais clé Brevo manquante.")
 
@@ -1129,17 +1151,20 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         # eu lieu (email envoyé/programmé ou SMS). Sinon c'est un run d'exploration :
         # on ne « brûle » pas les prospects, ils restent disponibles aux prochains runs.
         _something_sent = (_emails_sent > 0) or (_sms_sent > 0) or (_emails_scheduled > 0)
-        if _something_sent:
-            mark_as_contacted(all_prospects, notion_page_ids=notion_page_ids)
-            log_q.put(
-                f"[--] 📓 {len(all_prospects)} prospect(s) marqué(s) comme contactés "
-                "(ignorés aux prochains runs)."
-            )
-        else:
-            log_q.put(
-                "[--] ℹ️  Run d'exploration (aucun envoi) — prospects NON marqués comme "
-                "contactés, ils resteront disponibles au prochain run."
-            )
+        try:
+            if _something_sent:
+                mark_as_contacted(all_prospects, notion_page_ids=notion_page_ids)
+                log_q.put(
+                    f"[--] 📓 {len(all_prospects)} prospect(s) marqué(s) comme contactés "
+                    "(ignorés aux prochains runs)."
+                )
+            else:
+                log_q.put(
+                    "[--] ℹ️  Run d'exploration (aucun envoi) — prospects NON marqués comme "
+                    "contactés, ils resteront disponibles au prochain run."
+                )
+        except Exception as _mark_exc:
+            log_q.put(f"[--] ❌ Erreur marquage contacts : {_mark_exc}")
 
         # 10. Historique
         from history_manager import save_run
