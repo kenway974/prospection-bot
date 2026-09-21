@@ -1371,9 +1371,9 @@ if st.session_state.prospects:
     st.markdown("## 📊 Résultats")
     if st.session_state.get("_restored_from") and not st.session_state.get("run_done"):
         st.info(
-            "🔄 Résultats du **dernier run** rechargés automatiquement "
-            f"(`{st.session_state['_restored_from']}`). Ils restent affichés même après "
-            "un rechargement de page ou une coupure. Relance une prospection pour les remplacer."
+            f"🔄 Campagne rechargée : **{st.session_state['_restored_from']}**. "
+            "Ces résultats restent affichés après un rechargement de page ou une coupure. "
+            "Relance une prospection pour les remplacer."
         )
 
     # Métriques
@@ -1734,7 +1734,8 @@ with st.expander("🕐 Historique des campagnes"):
     if not history:
         st.info("Aucune campagne lancée pour l'instant.")
     else:
-        for run in history:
+        st.caption("Clique sur « 📂 Charger » pour réafficher tous les prospects d'une campagne dans l'interface.")
+        for _i, run in enumerate(history):
             kw_str = ", ".join(run.get("keywords", [])[:3])
             extra_kw = len(run.get("keywords", [])) - 3
             kw_display = kw_str + (f" +{extra_kw}" if extra_kw > 0 else "")
@@ -1770,6 +1771,24 @@ with st.expander("🕐 Historique des campagnes"):
                     st.caption(f"Offres proposées : {_ot_str}")
                 if run.get("crm_synchronisés"):
                     st.caption(f"CRM : {run['crm_synchronisés']} synchronisé(s)")
+                # Bouton pour recharger tous les prospects de cette campagne dans l'UI
+                _fichier = run.get("fichier", "")
+                if _fichier and os.path.exists(_fichier):
+                    if st.button("📂 Charger cette campagne", key=f"load_camp_{_i}", use_container_width=True):
+                        try:
+                            with open(_fichier, "r", encoding="utf-8") as _cf:
+                                _cdata = json.load(_cf)
+                            from services.google_maps import Prospect as _P
+                            st.session_state.prospects = [_P.from_dict(d) for d in _cdata]
+                            st.session_state["_restored_from"] = f"{run['date']} — {run['profile']}"
+                            st.session_state.running = False
+                            st.session_state.run_done = False
+                            st.toast(f"Campagne du {run['date']} chargée ✅", icon="📂")
+                            st.rerun()
+                        except Exception as _e:
+                            st.error(f"Impossible de charger cette campagne : {_e}")
+                else:
+                    st.caption("⚠️ Fichier de résultats introuvable (effacé lors d'un redéploiement).")
             st.divider()
 
 # ---------------------------------------------------------------------------
