@@ -120,6 +120,35 @@ def _init_state():
 
 _init_state()
 
+
+def _restore_last_results():
+    """
+    Recharge les résultats du dernier run depuis le disque au chargement de la page.
+    → les résultats survivent à un rechargement / une déconnexion (mobile, réseau).
+    Ne s'exécute qu'une fois par session, et jamais pendant un run en cours.
+    """
+    if (st.session_state.get("running")
+            or st.session_state.get("run_done")
+            or st.session_state.get("prospects")
+            or st.session_state.get("_restored")):
+        return
+    st.session_state["_restored"] = True
+    try:
+        import glob
+        files = sorted(glob.glob(os.path.join("output", "prospects_*.json")))
+        if not files:
+            return
+        latest = files[-1]
+        with open(latest, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        from services.google_maps import Prospect as _P
+        st.session_state.prospects = [_P.from_dict(d) for d in data]
+        st.session_state["_restored_from"] = os.path.basename(latest)
+    except Exception:
+        pass
+
+_restore_last_results()
+
 # Démarrage du thread d'envoi différé (idempotent — ne démarre qu'une fois par process)
 from services import scheduler as _scheduler
 _scheduler.ensure_running()
@@ -1194,6 +1223,7 @@ if launch and not st.session_state.running:
     st.session_state.logs = []
     st.session_state.prospects = []
     st.session_state.log_queue = queue.Queue()
+    st.session_state.pop("_restored_from", None)  # nouveau run → on n'affiche plus le bandeau « rechargés »
 
     # Persistance des paramètres (rechargés comme defaults au prochain démarrage)
     _save_settings({
@@ -1339,6 +1369,12 @@ if st.session_state.prospects:
     prospects = st.session_state.prospects
     st.markdown("---")
     st.markdown("## 📊 Résultats")
+    if st.session_state.get("_restored_from") and not st.session_state.get("run_done"):
+        st.info(
+            "🔄 Résultats du **dernier run** rechargés automatiquement "
+            f"(`{st.session_state['_restored_from']}`). Ils restent affichés même après "
+            "un rechargement de page ou une coupure. Relance une prospection pour les remplacer."
+        )
 
     # Métriques
     no_site     = sum(1 for p in prospects if not p.has_website())
