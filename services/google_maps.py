@@ -48,6 +48,13 @@ class Prospect:
         """Retourne True si le prospect a un site web valide."""
         return bool(self.website and self.website.startswith("http"))
 
+    @classmethod
+    def from_dict(cls, d: dict) -> "Prospect":
+        """Reconstruit un Prospect depuis un dict (inverse de to_dict)."""
+        import dataclasses
+        fields = {f.name for f in dataclasses.fields(cls)}
+        return cls(**{k: v for k, v in d.items() if k in fields})
+
     def to_dict(self) -> dict:
         """Sérialise le prospect en dict pour export JSON/CSV."""
         return {
