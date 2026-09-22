@@ -1,0 +1,5 @@
+# Dépendances de développement / tests uniquement — PAS déployées sur Railway
+# (le Procfile installe requirements.txt, pas celui-ci).
+-r requirements.txt
+pytest>=8.0.0
+pyflakes>=3.2.0
