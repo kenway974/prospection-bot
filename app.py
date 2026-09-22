@@ -1857,15 +1857,48 @@ with st.expander("🗂️ Historique des contacts"):
 st.markdown("---")
 with st.expander("📬 Emails programmés"):
     from services import scheduler as _sched_ui
+    # Garde les identifiants en RAM pour que l'envoi différé fonctionne
+    # (ils ne sont jamais écrits sur disque).
+    if gmail_address and gmail_password:
+        _sched_ui.remember_credentials(gmail_address, gmail_password)
     _stats = _sched_ui.get_stats()
-    col_s1, col_s2, col_s3 = st.columns(3)
+    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
     col_s1.metric("En attente", _stats["pending"])
-    col_s2.metric("Envoyés", _stats["sent"])
-    col_s3.metric("Total", _stats["total"])
-    if _stats["pending"] > 0:
-        st.info(f"⏰ {_stats['pending']} email(s) en attente d'envoi — le thread vérifie toutes les 60 secondes.")
-    elif _stats["total"] == 0:
+    col_s2.metric("En retard", _stats["overdue"])
+    col_s3.metric("Envoyés", _stats["sent"])
+    col_s4.metric("Total", _stats["total"])
+
+    if _stats["total"] == 0:
         st.caption("Aucun email programmé pour l'instant.")
+    else:
+        if _stats["overdue"] > 0:
+            st.warning(
+                f"⚠️ {_stats['overdue']} email(s) en retard — leur heure d'envoi est passée "
+                "(l'app était probablement éteinte). Ils partent au prochain cycle, "
+                "ou immédiatement avec le bouton ci-dessous."
+            )
+        if _stats["pending"] > 0:
+            st.info(f"⏰ {_stats['pending']} email(s) en attente — vérification toutes les 60 secondes.")
+        if not _sched_ui.credentials_available():
+            st.error(
+                "🔑 Aucun mot de passe Gmail disponible pour l'envoi différé. "
+                "Renseigne-le dans la barre latérale, **ou mieux** : ajoute `GMAIL_APP_PASSWORD` "
+                "dans les variables Railway pour que les envois programmés survivent aux redémarrages."
+            )
+        if _stats["pending"] > 0 and st.button("📤 Envoyer maintenant les emails dus", use_container_width=True):
+            _r = _sched_ui.process_due()
+            if _r["sent"]:
+                st.success(f"✅ {_r['sent']} email(s) envoyé(s).")
+            if _r["failed"]:
+                st.error(f"❌ {_r['failed']} échec(s) — vérifie tes identifiants Gmail.")
+            if _r["skipped_no_credentials"]:
+                st.warning(f"🔑 {_r['skipped_no_credentials']} email(s) non envoyé(s) : mot de passe Gmail manquant.")
+            st.rerun()
+
+    st.caption(
+        "ℹ️ Les emails programmés ne partent que si l'application tourne. "
+        "Si Railway met le service en veille, ils partiront au prochain réveil (rattrapage automatique)."
+    )
 
 # ---------------------------------------------------------------------------
 # Suivi de réponses
