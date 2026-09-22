@@ -876,6 +876,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                         # évite de paginer inutilement quand l'objectif est petit.
                         _max_raw = max(20, min(target_per_kw * 3, 60))
                         raw_candidates = fetch_raw_candidates(kw, max_raw=_max_raw)
+                        _maps_text_calls += 1
                         _funnel_raw += len(raw_candidates)
                         if not raw_candidates:
                             log_q.put(f"[--] ❌ Aucun résultat Google Maps pour '{kw}'.")
@@ -903,6 +904,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                         # ── Phase 2 : Place Details en parallèle ──
                         with ThreadPoolExecutor(max_workers=min(workers, len(raw_to_build))) as ex:
                             built_list = list(ex.map(partial(build_prospect, keyword=kw), raw_to_build))
+                        _maps_detail_calls += len(raw_to_build)
 
                         skip_api = skip_rating = 0
                         for p in built_list:
@@ -958,6 +960,14 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                 all_qualified.extend(kw_qualified)
 
         all_prospects = all_qualified
+        # Estimation du coût Google Maps du run (tarifs Places API : ~0,032$/Text Search, ~0,017$/Place Details)
+        if _maps_text_calls:
+            _maps_cost = _maps_text_calls * 0.032 + _maps_detail_calls * 0.017
+            log_q.put(
+                f"[--] 🗺️  Google Maps : {_maps_text_calls} Text Search"
+                f" + {_maps_detail_calls} Place Details"
+                f" ≈ ${_maps_cost:.2f} ce run"
+            )
         # Récap funnel : où meurent les prospects, étape par étape
         if candidacy_mode:
             log_q.put(
@@ -1013,8 +1023,9 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             json.dump([p.to_dict() for p in all_prospects], f, ensure_ascii=False, indent=2)
 
         # 6. Export CRM
+        _crm_type = params.get("crm_type", "aucun")
         crm_exporter = get_exporter(
-            params.get("crm_type", "aucun"),
+            _crm_type,
             params.get("crm_key", ""),
             **params.get("crm_extra", {}),
         )
