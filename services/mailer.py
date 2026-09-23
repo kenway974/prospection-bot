@@ -487,6 +487,11 @@ def build_dynamic_email(
         "first_name": "Bonjour,",
     }
     salutation = salutation_map.get(style.salutation, "Bonjour,")
+    # Style « Bonjour [Prénom] » : on utilise le vrai prénom du dirigeant s'il
+    # a été identifié avec certitude (Sirène) ; sinon repli sur « Bonjour, ».
+    _dir = (getattr(prospect, "dirigeant", "") or "").strip()
+    if style.salutation == "first_name" and _dir:
+        salutation = f"Bonjour {_dir.split()[0]},"
 
     # --- Cas spécial : candidature freelance (on ne vend pas un site) ---
     if service_category == "freelance":

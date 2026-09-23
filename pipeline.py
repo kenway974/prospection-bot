@@ -365,6 +365,20 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                 log_q.put("[--] 💡 Assez de candidats mais peu qualifiés : monte « Score max à contacter » (les sites sont trop bons pour le seuil actuel).")
         log_q.put(f"[--] 📋 {len(all_prospects)} {'cible(s) retenue(s)' if candidacy_mode else 'prospect(s) qualifiés'} au total.")
 
+        # Dirigeants (Sirène) — seulement sur les prospects retenus, et AVANT les
+        # emails pour pouvoir s'adresser à la bonne personne.
+        if params.get("find_dirigeants", True) and all_prospects:
+            try:
+                from services.dirigeants import enrich_prospects
+                log_q.put(f"[--] 👤 Recherche des dirigeants (Sirène) pour {len(all_prospects)} prospect(s)…")
+                _n_dir = enrich_prospects(all_prospects, log=log_q.put)
+                log_q.put(
+                    f"[--] 👤 {_n_dir}/{len(all_prospects)} dirigeant(s) identifié(s) "
+                    "(correspondances incertaines volontairement ignorées)."
+                )
+            except Exception as _dir_exc:
+                log_q.put(f"[--] ⚠️  Recherche des dirigeants impossible : {_dir_exc}")
+
         # Emails
         style_dict = params.get("email_style", {})
         _email_style = _EmailStyle(

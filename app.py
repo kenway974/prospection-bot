@@ -456,6 +456,9 @@ if _page == "Ma journée":
                     f"— **{_d['name']}**"
                 )
                 _info = []
+                if _d.get("dirigeant"):
+                    _qual = f", {_d['dirigeant_qualite']}" if _d.get("dirigeant_qualite") else ""
+                    _info.append(f"👤 **{_d['dirigeant']}**{_qual}")
                 if _d.get("email"):
                     _info.append(f"📧 {_d['email']}")
                 if _d.get("phone"):
@@ -570,6 +573,9 @@ if _page == "Pipeline":
                 with st.container(border=True):
                     st.markdown(_label)
                     _meta = []
+                    if _row.get("dirigeant"):
+                        _q = f" ({_row['dirigeant_qualite']})" if _row.get("dirigeant_qualite") else ""
+                        _meta.append(f"👤 {_row['dirigeant']}{_q}")
                     if _row.get("phone"):
                         _meta.append(f"📞 {_row['phone']}")
                     if _row.get("website"):
@@ -876,6 +882,12 @@ if _page == "Prospection":
                  "pas l'agence locale : aucun budget ni décision sur le digital. "
                  "Liste complétable dans Réglages.",
         )
+        find_dirigeants = st.toggle(
+            "👤 Trouver le dirigeant (Sirène)", value=True,
+            help="Nom et fonction du représentant légal (Président, Gérant, DG) via le "
+                 "registre public Sirène, gratuit. Seules les correspondances sûres sont "
+                 "retenues. Les CTO/PO n'y figurent pas : pour eux, c'est LinkedIn.",
+        )
         cache_ttl_days = st.slider(
             "⚡ Cache analyses (jours)", 1, 90, 30,
             help="Durée de validité : un site analysé il y a moins de X jours ne sera pas réanalysé.",
@@ -1024,6 +1036,7 @@ if _page == "Prospection":
             "send_sms": send_sms_toggle,
             "cache_ttl_days": cache_ttl_days,
             "exclude_franchises": exclude_franchises,
+            "find_dirigeants": find_dirigeants,
             "user_franchises": crm_store.get_user_franchises(),
             "email_send_mode": _email_mode,
             "sched_date": _sched_date.isoformat() if _sched_date else None,
@@ -1177,6 +1190,9 @@ if _page == "Prospection":
             with st.expander(header):
                 c1, c2 = st.columns([1, 1])
                 with c1:
+                    if getattr(p, "dirigeant", ""):
+                        _pq = f" — {p.dirigeant_qualite}" if p.dirigeant_qualite else ""
+                        st.markdown(f"**👤 Dirigeant :** {p.dirigeant}{_pq}")
                     st.markdown(f"**📍 Adresse :** {p.address}")
                     # Téléphone avec badge mobile/fixe
                     if p.phone:
@@ -1240,13 +1256,16 @@ if _page == "Prospection":
 
         with col_e2:
             csv_buffer = io.StringIO()
-            fieldnames = ["name", "keyword", "address", "phone", "email", "website",
-                          "cms", "rating", "score", "issues_count", "issues_summary", "maps_url"]
+            fieldnames = ["name", "dirigeant", "dirigeant_qualite", "keyword", "address", "phone",
+                          "email", "website", "cms", "rating", "score", "issues_count",
+                          "issues_summary", "maps_url"]
             writer = csv.DictWriter(csv_buffer, fieldnames=fieldnames)
             writer.writeheader()
             for p in filtered:
                 writer.writerow({
                     "name": p.name,
+                    "dirigeant": getattr(p, "dirigeant", "") or "",
+                    "dirigeant_qualite": getattr(p, "dirigeant_qualite", "") or "",
                     "keyword": p.keyword,
                     "address": p.address,
                     "phone": p.phone or "",
