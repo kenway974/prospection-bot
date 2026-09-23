@@ -153,6 +153,14 @@ _restore_last_results()
 from services import scheduler as _scheduler
 _scheduler.ensure_running()
 
+# Base CRM (SQLite) : création du schéma + migration des anciens JSON (idempotent)
+import crm_store
+try:
+    _crm_migration = crm_store.ensure_ready()
+except Exception as _crm_init_exc:  # la base ne doit jamais empêcher l'app de démarrer
+    _crm_migration = {}
+    print(f"[CRM] init impossible : {_crm_init_exc}")
+
 # Démarrage du suivi de réponses IMAP (démarré plus tard après lecture des credentials)
 
 # Chargement des paramètres sauvegardés (fallback sur env vars, puis "")
@@ -396,6 +404,110 @@ from target_segments import (
 st.markdown("# 🎯 Prospection B2B Automatisée")
 st.markdown("Trouve des prospects locaux, analyse leur besoin et génère des cold emails/SMS en un clic.")
 st.markdown("---")
+
+# ---------------------------------------------------------------------------
+# 📋 Pipeline CRM — tous les prospects suivis, par statut
+# ---------------------------------------------------------------------------
+_pipe_counts = {}
+try:
+    _pipe_counts = crm_store.status_counts()
+except Exception:
+    pass
+_pipe_total = sum(_pipe_counts.values())
+
+with st.expander(f"📋 Pipeline — {_pipe_total} prospect(s) suivi(s)", expanded=bool(_pipe_total)):
+    if not _pipe_total:
+        st.info(
+            "Ton pipeline est vide. Lance une prospection : les prospects trouvés "
+            "y seront ajoutés automatiquement et tu pourras suivre chacun d'eux "
+            "(contacté, intéressé, RDV, client…)."
+        )
+    else:
+        # Compteurs par statut
+        _active = [s for s in crm_store.STATUS_ORDER if _pipe_counts.get(s)]
+        if _active:
+            _cols = st.columns(len(_active))
+            for _c, _s in zip(_cols, _active):
+                _c.metric(crm_store.STATUS_LABELS[_s], _pipe_counts[_s])
+
+        st.markdown("---")
+
+        # Filtres
+        _f1, _f2, _f3 = st.columns([2, 2, 3])
+        with _f1:
+            _filter_status = st.selectbox(
+                "Statut",
+                options=["(tous)"] + crm_store.STATUS_ORDER,
+                format_func=lambda s: "Tous les statuts" if s == "(tous)" else crm_store.STATUS_LABELS[s],
+                key="pipe_status",
+            )
+        with _f2:
+            _filter_email = st.selectbox(
+                "Email",
+                options=["(tous)", "avec", "sans"],
+                format_func=lambda v: {"(tous)": "Avec ou sans email",
+                                       "avec": "📧 Avec email seulement",
+                                       "sans": "Sans email"}[v],
+                key="pipe_email",
+            )
+        with _f3:
+            _filter_search = st.text_input("Rechercher", placeholder="Nom, email, site…", key="pipe_search")
+
+        _rows = crm_store.list_prospects(
+            status=None if _filter_status == "(tous)" else _filter_status,
+            has_email={"(tous)": None, "avec": True, "sans": False}[_filter_email],
+            search=_filter_search.strip(),
+        )
+        st.caption(f"{len(_rows)} prospect(s) affiché(s)")
+
+        for _row in _rows:
+            _pid = _row["place_id"]
+            _label = f"{crm_store.STATUS_LABELS.get(_row['status'], _row['status'])} · **{_row['name']}**"
+            if _row.get("email"):
+                _label += f" · 📧 {_row['email']}"
+            with st.container(border=True):
+                st.markdown(_label)
+                _meta = []
+                if _row.get("phone"):
+                    _meta.append(f"📞 {_row['phone']}")
+                if _row.get("website"):
+                    _meta.append(f"[🌐 site]({_row['website']})")
+                if _row.get("score") is not None:
+                    _meta.append(f"score {_row['score']}/100")
+                if _row.get("last_contact_date"):
+                    _meta.append(f"dernier contact {_row['last_contact_date']}")
+                if _row.get("followup_step"):
+                    _meta.append(f"{_row['followup_step']} relance(s)")
+                if _meta:
+                    st.caption(" · ".join(_meta))
+
+                _a1, _a2 = st.columns([2, 3])
+                with _a1:
+                    _new_status = st.selectbox(
+                        "Statut", options=crm_store.STATUS_ORDER,
+                        index=crm_store.STATUS_ORDER.index(_row["status"])
+                        if _row["status"] in crm_store.STATUS_ORDER else 0,
+                        format_func=lambda s: crm_store.STATUS_LABELS[s],
+                        key=f"st_{_pid}", label_visibility="collapsed",
+                    )
+                    if _new_status != _row["status"]:
+                        crm_store.set_status(_pid, _new_status)
+                        st.rerun()
+                with _a2:
+                    _new_notes = st.text_input(
+                        "Notes", value=_row.get("notes") or "",
+                        placeholder="Note (rappeler en janvier, budget serré…)",
+                        key=f"nt_{_pid}", label_visibility="collapsed",
+                    )
+                    if _new_notes != (_row.get("notes") or ""):
+                        crm_store.set_notes(_pid, _new_notes)
+                        st.toast("Note enregistrée ✅")
+
+                _events = crm_store.get_events(_pid, limit=5)
+                if _events:
+                    with st.expander("🕮 Historique", expanded=False):
+                        for _e in _events:
+                            st.caption(f"{_e['at'][:16].replace('T', ' ')} — **{_e['kind']}** {_e['detail']}")
 
 # ---------------------------------------------------------------------------
 # Sélection service × cible
@@ -778,6 +890,17 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                 "on récupère toutes les cibles + leur contact."
             )
         already_contacted = load_contacted_ids()
+        # La base CRM fait aussi foi : elle exclut en plus les clients, les
+        # « pas intéressé » et la blacklist (pas seulement les déjà-contactés).
+        try:
+            import crm_store as _crm
+            _crm_excluded = _crm.contacted_place_ids()
+            _extra = len(_crm_excluded - already_contacted)
+            already_contacted = already_contacted | _crm_excluded
+            if _extra:
+                log_q.put(f"[--] ⛔ {_extra} prospect(s) exclu(s) via le CRM (client, pas intéressé ou blacklist).")
+        except Exception:
+            pass
         if already_contacted:
             log_q.put(
                 f"[--] 📓 {len(already_contacted)} établissement(s) déjà contacté(s) "
@@ -1211,6 +1334,39 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             sources=_source_labels,
             target_sector=params.get("target_sector", ""),
         )
+
+        # 11. Base CRM — campagne + prospects (statuts et notes existants préservés)
+        try:
+            import crm_store as _crm
+            _cid = _crm.add_campaign(
+                profile=params.get("profile_name", "Custom"),
+                location=params["location"],
+                keywords=params["keywords"],
+                sources=_source_labels,
+                target_sector=params.get("target_sector", ""),
+                total_prospects=len(all_prospects),
+                sans_site=sum(1 for p in all_prospects if not p.has_website()),
+                emails_trouves=emails_found,
+                mobiles_trouves=mobiles_found,
+                emails_envoyes=_emails_sent,
+                sms_envoyes=_sms_sent,
+                crm_synchronises=_crm_synced,
+                offer_types=_offer_types,
+                fichier=json_path,
+            )
+            _new = _crm.upsert_prospects(
+                all_prospects, campaign_id=_cid,
+                sector=params.get("target_sector", ""),
+                service_id=params.get("service_id", ""),
+            )
+            if _something_sent:
+                _crm.mark_contacted(
+                    [p.place_id for p in all_prospects],
+                    channel="email" if (_emails_sent or _emails_scheduled) else "sms",
+                )
+            log_q.put(f"[--] 🗃️  CRM : {_new} nouveau(x) prospect(s) ajouté(s) au pipeline.")
+        except Exception as _crmdb_exc:
+            log_q.put(f"[--] ⚠️  Enregistrement CRM impossible : {_crmdb_exc}")
 
     except Exception as exc:
         log_q.put(f"[--] ❌ Erreur critique : {exc}")
