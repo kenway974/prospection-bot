@@ -177,6 +177,19 @@ def _get(key: str, env_var: str = "", default: str = "") -> str:
 # ---------------------------------------------------------------------------
 with st.sidebar:
     st.markdown("## 🎯 Prospection B2B")
+    _page = st.radio(
+        "Navigation",
+        options=["Prospection", "Pipeline", "Relances", "Statistiques", "Réglages"],
+        format_func=lambda p: {
+            "Prospection":  "🔍  Prospection",
+            "Pipeline":     "📋  Pipeline",
+            "Relances":     "🔄  Relances",
+            "Statistiques": "📊  Statistiques",
+            "Réglages":     "⚙️  Réglages",
+        }[p],
+        label_visibility="collapsed",
+        key="nav_page",
+    )
     st.markdown("---")
 
     st.markdown("### 📡 Sources de prospection")
@@ -405,396 +418,398 @@ st.markdown("# 🎯 Prospection B2B Automatisée")
 st.markdown("Trouve des prospects locaux, analyse leur besoin et génère des cold emails/SMS en un clic.")
 st.markdown("---")
 
-# ---------------------------------------------------------------------------
-# 📋 Pipeline CRM — tous les prospects suivis, par statut
-# ---------------------------------------------------------------------------
-_pipe_counts = {}
-try:
-    _pipe_counts = crm_store.status_counts()
-except Exception:
-    pass
-_pipe_total = sum(_pipe_counts.values())
+if _page == "Pipeline":
+    # ---------------------------------------------------------------------------
+    # 📋 Pipeline CRM — tous les prospects suivis, par statut
+    # ---------------------------------------------------------------------------
+    _pipe_counts = {}
+    try:
+        _pipe_counts = crm_store.status_counts()
+    except Exception:
+        pass
+    _pipe_total = sum(_pipe_counts.values())
 
-with st.expander(f"📋 Pipeline — {_pipe_total} prospect(s) suivi(s)", expanded=bool(_pipe_total)):
-    if not _pipe_total:
-        st.info(
-            "Ton pipeline est vide. Lance une prospection : les prospects trouvés "
-            "y seront ajoutés automatiquement et tu pourras suivre chacun d'eux "
-            "(contacté, intéressé, RDV, client…)."
-        )
-    else:
-        # Compteurs par statut
-        _active = [s for s in crm_store.STATUS_ORDER if _pipe_counts.get(s)]
-        if _active:
-            _cols = st.columns(len(_active))
-            for _c, _s in zip(_cols, _active):
-                _c.metric(crm_store.STATUS_LABELS[_s], _pipe_counts[_s])
-
-        st.markdown("---")
-
-        # Filtres
-        _f1, _f2, _f3 = st.columns([2, 2, 3])
-        with _f1:
-            _filter_status = st.selectbox(
-                "Statut",
-                options=["(tous)"] + crm_store.STATUS_ORDER,
-                format_func=lambda s: "Tous les statuts" if s == "(tous)" else crm_store.STATUS_LABELS[s],
-                key="pipe_status",
+    with st.expander(f"📋 Pipeline — {_pipe_total} prospect(s) suivi(s)", expanded=bool(_pipe_total)):
+        if not _pipe_total:
+            st.info(
+                "Ton pipeline est vide. Lance une prospection : les prospects trouvés "
+                "y seront ajoutés automatiquement et tu pourras suivre chacun d'eux "
+                "(contacté, intéressé, RDV, client…)."
             )
-        with _f2:
-            _filter_email = st.selectbox(
-                "Email",
-                options=["(tous)", "avec", "sans"],
-                format_func=lambda v: {"(tous)": "Avec ou sans email",
-                                       "avec": "📧 Avec email seulement",
-                                       "sans": "Sans email"}[v],
-                key="pipe_email",
-            )
-        with _f3:
-            _filter_search = st.text_input("Rechercher", placeholder="Nom, email, site…", key="pipe_search")
-
-        _rows = crm_store.list_prospects(
-            status=None if _filter_status == "(tous)" else _filter_status,
-            has_email={"(tous)": None, "avec": True, "sans": False}[_filter_email],
-            search=_filter_search.strip(),
-        )
-        st.caption(f"{len(_rows)} prospect(s) affiché(s)")
-
-        for _row in _rows:
-            _pid = _row["place_id"]
-            _label = f"{crm_store.STATUS_LABELS.get(_row['status'], _row['status'])} · **{_row['name']}**"
-            if _row.get("email"):
-                _label += f" · 📧 {_row['email']}"
-            with st.container(border=True):
-                st.markdown(_label)
-                _meta = []
-                if _row.get("phone"):
-                    _meta.append(f"📞 {_row['phone']}")
-                if _row.get("website"):
-                    _meta.append(f"[🌐 site]({_row['website']})")
-                if _row.get("score") is not None:
-                    _meta.append(f"score {_row['score']}/100")
-                if _row.get("last_contact_date"):
-                    _meta.append(f"dernier contact {_row['last_contact_date']}")
-                if _row.get("followup_step"):
-                    _meta.append(f"{_row['followup_step']} relance(s)")
-                if _meta:
-                    st.caption(" · ".join(_meta))
-
-                _a1, _a2 = st.columns([2, 3])
-                with _a1:
-                    _new_status = st.selectbox(
-                        "Statut", options=crm_store.STATUS_ORDER,
-                        index=crm_store.STATUS_ORDER.index(_row["status"])
-                        if _row["status"] in crm_store.STATUS_ORDER else 0,
-                        format_func=lambda s: crm_store.STATUS_LABELS[s],
-                        key=f"st_{_pid}", label_visibility="collapsed",
-                    )
-                    if _new_status != _row["status"]:
-                        crm_store.set_status(_pid, _new_status)
-                        st.rerun()
-                with _a2:
-                    _new_notes = st.text_input(
-                        "Notes", value=_row.get("notes") or "",
-                        placeholder="Note (rappeler en janvier, budget serré…)",
-                        key=f"nt_{_pid}", label_visibility="collapsed",
-                    )
-                    if _new_notes != (_row.get("notes") or ""):
-                        crm_store.set_notes(_pid, _new_notes)
-                        st.toast("Note enregistrée ✅")
-
-                _events = crm_store.get_events(_pid, limit=5)
-                if _events:
-                    with st.expander("🕮 Historique", expanded=False):
-                        for _e in _events:
-                            st.caption(f"{_e['at'][:16].replace('T', ' ')} — **{_e['kind']}** {_e['detail']}")
-
-# ---------------------------------------------------------------------------
-# Sélection service × cible
-# ---------------------------------------------------------------------------
-st.markdown("### 🧩 Votre activité")
-
-# Sélecteur catégorie de service (radio horizontal)
-_svc_cats = list(SERVICE_CATEGORY_LABELS.keys())
-_saved_svc_cat = _get("service_category", _svc_cats[0])
-_svc_cat_idx = _svc_cats.index(_saved_svc_cat) if _saved_svc_cat in _svc_cats else 0
-selected_svc_cat = st.radio(
-    "Catégorie",
-    options=_svc_cats,
-    format_func=lambda c: SERVICE_CATEGORY_LABELS[c],
-    index=_svc_cat_idx,
-    horizontal=True,
-    label_visibility="collapsed",
-    key="svc_cat_radio",
-)
-
-# Sélecteur service (filtré par catégorie)
-_svcs_in_cat = [s for s in SERVICE_PROFILES if s.category == selected_svc_cat]
-_svc_ids = [s.id for s in _svcs_in_cat]
-_svc_by_id = {s.id: s for s in SERVICE_PROFILES}
-_saved_svc = _get("service_id", _svc_ids[0] if _svc_ids else "web_refonte")
-_svc_idx = _svc_ids.index(_saved_svc) if _saved_svc in _svc_ids else 0
-selected_service_id = st.selectbox(
-    "Service",
-    options=_svc_ids,
-    format_func=lambda sid: f"{_svc_by_id[sid].emoji} {_svc_by_id[sid].name}",
-    index=_svc_idx,
-    label_visibility="collapsed",
-    key="service_selectbox",
-)
-selected_service = _svc_by_id[selected_service_id]
-st.caption(f"*{selected_service.description}*")
-
-st.markdown("---")
-st.markdown("### 🎯 Votre cible")
-
-# Sélecteur secteur cible (radio horizontal)
-_tgt_sectors = list(TARGET_SECTOR_LABELS.keys())
-_saved_tgt_sector = _get("target_sector", _tgt_sectors[0])
-_tgt_sector_idx = _tgt_sectors.index(_saved_tgt_sector) if _saved_tgt_sector in _tgt_sectors else 0
-selected_tgt_sector = st.radio(
-    "Secteur",
-    options=_tgt_sectors,
-    format_func=lambda s: TARGET_SECTOR_LABELS[s],
-    index=_tgt_sector_idx,
-    horizontal=True,
-    label_visibility="collapsed",
-    key="tgt_sector_radio",
-)
-
-# Sélecteur cible (filtré par secteur)
-_tgts_in_sector = [t for t in TARGET_SEGMENTS if t.sector == selected_tgt_sector]
-_tgt_ids = [t.id for t in _tgts_in_sector]
-_tgt_by_id = {t.id: t for t in TARGET_SEGMENTS}
-_saved_tgt = _get("target_id", _tgt_ids[0] if _tgt_ids else "restaurants")
-_tgt_idx = _tgt_ids.index(_saved_tgt) if _saved_tgt in _tgt_ids else 0
-selected_target_id = st.selectbox(
-    "Cible",
-    options=_tgt_ids,
-    format_func=lambda tid: f"{_tgt_by_id[tid].emoji} {_tgt_by_id[tid].name}  ·  {SIZE_LABELS[_tgt_by_id[tid].target_size]}",
-    index=_tgt_idx,
-    label_visibility="collapsed",
-    key="target_selectbox",
-)
-selected_target = _tgt_by_id[selected_target_id]
-st.caption(f"*{selected_target.description}*")
-
-st.markdown("---")
-
-# ---------------------------------------------------------------------------
-# Critères de recherche — pré-remplis depuis le profil
-# ---------------------------------------------------------------------------
-st.markdown("### 📍 Configurez votre campagne")
-
-col1, col2 = st.columns([2, 1])
-
-with col1:
-    location = st.text_input(
-        "📌 Ville / Zone géographique",
-        value=selected_target.location_default or os.getenv("SEARCH_LOCATION", "Lyon, France"),
-        placeholder="Paris, France",
-    )
-    keywords_raw = st.text_area(
-        "🔑 Mots-clés cibles (un par ligne)",
-        value="\n".join(selected_target.keywords),
-        height=150,
-        placeholder="restaurant\nboulangerie\ncoiffeur",
-    )
-    keywords = [k.strip() for k in keywords_raw.splitlines() if k.strip()]
-
-    from services.mailer import EmailStyle, EMAIL_STYLE_LABELS, build_dynamic_email
-    from services.google_maps import Prospect as _PreviewProspect
-
-    with st.expander("✉️ Style des emails", expanded=False):
-        _email_intonation = st.radio(
-            "Intonation",
-            options=list(EMAIL_STYLE_LABELS["intonation"].keys()),
-            format_func=lambda k: EMAIL_STYLE_LABELS["intonation"][k],
-            index=list(EMAIL_STYLE_LABELS["intonation"].keys()).index(
-                _get("email_intonation") if _get("email_intonation") in EMAIL_STYLE_LABELS["intonation"] else "professional"
-            ),
-            horizontal=True,
-            key="email_intonation",
-        )
-        _email_length = st.radio(
-            "Longueur",
-            options=list(EMAIL_STYLE_LABELS["length"].keys()),
-            format_func=lambda k: EMAIL_STYLE_LABELS["length"][k],
-            index=list(EMAIL_STYLE_LABELS["length"].keys()).index(
-                _get("email_length") if _get("email_length") in EMAIL_STYLE_LABELS["length"] else "medium"
-            ),
-            horizontal=True,
-            key="email_length",
-        )
-        _email_salutation = st.selectbox(
-            "Formule d'ouverture",
-            options=list(EMAIL_STYLE_LABELS["salutation"].keys()),
-            format_func=lambda k: EMAIL_STYLE_LABELS["salutation"][k],
-            index=list(EMAIL_STYLE_LABELS["salutation"].keys()).index(
-                _get("email_salutation") if _get("email_salutation") in EMAIL_STYLE_LABELS["salutation"] else "neutral"
-            ),
-            key="email_salutation",
-        )
-        _email_cta = st.selectbox(
-            "Appel à l'action",
-            options=list(EMAIL_STYLE_LABELS["cta"].keys()),
-            format_func=lambda k: EMAIL_STYLE_LABELS["cta"][k],
-            index=list(EMAIL_STYLE_LABELS["cta"].keys()).index(
-                _get("email_cta") if _get("email_cta") in EMAIL_STYLE_LABELS["cta"] else "audit"
-            ),
-            key="email_cta",
-        )
-
-        # Prévisualisation avec un faux prospect
-        _preview_style = EmailStyle(
-            intonation=_email_intonation,
-            length=_email_length,
-            salutation=_email_salutation,
-            cta=_email_cta,
-        )
-        _preview_issue_map = {
-            "web_digital":  (["https", "lead_form"],       "site sans HTTPS + pas de formulaire"),
-            "freelance":    ([],                            "candidature freelance (renfort dev)"),
-            "creatif":      (["no_gallery", "no_video"],   "pas de galerie + pas de vidéo"),
-            "conseil_b2b":  (["tracking", "no_blog"],      "pas de tracking + pas de blog"),
-            "sante":        (["no_service_mention"],        "service non mentionné sur le site"),
-            "terrain":      (["no_service_mention"],        "service non mentionné sur le site"),
-            "special":      (["no_service_mention"],        "service non mentionné sur le site"),
-        }
-        _pkeys, _plabel = _preview_issue_map.get(selected_svc_cat, (["https", "lead_form"], "site sans HTTPS"))
-        st.markdown(f"**Aperçu ({_plabel}) :**")
-        _preview_prospect = _PreviewProspect(
-            place_id="preview",
-            name="Votre Prospect",
-            address="",
-            phone=None,
-            website="http://exemple.com",
-            rating=None,
-            user_ratings_total=0,
-            keyword="",
-            maps_url="",
-        )
-        _preview_prospect.issue_keys = _pkeys
-        _preview_prospect.score = 40
-        _preview_text = build_dynamic_email(
-            _preview_prospect,
-            _preview_style,
-            your_name=_get("your_name", "YOUR_NAME") or "Votre Nom",
-            your_title=_get("your_title", "YOUR_TITLE") or "",
-            your_offer=selected_service.your_offer or "vous aider à améliorer votre présence en ligne",
-            service_id=selected_service_id,
-            service_category=selected_svc_cat,
-        )
-        st.code(_preview_text, language=None)
-
-    st.markdown("**📱 Accroche SMS** *(max 160 caractères)*")
-    sms_hook = st.text_input(
-        "Accroche SMS",
-        value=selected_service.sms_hook,
-        label_visibility="collapsed",
-    )
-    if len(sms_hook) > 160:
-        st.warning(f"⚠️ SMS trop long : {len(sms_hook)}/160 caractères")
-
-    # Variables de compatibilité (toujours référencées ailleurs dans app.py)
-    email_hook = selected_service.email_hook
-
-with col2:
-    st.markdown("**⚙️ Paramètres**")
-    your_offer = st.text_area(
-        "🎁 Mon offre",
-        value=selected_service.your_offer,
-        height=80,
-        help="Décrivez votre offre en 1-2 phrases",
-    )
-    max_results = st.slider("Prospects par mot-clé", 1, 20, 5)
-    min_rating = st.slider(
-        "Note Google minimum ⭐",
-        min_value=1.0, max_value=5.0, value=3.0, step=0.5,
-        help="Les établissements en dessous de cette note sont ignorés (probablement en difficulté)",
-    )
-    _score_dir = selected_service.score_direction
-    _score_default = (selected_target.score_threshold_override or selected_service.score_threshold_default)
-    if selected_svc_cat == "freelance":
-        # Mode candidature : on n'audite pas les sites, toutes les cibles sont retenues.
-        st.info(
-            "🧑‍💻 **Mode candidature freelance** — on n'audite **pas** le site des cibles. "
-            "Toutes les entreprises trouvées sont retenues, et le bot génère un email de "
-            "candidature (renfort dev). Le filtre de score ne s'applique pas ici."
-        )
-        score_threshold = 100
-    elif _score_dir == "desc":
-        score_threshold = st.slider(
-            "Score min requis",
-            min_value=0, max_value=100, value=_score_default,
-            help="Score élevé = bonne opportunité selon ce service.",
-        )
-    else:
-        score_threshold = st.slider(
-            "Score max à contacter",
-            min_value=0, max_value=100, value=_score_default,
-            help=(
-                "Le score = qualité du site (100 = parfait, 0 = pas de site). "
-                "Plus le score est BAS, plus le site a de défauts à corriger = meilleur prospect pour toi. "
-                "On ne contacte que les sites au score ≤ cette valeur. "
-                "85 = large (au moins un défaut réel) ; 60 = strict (sites vraiment mauvais)."
-            ),
-        )
-    radius = st.select_slider(
-        "Rayon de recherche",
-        options=[1000, 2000, 5000, 10000, 20000, 50000],
-        value=10000,
-        format_func=lambda x: f"{x//1000} km",
-    )
-    send_emails = st.toggle("📧 Envoyer les emails auto", value=False)
-    if send_emails:
-        st.warning("⚠️ Seuls les prospects avec un email trouvé recevront un mail.")
-        _email_mode = st.radio(
-            "Mode d'envoi", ["📤 Immédiat", "⏰ Programmé"],
-            horizontal=True, label_visibility="collapsed",
-        )
-        if _email_mode == "⏰ Programmé":
-            from datetime import date as _dt_date, timedelta as _dt_td, time as _dt_time
-            _sched_date = st.date_input("Date d'envoi", value=_dt_date.today() + _dt_td(days=1), min_value=_dt_date.today())
-            _sched_time = st.time_input("Heure d'envoi", value=_dt_time(9, 0))
         else:
+            # Compteurs par statut
+            _active = [s for s in crm_store.STATUS_ORDER if _pipe_counts.get(s)]
+            if _active:
+                _cols = st.columns(len(_active))
+                for _c, _s in zip(_cols, _active):
+                    _c.metric(crm_store.STATUS_LABELS[_s], _pipe_counts[_s])
+
+            st.markdown("---")
+
+            # Filtres
+            _f1, _f2, _f3 = st.columns([2, 2, 3])
+            with _f1:
+                _filter_status = st.selectbox(
+                    "Statut",
+                    options=["(tous)"] + crm_store.STATUS_ORDER,
+                    format_func=lambda s: "Tous les statuts" if s == "(tous)" else crm_store.STATUS_LABELS[s],
+                    key="pipe_status",
+                )
+            with _f2:
+                _filter_email = st.selectbox(
+                    "Email",
+                    options=["(tous)", "avec", "sans"],
+                    format_func=lambda v: {"(tous)": "Avec ou sans email",
+                                           "avec": "📧 Avec email seulement",
+                                           "sans": "Sans email"}[v],
+                    key="pipe_email",
+                )
+            with _f3:
+                _filter_search = st.text_input("Rechercher", placeholder="Nom, email, site…", key="pipe_search")
+
+            _rows = crm_store.list_prospects(
+                status=None if _filter_status == "(tous)" else _filter_status,
+                has_email={"(tous)": None, "avec": True, "sans": False}[_filter_email],
+                search=_filter_search.strip(),
+            )
+            st.caption(f"{len(_rows)} prospect(s) affiché(s)")
+
+            for _row in _rows:
+                _pid = _row["place_id"]
+                _label = f"{crm_store.STATUS_LABELS.get(_row['status'], _row['status'])} · **{_row['name']}**"
+                if _row.get("email"):
+                    _label += f" · 📧 {_row['email']}"
+                with st.container(border=True):
+                    st.markdown(_label)
+                    _meta = []
+                    if _row.get("phone"):
+                        _meta.append(f"📞 {_row['phone']}")
+                    if _row.get("website"):
+                        _meta.append(f"[🌐 site]({_row['website']})")
+                    if _row.get("score") is not None:
+                        _meta.append(f"score {_row['score']}/100")
+                    if _row.get("last_contact_date"):
+                        _meta.append(f"dernier contact {_row['last_contact_date']}")
+                    if _row.get("followup_step"):
+                        _meta.append(f"{_row['followup_step']} relance(s)")
+                    if _meta:
+                        st.caption(" · ".join(_meta))
+
+                    _a1, _a2 = st.columns([2, 3])
+                    with _a1:
+                        _new_status = st.selectbox(
+                            "Statut", options=crm_store.STATUS_ORDER,
+                            index=crm_store.STATUS_ORDER.index(_row["status"])
+                            if _row["status"] in crm_store.STATUS_ORDER else 0,
+                            format_func=lambda s: crm_store.STATUS_LABELS[s],
+                            key=f"st_{_pid}", label_visibility="collapsed",
+                        )
+                        if _new_status != _row["status"]:
+                            crm_store.set_status(_pid, _new_status)
+                            st.rerun()
+                    with _a2:
+                        _new_notes = st.text_input(
+                            "Notes", value=_row.get("notes") or "",
+                            placeholder="Note (rappeler en janvier, budget serré…)",
+                            key=f"nt_{_pid}", label_visibility="collapsed",
+                        )
+                        if _new_notes != (_row.get("notes") or ""):
+                            crm_store.set_notes(_pid, _new_notes)
+                            st.toast("Note enregistrée ✅")
+
+                    _events = crm_store.get_events(_pid, limit=5)
+                    if _events:
+                        with st.expander("🕮 Historique", expanded=False):
+                            for _e in _events:
+                                st.caption(f"{_e['at'][:16].replace('T', ' ')} — **{_e['kind']}** {_e['detail']}")
+
+if _page == "Prospection":
+    # ---------------------------------------------------------------------------
+    # Sélection service × cible
+    # ---------------------------------------------------------------------------
+    st.markdown("### 🧩 Votre activité")
+
+    # Sélecteur catégorie de service (radio horizontal)
+    _svc_cats = list(SERVICE_CATEGORY_LABELS.keys())
+    _saved_svc_cat = _get("service_category", _svc_cats[0])
+    _svc_cat_idx = _svc_cats.index(_saved_svc_cat) if _saved_svc_cat in _svc_cats else 0
+    selected_svc_cat = st.radio(
+        "Catégorie",
+        options=_svc_cats,
+        format_func=lambda c: SERVICE_CATEGORY_LABELS[c],
+        index=_svc_cat_idx,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="svc_cat_radio",
+    )
+
+    # Sélecteur service (filtré par catégorie)
+    _svcs_in_cat = [s for s in SERVICE_PROFILES if s.category == selected_svc_cat]
+    _svc_ids = [s.id for s in _svcs_in_cat]
+    _svc_by_id = {s.id: s for s in SERVICE_PROFILES}
+    _saved_svc = _get("service_id", _svc_ids[0] if _svc_ids else "web_refonte")
+    _svc_idx = _svc_ids.index(_saved_svc) if _saved_svc in _svc_ids else 0
+    selected_service_id = st.selectbox(
+        "Service",
+        options=_svc_ids,
+        format_func=lambda sid: f"{_svc_by_id[sid].emoji} {_svc_by_id[sid].name}",
+        index=_svc_idx,
+        label_visibility="collapsed",
+        key="service_selectbox",
+    )
+    selected_service = _svc_by_id[selected_service_id]
+    st.caption(f"*{selected_service.description}*")
+
+    st.markdown("---")
+    st.markdown("### 🎯 Votre cible")
+
+    # Sélecteur secteur cible (radio horizontal)
+    _tgt_sectors = list(TARGET_SECTOR_LABELS.keys())
+    _saved_tgt_sector = _get("target_sector", _tgt_sectors[0])
+    _tgt_sector_idx = _tgt_sectors.index(_saved_tgt_sector) if _saved_tgt_sector in _tgt_sectors else 0
+    selected_tgt_sector = st.radio(
+        "Secteur",
+        options=_tgt_sectors,
+        format_func=lambda s: TARGET_SECTOR_LABELS[s],
+        index=_tgt_sector_idx,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="tgt_sector_radio",
+    )
+
+    # Sélecteur cible (filtré par secteur)
+    _tgts_in_sector = [t for t in TARGET_SEGMENTS if t.sector == selected_tgt_sector]
+    _tgt_ids = [t.id for t in _tgts_in_sector]
+    _tgt_by_id = {t.id: t for t in TARGET_SEGMENTS}
+    _saved_tgt = _get("target_id", _tgt_ids[0] if _tgt_ids else "restaurants")
+    _tgt_idx = _tgt_ids.index(_saved_tgt) if _saved_tgt in _tgt_ids else 0
+    selected_target_id = st.selectbox(
+        "Cible",
+        options=_tgt_ids,
+        format_func=lambda tid: f"{_tgt_by_id[tid].emoji} {_tgt_by_id[tid].name}  ·  {SIZE_LABELS[_tgt_by_id[tid].target_size]}",
+        index=_tgt_idx,
+        label_visibility="collapsed",
+        key="target_selectbox",
+    )
+    selected_target = _tgt_by_id[selected_target_id]
+    st.caption(f"*{selected_target.description}*")
+
+    st.markdown("---")
+
+    # ---------------------------------------------------------------------------
+    # Critères de recherche — pré-remplis depuis le profil
+    # ---------------------------------------------------------------------------
+    st.markdown("### 📍 Configurez votre campagne")
+
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        location = st.text_input(
+            "📌 Ville / Zone géographique",
+            value=selected_target.location_default or os.getenv("SEARCH_LOCATION", "Lyon, France"),
+            placeholder="Paris, France",
+        )
+        keywords_raw = st.text_area(
+            "🔑 Mots-clés cibles (un par ligne)",
+            value="\n".join(selected_target.keywords),
+            height=150,
+            placeholder="restaurant\nboulangerie\ncoiffeur",
+        )
+        keywords = [k.strip() for k in keywords_raw.splitlines() if k.strip()]
+
+        from services.mailer import EmailStyle, EMAIL_STYLE_LABELS, build_dynamic_email
+        from services.google_maps import Prospect as _PreviewProspect
+
+        with st.expander("✉️ Style des emails", expanded=False):
+            _email_intonation = st.radio(
+                "Intonation",
+                options=list(EMAIL_STYLE_LABELS["intonation"].keys()),
+                format_func=lambda k: EMAIL_STYLE_LABELS["intonation"][k],
+                index=list(EMAIL_STYLE_LABELS["intonation"].keys()).index(
+                    _get("email_intonation") if _get("email_intonation") in EMAIL_STYLE_LABELS["intonation"] else "professional"
+                ),
+                horizontal=True,
+                key="email_intonation",
+            )
+            _email_length = st.radio(
+                "Longueur",
+                options=list(EMAIL_STYLE_LABELS["length"].keys()),
+                format_func=lambda k: EMAIL_STYLE_LABELS["length"][k],
+                index=list(EMAIL_STYLE_LABELS["length"].keys()).index(
+                    _get("email_length") if _get("email_length") in EMAIL_STYLE_LABELS["length"] else "medium"
+                ),
+                horizontal=True,
+                key="email_length",
+            )
+            _email_salutation = st.selectbox(
+                "Formule d'ouverture",
+                options=list(EMAIL_STYLE_LABELS["salutation"].keys()),
+                format_func=lambda k: EMAIL_STYLE_LABELS["salutation"][k],
+                index=list(EMAIL_STYLE_LABELS["salutation"].keys()).index(
+                    _get("email_salutation") if _get("email_salutation") in EMAIL_STYLE_LABELS["salutation"] else "neutral"
+                ),
+                key="email_salutation",
+            )
+            _email_cta = st.selectbox(
+                "Appel à l'action",
+                options=list(EMAIL_STYLE_LABELS["cta"].keys()),
+                format_func=lambda k: EMAIL_STYLE_LABELS["cta"][k],
+                index=list(EMAIL_STYLE_LABELS["cta"].keys()).index(
+                    _get("email_cta") if _get("email_cta") in EMAIL_STYLE_LABELS["cta"] else "audit"
+                ),
+                key="email_cta",
+            )
+
+            # Prévisualisation avec un faux prospect
+            _preview_style = EmailStyle(
+                intonation=_email_intonation,
+                length=_email_length,
+                salutation=_email_salutation,
+                cta=_email_cta,
+            )
+            _preview_issue_map = {
+                "web_digital":  (["https", "lead_form"],       "site sans HTTPS + pas de formulaire"),
+                "freelance":    ([],                            "candidature freelance (renfort dev)"),
+                "creatif":      (["no_gallery", "no_video"],   "pas de galerie + pas de vidéo"),
+                "conseil_b2b":  (["tracking", "no_blog"],      "pas de tracking + pas de blog"),
+                "sante":        (["no_service_mention"],        "service non mentionné sur le site"),
+                "terrain":      (["no_service_mention"],        "service non mentionné sur le site"),
+                "special":      (["no_service_mention"],        "service non mentionné sur le site"),
+            }
+            _pkeys, _plabel = _preview_issue_map.get(selected_svc_cat, (["https", "lead_form"], "site sans HTTPS"))
+            st.markdown(f"**Aperçu ({_plabel}) :**")
+            _preview_prospect = _PreviewProspect(
+                place_id="preview",
+                name="Votre Prospect",
+                address="",
+                phone=None,
+                website="http://exemple.com",
+                rating=None,
+                user_ratings_total=0,
+                keyword="",
+                maps_url="",
+            )
+            _preview_prospect.issue_keys = _pkeys
+            _preview_prospect.score = 40
+            _preview_text = build_dynamic_email(
+                _preview_prospect,
+                _preview_style,
+                your_name=_get("your_name", "YOUR_NAME") or "Votre Nom",
+                your_title=_get("your_title", "YOUR_TITLE") or "",
+                your_offer=selected_service.your_offer or "vous aider à améliorer votre présence en ligne",
+                service_id=selected_service_id,
+                service_category=selected_svc_cat,
+            )
+            st.code(_preview_text, language=None)
+
+        st.markdown("**📱 Accroche SMS** *(max 160 caractères)*")
+        sms_hook = st.text_input(
+            "Accroche SMS",
+            value=selected_service.sms_hook,
+            label_visibility="collapsed",
+        )
+        if len(sms_hook) > 160:
+            st.warning(f"⚠️ SMS trop long : {len(sms_hook)}/160 caractères")
+
+        # Variables de compatibilité (toujours référencées ailleurs dans app.py)
+        email_hook = selected_service.email_hook
+
+    with col2:
+        st.markdown("**⚙️ Paramètres**")
+        your_offer = st.text_area(
+            "🎁 Mon offre",
+            value=selected_service.your_offer,
+            height=80,
+            help="Décrivez votre offre en 1-2 phrases",
+        )
+        max_results = st.slider("Prospects par mot-clé", 1, 20, 5)
+        min_rating = st.slider(
+            "Note Google minimum ⭐",
+            min_value=1.0, max_value=5.0, value=3.0, step=0.5,
+            help="Les établissements en dessous de cette note sont ignorés (probablement en difficulté)",
+        )
+        _score_dir = selected_service.score_direction
+        _score_default = (selected_target.score_threshold_override or selected_service.score_threshold_default)
+        if selected_svc_cat == "freelance":
+            # Mode candidature : on n'audite pas les sites, toutes les cibles sont retenues.
+            st.info(
+                "🧑‍💻 **Mode candidature freelance** — on n'audite **pas** le site des cibles. "
+                "Toutes les entreprises trouvées sont retenues, et le bot génère un email de "
+                "candidature (renfort dev). Le filtre de score ne s'applique pas ici."
+            )
+            score_threshold = 100
+        elif _score_dir == "desc":
+            score_threshold = st.slider(
+                "Score min requis",
+                min_value=0, max_value=100, value=_score_default,
+                help="Score élevé = bonne opportunité selon ce service.",
+            )
+        else:
+            score_threshold = st.slider(
+                "Score max à contacter",
+                min_value=0, max_value=100, value=_score_default,
+                help=(
+                    "Le score = qualité du site (100 = parfait, 0 = pas de site). "
+                    "Plus le score est BAS, plus le site a de défauts à corriger = meilleur prospect pour toi. "
+                    "On ne contacte que les sites au score ≤ cette valeur. "
+                    "85 = large (au moins un défaut réel) ; 60 = strict (sites vraiment mauvais)."
+                ),
+            )
+        radius = st.select_slider(
+            "Rayon de recherche",
+            options=[1000, 2000, 5000, 10000, 20000, 50000],
+            value=10000,
+            format_func=lambda x: f"{x//1000} km",
+        )
+        send_emails = st.toggle("📧 Envoyer les emails auto", value=False)
+        if send_emails:
+            st.warning("⚠️ Seuls les prospects avec un email trouvé recevront un mail.")
+            _email_mode = st.radio(
+                "Mode d'envoi", ["📤 Immédiat", "⏰ Programmé"],
+                horizontal=True, label_visibility="collapsed",
+            )
+            if _email_mode == "⏰ Programmé":
+                from datetime import date as _dt_date, timedelta as _dt_td, time as _dt_time
+                _sched_date = st.date_input("Date d'envoi", value=_dt_date.today() + _dt_td(days=1), min_value=_dt_date.today())
+                _sched_time = st.time_input("Heure d'envoi", value=_dt_time(9, 0))
+            else:
+                _sched_date = None
+                _sched_time = None
+        else:
+            _email_mode = "📤 Immédiat"
             _sched_date = None
             _sched_time = None
-    else:
-        _email_mode = "📤 Immédiat"
-        _sched_date = None
-        _sched_time = None
-    send_sms_toggle = st.toggle("📱 Envoyer les SMS auto", value=False)
-    if send_sms_toggle:
-        st.warning("⚠️ Seuls les numéros mobiles (06/07) recevront un SMS.")
-    cache_ttl_days = st.slider(
-        "⚡ Cache analyses (jours)", 1, 90, 30,
-        help="Durée de validité : un site analysé il y a moins de X jours ne sera pas réanalysé.",
-    )
+        send_sms_toggle = st.toggle("📱 Envoyer les SMS auto", value=False)
+        if send_sms_toggle:
+            st.warning("⚠️ Seuls les numéros mobiles (06/07) recevront un SMS.")
+        cache_ttl_days = st.slider(
+            "⚡ Cache analyses (jours)", 1, 90, 30,
+            help="Durée de validité : un site analysé il y a moins de X jours ne sera pas réanalysé.",
+        )
 
-# LinkedIn CSV uploader (visible seulement si source linkedin_csv sélectionnée)
-linkedin_content = ""
-if "linkedin_csv" in source_types:
+    # LinkedIn CSV uploader (visible seulement si source linkedin_csv sélectionnée)
+    linkedin_content = ""
+    if "linkedin_csv" in source_types:
+        st.markdown("---")
+        st.markdown("### 📎 Import CSV LinkedIn")
+        st.caption(
+            "Exporte tes contacts depuis **LinkedIn Sales Navigator** (Accounts/Leads → Export) "
+            "ou **Mes connexions** (Paramètres → Confidentialité → Obtenir une copie de tes données)."
+        )
+        _uploaded_csv = st.file_uploader(
+            "Déposer le fichier CSV LinkedIn",
+            type=["csv"],
+            help="Format auto-détecté : Sales Navigator, Connexions, ou tout CSV avec colonnes Company/Email/Website.",
+        )
+        if _uploaded_csv:
+            try:
+                linkedin_content = _uploaded_csv.read().decode("utf-8-sig")
+                _n_rows = max(0, len(linkedin_content.splitlines()) - 1)
+                st.success(f"✅ {_n_rows} ligne(s) importée(s) — prêt à analyser.")
+            except Exception as _e:
+                st.error(f"❌ Erreur de lecture : {_e}")
+
     st.markdown("---")
-    st.markdown("### 📎 Import CSV LinkedIn")
-    st.caption(
-        "Exporte tes contacts depuis **LinkedIn Sales Navigator** (Accounts/Leads → Export) "
-        "ou **Mes connexions** (Paramètres → Confidentialité → Obtenir une copie de tes données)."
-    )
-    _uploaded_csv = st.file_uploader(
-        "Déposer le fichier CSV LinkedIn",
-        type=["csv"],
-        help="Format auto-détecté : Sales Navigator, Connexions, ou tout CSV avec colonnes Company/Email/Website.",
-    )
-    if _uploaded_csv:
-        try:
-            linkedin_content = _uploaded_csv.read().decode("utf-8-sig")
-            _n_rows = max(0, len(linkedin_content.splitlines()) - 1)
-            st.success(f"✅ {_n_rows} ligne(s) importée(s) — prêt à analyser.")
-        except Exception as _e:
-            st.error(f"❌ Erreur de lecture : {_e}")
-
-st.markdown("---")
 
 
 # ---------------------------------------------------------------------------
@@ -1376,839 +1391,846 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         log_q.put("__DONE__")
 
 
-# ---------------------------------------------------------------------------
-# Bouton de lancement
-# ---------------------------------------------------------------------------
-col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
-with col_btn2:
-    _launch_disabled = st.session_state.running
-    if not source_types:
-        _launch_disabled = True
+if _page == "Prospection":
+    # ---------------------------------------------------------------------------
+    # Bouton de lancement
+    # ---------------------------------------------------------------------------
+    col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
+    with col_btn2:
+        _launch_disabled = st.session_state.running
+        if not source_types:
+            _launch_disabled = True
+        if ("google_maps" in source_types or "google_search" in source_types) and not google_key:
+            _launch_disabled = True
+        if "google_search" in source_types and not google_cx:
+            _launch_disabled = True
+        if "france_travail" in source_types and (not ft_client_id or not ft_client_secret):
+            _launch_disabled = True
+        if "linkedin_csv" in source_types and not linkedin_content:
+            _launch_disabled = True
+        if not keywords and not ("linkedin_csv" in source_types and len(source_types) == 1):
+            _launch_disabled = _launch_disabled or not keywords or not location
+
+        launch = st.button("🚀 Lancer la prospection", disabled=_launch_disabled)
+
     if ("google_maps" in source_types or "google_search" in source_types) and not google_key:
-        _launch_disabled = True
+        st.info("👈 Renseigne ta clé Google Places dans la barre latérale pour commencer.")
     if "google_search" in source_types and not google_cx:
-        _launch_disabled = True
+        st.info("👈 Renseigne ton Custom Search Engine ID (cx) dans la barre latérale.")
     if "france_travail" in source_types and (not ft_client_id or not ft_client_secret):
-        _launch_disabled = True
+        st.info("👈 Renseigne tes identifiants France Travail dans la barre latérale.")
     if "linkedin_csv" in source_types and not linkedin_content:
-        _launch_disabled = True
-    if not keywords and not ("linkedin_csv" in source_types and len(source_types) == 1):
-        _launch_disabled = _launch_disabled or not keywords or not location
+        st.info("👆 Importe un fichier CSV LinkedIn ci-dessus pour commencer.")
 
-    launch = st.button("🚀 Lancer la prospection", disabled=_launch_disabled)
+    # ---------------------------------------------------------------------------
+    # Démarrage du thread
+    # ---------------------------------------------------------------------------
+    if launch and not st.session_state.running:
+        st.session_state.running = True
+        st.session_state.run_done = False
+        st.session_state.logs = []
+        st.session_state.prospects = []
+        st.session_state.log_queue = queue.Queue()
+        st.session_state.pop("_restored_from", None)  # nouveau run → on n'affiche plus le bandeau « rechargés »
 
-if ("google_maps" in source_types or "google_search" in source_types) and not google_key:
-    st.info("👈 Renseigne ta clé Google Places dans la barre latérale pour commencer.")
-if "google_search" in source_types and not google_cx:
-    st.info("👈 Renseigne ton Custom Search Engine ID (cx) dans la barre latérale.")
-if "france_travail" in source_types and (not ft_client_id or not ft_client_secret):
-    st.info("👈 Renseigne tes identifiants France Travail dans la barre latérale.")
-if "linkedin_csv" in source_types and not linkedin_content:
-    st.info("👆 Importe un fichier CSV LinkedIn ci-dessus pour commencer.")
+        # Persistance des paramètres (rechargés comme defaults au prochain démarrage)
+        _save_settings({
+            "google_api_key":    google_key,
+            "source_types":      ",".join(source_types),
+            "source_type":       source_types[0] if source_types else "google_maps",
+            "ft_client_id":      ft_client_id or None,
+            "ft_client_secret":  ft_client_secret or None,
+            "google_cx":         google_cx or None,
+            "crm_type":          crm_type,
+            "notion_api_key":    crm_key if crm_type == "notion" else None,
+            "notion_database_id": crm_extra.get("database_id") if crm_type == "notion" else None,
+            "hubspot_api_key":   crm_key if crm_type == "hubspot" else None,
+            "brevo_api_key":     brevo_key,
+            "gmail_address":     gmail_address,
+            "your_name":         your_name,
+            "your_title":        your_title,
+            "your_email":        your_email,
+            "your_website":      your_website,
+            "service_id":        selected_service_id,
+            "service_category":  selected_svc_cat,
+            "target_id":         selected_target_id,
+            "target_sector":     selected_tgt_sector,
+            "email_intonation":  _email_intonation,
+            "email_length":      _email_length,
+            "email_salutation":  _email_salutation,
+            "email_cta":         _email_cta,
+        })
 
-# ---------------------------------------------------------------------------
-# Démarrage du thread
-# ---------------------------------------------------------------------------
-if launch and not st.session_state.running:
-    st.session_state.running = True
-    st.session_state.run_done = False
-    st.session_state.logs = []
-    st.session_state.prospects = []
-    st.session_state.log_queue = queue.Queue()
-    st.session_state.pop("_restored_from", None)  # nouveau run → on n'affiche plus le bandeau « rechargés »
+        result_container = []
 
-    # Persistance des paramètres (rechargés comme defaults au prochain démarrage)
-    _save_settings({
-        "google_api_key":    google_key,
-        "source_types":      ",".join(source_types),
-        "source_type":       source_types[0] if source_types else "google_maps",
-        "ft_client_id":      ft_client_id or None,
-        "ft_client_secret":  ft_client_secret or None,
-        "google_cx":         google_cx or None,
-        "crm_type":          crm_type,
-        "notion_api_key":    crm_key if crm_type == "notion" else None,
-        "notion_database_id": crm_extra.get("database_id") if crm_type == "notion" else None,
-        "hubspot_api_key":   crm_key if crm_type == "hubspot" else None,
-        "brevo_api_key":     brevo_key,
-        "gmail_address":     gmail_address,
-        "your_name":         your_name,
-        "your_title":        your_title,
-        "your_email":        your_email,
-        "your_website":      your_website,
-        "service_id":        selected_service_id,
-        "service_category":  selected_svc_cat,
-        "target_id":         selected_target_id,
-        "target_sector":     selected_tgt_sector,
-        "email_intonation":  _email_intonation,
-        "email_length":      _email_length,
-        "email_salutation":  _email_salutation,
-        "email_cta":         _email_cta,
-    })
+        params = {
+            "google_key": google_key,
+            "notion_key": notion_key,
+            "crm_type":   crm_type,
+            "crm_key":    crm_key,
+            "crm_extra":  crm_extra,
+            "brevo_key": brevo_key,
+            "location": location,
+            "keywords": keywords,
+            "radius": radius,
+            "max_results": max_results,
+            "your_name": your_name,
+            "your_title": your_title or selected_service.your_title,
+            "your_email": your_email,
+            "your_website": your_website,
+            "your_offer": your_offer,
+            "email_hook": email_hook,
+            "sms_hook": sms_hook,
+            "email_style": {
+                "intonation": _email_intonation,
+                "length":     _email_length,
+                "salutation": _email_salutation,
+                "cta":        _email_cta,
+            },
+            "profile_id": f"{selected_service_id}_x_{selected_target_id}",
+            "profile_name": f"{selected_service.emoji} {selected_service.name}  →  {selected_target.emoji} {selected_target.name}",
+            "service_id": selected_service_id,
+            "service_category": selected_svc_cat,
+            "target_sector": selected_tgt_sector,
+            "detection_keywords": selected_service.detection_keywords,
+            "weight_overrides": selected_service.check_weight_overrides,
+            "score_direction": selected_service.score_direction,
+            "min_rating": min_rating,
+            "contact_score_threshold": score_threshold,
+            "analysis_workers": int(os.getenv("ANALYSIS_WORKERS", "5")),
+            "send_emails": send_emails,
+            "gmail_address": gmail_address,
+            "gmail_password": gmail_password,
+            "send_sms": send_sms_toggle,
+            "cache_ttl_days": cache_ttl_days,
+            "email_send_mode": _email_mode,
+            "sched_date": _sched_date.isoformat() if _sched_date else None,
+            "sched_time": _sched_time.strftime("%H:%M") if _sched_time else None,
+            "source_types":      source_types,
+            "source_type":       source_types[0] if source_types else "google_maps",
+            "ft_client_id":      ft_client_id,
+            "ft_client_secret":  ft_client_secret,
+            "google_cx":         google_cx,
+            "linkedin_content":  linkedin_content,
+        }
 
-    result_container = []
+        thread = threading.Thread(
+            target=run_prospection,
+            args=(params, st.session_state.log_queue, result_container),
+            daemon=True,
+        )
+        thread.start()
+        st.session_state._thread = thread
+        st.session_state._results = result_container
 
-    params = {
-        "google_key": google_key,
-        "notion_key": notion_key,
-        "crm_type":   crm_type,
-        "crm_key":    crm_key,
-        "crm_extra":  crm_extra,
-        "brevo_key": brevo_key,
-        "location": location,
-        "keywords": keywords,
-        "radius": radius,
-        "max_results": max_results,
-        "your_name": your_name,
-        "your_title": your_title or selected_service.your_title,
-        "your_email": your_email,
-        "your_website": your_website,
-        "your_offer": your_offer,
-        "email_hook": email_hook,
-        "sms_hook": sms_hook,
-        "email_style": {
-            "intonation": _email_intonation,
-            "length":     _email_length,
-            "salutation": _email_salutation,
-            "cta":        _email_cta,
-        },
-        "profile_id": f"{selected_service_id}_x_{selected_target_id}",
-        "profile_name": f"{selected_service.emoji} {selected_service.name}  →  {selected_target.emoji} {selected_target.name}",
-        "service_id": selected_service_id,
-        "service_category": selected_svc_cat,
-        "target_sector": selected_tgt_sector,
-        "detection_keywords": selected_service.detection_keywords,
-        "weight_overrides": selected_service.check_weight_overrides,
-        "score_direction": selected_service.score_direction,
-        "min_rating": min_rating,
-        "contact_score_threshold": score_threshold,
-        "analysis_workers": int(os.getenv("ANALYSIS_WORKERS", "5")),
-        "send_emails": send_emails,
-        "gmail_address": gmail_address,
-        "gmail_password": gmail_password,
-        "send_sms": send_sms_toggle,
-        "cache_ttl_days": cache_ttl_days,
-        "email_send_mode": _email_mode,
-        "sched_date": _sched_date.isoformat() if _sched_date else None,
-        "sched_time": _sched_time.strftime("%H:%M") if _sched_time else None,
-        "source_types":      source_types,
-        "source_type":       source_types[0] if source_types else "google_maps",
-        "ft_client_id":      ft_client_id,
-        "ft_client_secret":  ft_client_secret,
-        "google_cx":         google_cx,
-        "linkedin_content":  linkedin_content,
-    }
+    # ---------------------------------------------------------------------------
+    # Affichage live des logs
+    # ---------------------------------------------------------------------------
+    if st.session_state.running or st.session_state.run_done:
+        st.markdown("### 📡 Logs en temps réel")
+        log_placeholder = st.empty()
+        status_placeholder = st.empty()
 
-    thread = threading.Thread(
-        target=run_prospection,
-        args=(params, st.session_state.log_queue, result_container),
-        daemon=True,
-    )
-    thread.start()
-    st.session_state._thread = thread
-    st.session_state._results = result_container
+        # Vide la queue dans la liste de logs (drain robuste via queue.Empty)
+        q = st.session_state.log_queue
+        done = False
+        while True:
+            try:
+                msg = q.get_nowait()
+            except queue.Empty:
+                break
+            if msg == "__DONE__":
+                done = True
+            else:
+                st.session_state.logs.append(msg)
 
-# ---------------------------------------------------------------------------
-# Affichage live des logs
-# ---------------------------------------------------------------------------
-if st.session_state.running or st.session_state.run_done:
-    st.markdown("### 📡 Logs en temps réel")
-    log_placeholder = st.empty()
-    status_placeholder = st.empty()
-
-    # Vide la queue dans la liste de logs (drain robuste via queue.Empty)
-    q = st.session_state.log_queue
-    done = False
-    while True:
-        try:
-            msg = q.get_nowait()
-        except queue.Empty:
-            break
-        if msg == "__DONE__":
+        # Filet de sécurité : si le thread s'est terminé sans qu'on ait vu __DONE__
+        # (crash dur improbable), on considère quand même le run comme fini.
+        _thr = st.session_state.get("_thread")
+        if not done and _thr is not None and not _thr.is_alive():
             done = True
+
+        if done:
+            st.session_state.running = False
+            st.session_state.run_done = True
+            if hasattr(st.session_state, "_results"):
+                st.session_state.prospects = list(st.session_state._results)
+
+        # Affiche les logs
+        log_html = "<div class='log-box'>" + "<br>".join(
+            st.session_state.logs[-100:]
+        ) + "</div>"
+        log_placeholder.markdown(log_html, unsafe_allow_html=True)
+
+        if st.session_state.running:
+            status_placeholder.info("⏳ Prospection en cours…")
+            time.sleep(1)
+            st.rerun()
         else:
-            st.session_state.logs.append(msg)
-
-    # Filet de sécurité : si le thread s'est terminé sans qu'on ait vu __DONE__
-    # (crash dur improbable), on considère quand même le run comme fini.
-    _thr = st.session_state.get("_thread")
-    if not done and _thr is not None and not _thr.is_alive():
-        done = True
-
-    if done:
-        st.session_state.running = False
-        st.session_state.run_done = True
-        if hasattr(st.session_state, "_results"):
-            st.session_state.prospects = list(st.session_state._results)
-
-    # Affiche les logs
-    log_html = "<div class='log-box'>" + "<br>".join(
-        st.session_state.logs[-100:]
-    ) + "</div>"
-    log_placeholder.markdown(log_html, unsafe_allow_html=True)
-
-    if st.session_state.running:
-        status_placeholder.info("⏳ Prospection en cours…")
-        time.sleep(1)
-        st.rerun()
-    else:
-        status_placeholder.success("✅ Prospection terminée !")
+            status_placeholder.success("✅ Prospection terminée !")
 
 
-# ---------------------------------------------------------------------------
-# Résultats
-# ---------------------------------------------------------------------------
-if st.session_state.prospects:
-    prospects = st.session_state.prospects
-    st.markdown("---")
-    st.markdown("## 📊 Résultats")
-    if st.session_state.get("_restored_from") and not st.session_state.get("run_done"):
-        st.info(
-            f"🔄 Campagne rechargée : **{st.session_state['_restored_from']}**. "
-            "Ces résultats restent affichés après un rechargement de page ou une coupure. "
-            "Relance une prospection pour les remplacer."
-        )
+    # ---------------------------------------------------------------------------
+    # Résultats
+    # ---------------------------------------------------------------------------
+    if st.session_state.prospects:
+        prospects = st.session_state.prospects
+        st.markdown("---")
+        st.markdown("## 📊 Résultats")
+        if st.session_state.get("_restored_from") and not st.session_state.get("run_done"):
+            st.info(
+                f"🔄 Campagne rechargée : **{st.session_state['_restored_from']}**. "
+                "Ces résultats restent affichés après un rechargement de page ou une coupure. "
+                "Relance une prospection pour les remplacer."
+            )
 
-    # Métriques
-    no_site     = sum(1 for p in prospects if not p.has_website())
-    critical    = sum(1 for p in prospects if p.score < 40)
-    avg_score   = int(sum(p.score for p in prospects) / len(prospects))
-    emails_ok   = sum(1 for p in prospects if p.email)
-    mobiles_ok  = sum(1 for p in prospects if p.phone and (
-        p.phone.replace(" ", "").startswith("06") or
-        p.phone.replace(" ", "").startswith("07")
-    ))
-
-    m1, m2, m3, m4, m5, m6 = st.columns(6)
-    for col, value, label, color in [
-        (m1, len(prospects),  "Total prospects",    "#667eea"),
-        (m2, no_site,         "Sans site 🔴",        "#f38ba8"),
-        (m3, critical,        "Score < 40 🟡",       "#fab387"),
-        (m4, avg_score,       "Score moyen",         "#667eea"),
-        (m5, emails_ok,       "📧 Emails trouvés",   "#a6e3a1"),
-        (m6, mobiles_ok,      "📱 Mobiles trouvés",  "#a6e3a1"),
-    ]:
-        with col:
-            st.markdown(f"""<div class='metric-card'>
-                <div class='metric-value' style='color:{color}'>{value}</div>
-                <div class='metric-label'>{label}</div>
-            </div>""", unsafe_allow_html=True)
-
-    st.markdown("")
-
-    # Filtre
-    col_f1, col_f2 = st.columns([2, 1])
-    with col_f1:
-        filter_opt = st.radio(
-            "Afficher :",
-            ["Tous", "Sans site uniquement", "Email trouvé", "Mobile trouvé", "Score < 40"],
-            horizontal=True,
-        )
-    with col_f2:
-        sort_opt = st.selectbox("Trier par :", ["Opportunité (score ↑)", "Nom (A→Z)", "Note Google (↓)"])
-
-    # Application des filtres
-    filtered = prospects
-    if filter_opt == "Sans site uniquement":
-        filtered = [p for p in prospects if not p.has_website()]
-    elif filter_opt == "Email trouvé":
-        filtered = [p for p in prospects if p.email]
-    elif filter_opt == "Mobile trouvé":
-        filtered = [p for p in prospects if p.phone and (
+        # Métriques
+        no_site     = sum(1 for p in prospects if not p.has_website())
+        critical    = sum(1 for p in prospects if p.score < 40)
+        avg_score   = int(sum(p.score for p in prospects) / len(prospects))
+        emails_ok   = sum(1 for p in prospects if p.email)
+        mobiles_ok  = sum(1 for p in prospects if p.phone and (
             p.phone.replace(" ", "").startswith("06") or
             p.phone.replace(" ", "").startswith("07")
-        )]
-    elif filter_opt == "Score < 40":
-        filtered = [p for p in prospects if p.score < 40]
+        ))
 
-    if sort_opt == "Nom (A→Z)":
-        filtered = sorted(filtered, key=lambda p: p.name)
-    elif sort_opt == "Note Google (↓)":
-        filtered = sorted(filtered, key=lambda p: p.rating or 0, reverse=True)
+        m1, m2, m3, m4, m5, m6 = st.columns(6)
+        for col, value, label, color in [
+            (m1, len(prospects),  "Total prospects",    "#667eea"),
+            (m2, no_site,         "Sans site 🔴",        "#f38ba8"),
+            (m3, critical,        "Score < 40 🟡",       "#fab387"),
+            (m4, avg_score,       "Score moyen",         "#667eea"),
+            (m5, emails_ok,       "📧 Emails trouvés",   "#a6e3a1"),
+            (m6, mobiles_ok,      "📱 Mobiles trouvés",  "#a6e3a1"),
+        ]:
+            with col:
+                st.markdown(f"""<div class='metric-card'>
+                    <div class='metric-value' style='color:{color}'>{value}</div>
+                    <div class='metric-label'>{label}</div>
+                </div>""", unsafe_allow_html=True)
 
-    st.markdown(f"### 🏆 {len(filtered)} prospect(s) — triés par {sort_opt.lower()}")
+        st.markdown("")
 
-    for p in filtered:
-        score_emoji = "🟢" if p.score >= 70 else ("🟡" if p.score >= 40 else "🔴")
-        email_badge = "📧✅" if p.email else "📧❌"
-        phone_type = ""
-        if p.phone:
-            num = p.phone.replace(" ", "")
-            phone_type = "📱" if (num.startswith("06") or num.startswith("07")) else "☎️"
+        # Filtre
+        col_f1, col_f2 = st.columns([2, 1])
+        with col_f1:
+            filter_opt = st.radio(
+                "Afficher :",
+                ["Tous", "Sans site uniquement", "Email trouvé", "Mobile trouvé", "Score < 40"],
+                horizontal=True,
+            )
+        with col_f2:
+            sort_opt = st.selectbox("Trier par :", ["Opportunité (score ↑)", "Nom (A→Z)", "Note Google (↓)"])
 
-        header = f"{score_emoji} **{p.name}** — Score {p.score}/100 — {email_badge} {phone_type}"
-        with st.expander(header):
-            c1, c2 = st.columns([1, 1])
-            with c1:
-                st.markdown(f"**📍 Adresse :** {p.address}")
-                # Téléphone avec badge mobile/fixe
-                if p.phone:
-                    num = p.phone.replace(" ", "")
-                    is_mobile = num.startswith("06") or num.startswith("07")
-                    badge = "📱 Mobile" if is_mobile else "☎️ Fixe"
-                    st.markdown(f"**Téléphone :** {p.phone} — `{badge}`")
-                else:
-                    st.markdown("**Téléphone :** —")
+        # Application des filtres
+        filtered = prospects
+        if filter_opt == "Sans site uniquement":
+            filtered = [p for p in prospects if not p.has_website()]
+        elif filter_opt == "Email trouvé":
+            filtered = [p for p in prospects if p.email]
+        elif filter_opt == "Mobile trouvé":
+            filtered = [p for p in prospects if p.phone and (
+                p.phone.replace(" ", "").startswith("06") or
+                p.phone.replace(" ", "").startswith("07")
+            )]
+        elif filter_opt == "Score < 40":
+            filtered = [p for p in prospects if p.score < 40]
 
-                # Email avec statut
-                if p.email:
-                    st.markdown(f"**📧 Email trouvé :** `{p.email}`")
-                else:
-                    st.markdown("**📧 Email :** non trouvé sur le site")
+        if sort_opt == "Nom (A→Z)":
+            filtered = sorted(filtered, key=lambda p: p.name)
+        elif sort_opt == "Note Google (↓)":
+            filtered = sorted(filtered, key=lambda p: p.rating or 0, reverse=True)
 
-                # Site web + CMS détecté
-                if p.website:
-                    cms_badge = f" `{p.cms}`" if p.cms else ""
-                    st.markdown(f"**🌐 Site :** [{p.website}]({p.website}){cms_badge}")
-                else:
-                    st.markdown("**🌐 Site :** ❌ Aucun site web")
+        st.markdown(f"### 🏆 {len(filtered)} prospect(s) — triés par {sort_opt.lower()}")
 
-                st.markdown(f"**🔑 Mot-clé :** `{p.keyword}`")
-                if p.rating:
-                    stars = "⭐" * round(p.rating)
-                    st.markdown(f"**Note Google :** {stars} {p.rating}/5 ({p.user_ratings_total} avis)")
-                if p.maps_url:
-                    st.markdown(f"[📌 Voir sur Google Maps]({p.maps_url})")
+        for p in filtered:
+            score_emoji = "🟢" if p.score >= 70 else ("🟡" if p.score >= 40 else "🔴")
+            email_badge = "📧✅" if p.email else "📧❌"
+            phone_type = ""
+            if p.phone:
+                num = p.phone.replace(" ", "")
+                phone_type = "📱" if (num.startswith("06") or num.startswith("07")) else "☎️"
 
-            with c2:
-                st.markdown("**🔬 Problèmes détectés :**")
-                if p.issues:
-                    for issue in p.issues:
-                        short = issue.split("→")[0].strip()
-                        st.markdown(f"<span class='issue-chip'>⚠️ {short}</span>", unsafe_allow_html=True)
-                else:
-                    st.markdown("✅ Aucun problème majeur détecté")
+            header = f"{score_emoji} **{p.name}** — Score {p.score}/100 — {email_badge} {phone_type}"
+            with st.expander(header):
+                c1, c2 = st.columns([1, 1])
+                with c1:
+                    st.markdown(f"**📍 Adresse :** {p.address}")
+                    # Téléphone avec badge mobile/fixe
+                    if p.phone:
+                        num = p.phone.replace(" ", "")
+                        is_mobile = num.startswith("06") or num.startswith("07")
+                        badge = "📱 Mobile" if is_mobile else "☎️ Fixe"
+                        st.markdown(f"**Téléphone :** {p.phone} — `{badge}`")
+                    else:
+                        st.markdown("**Téléphone :** —")
 
-            st.markdown("**✉️ Brouillon cold email :**")
-            st.code(p.email_draft, language=None)
+                    # Email avec statut
+                    if p.email:
+                        st.markdown(f"**📧 Email trouvé :** `{p.email}`")
+                    else:
+                        st.markdown("**📧 Email :** non trouvé sur le site")
+
+                    # Site web + CMS détecté
+                    if p.website:
+                        cms_badge = f" `{p.cms}`" if p.cms else ""
+                        st.markdown(f"**🌐 Site :** [{p.website}]({p.website}){cms_badge}")
+                    else:
+                        st.markdown("**🌐 Site :** ❌ Aucun site web")
+
+                    st.markdown(f"**🔑 Mot-clé :** `{p.keyword}`")
+                    if p.rating:
+                        stars = "⭐" * round(p.rating)
+                        st.markdown(f"**Note Google :** {stars} {p.rating}/5 ({p.user_ratings_total} avis)")
+                    if p.maps_url:
+                        st.markdown(f"[📌 Voir sur Google Maps]({p.maps_url})")
+
+                with c2:
+                    st.markdown("**🔬 Problèmes détectés :**")
+                    if p.issues:
+                        for issue in p.issues:
+                            short = issue.split("→")[0].strip()
+                            st.markdown(f"<span class='issue-chip'>⚠️ {short}</span>", unsafe_allow_html=True)
+                    else:
+                        st.markdown("✅ Aucun problème majeur détecté")
+
+                st.markdown("**✉️ Brouillon cold email :**")
+                st.code(p.email_draft, language=None)
+
+        # ---------------------------------------------------------------------------
+        # Export
+        # ---------------------------------------------------------------------------
+        st.markdown("---")
+        st.markdown("### 💾 Export")
+
+        import csv, io
+        col_e1, col_e2, col_e3 = st.columns(3)
+
+        with col_e1:
+            json_data = json.dumps([p.to_dict() for p in filtered], ensure_ascii=False, indent=2)
+            st.download_button(
+                label="⬇️ Télécharger JSON",
+                data=json_data,
+                file_name=f"prospects_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json",
+                use_container_width=True,
+            )
+
+        with col_e2:
+            csv_buffer = io.StringIO()
+            fieldnames = ["name", "keyword", "address", "phone", "email", "website",
+                          "cms", "rating", "score", "issues_count", "issues_summary", "maps_url"]
+            writer = csv.DictWriter(csv_buffer, fieldnames=fieldnames)
+            writer.writeheader()
+            for p in filtered:
+                writer.writerow({
+                    "name": p.name,
+                    "keyword": p.keyword,
+                    "address": p.address,
+                    "phone": p.phone or "",
+                    "email": p.email or "",
+                    "website": p.website or "",
+                    "cms": p.cms or "",
+                    "rating": p.rating or "",
+                    "score": p.score,
+                    "issues_count": len(p.issues),
+                    "issues_summary": " | ".join(p.issues[:3]),
+                    "maps_url": p.maps_url,
+                })
+            st.download_button(
+                label="⬇️ Télécharger CSV",
+                data=csv_buffer.getvalue().encode("utf-8-sig"),
+                file_name=f"prospects_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+
+        with col_e3:
+            try:
+                import openpyxl
+                from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+                from openpyxl.utils import get_column_letter
+
+                wb = openpyxl.Workbook()
+                ws = wb.active
+                ws.title = "Prospects"
+
+                headers = ["Nom", "Mot-clé", "Adresse", "Téléphone", "Email",
+                           "Site", "CMS", "Note ⭐", "Score", "Nb problèmes", "Problèmes (top 3)", "Google Maps"]
+                col_widths = [30, 15, 40, 15, 32, 40, 12, 8, 8, 12, 70, 50]
+
+                header_fill = PatternFill(start_color="4F46E5", end_color="4F46E5", fill_type="solid")
+                header_font = Font(color="FFFFFF", bold=True)
+                thin_border = Border(
+                    left=Side(style="thin"), right=Side(style="thin"),
+                    top=Side(style="thin"), bottom=Side(style="thin"),
+                )
+
+                for ci, (h, w) in enumerate(zip(headers, col_widths), 1):
+                    cell = ws.cell(row=1, column=ci, value=h)
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                    cell.border = thin_border
+                    ws.column_dimensions[get_column_letter(ci)].width = w
+                ws.row_dimensions[1].height = 20
+
+                fill_green  = PatternFill(start_color="D1FAE5", end_color="D1FAE5", fill_type="solid")
+                fill_yellow = PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid")
+                fill_red    = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+
+                for ri, p in enumerate(filtered, 2):
+                    score_fill = fill_green if p.score >= 70 else (fill_yellow if p.score >= 40 else fill_red)
+                    row_vals = [
+                        p.name, p.keyword, p.address, p.phone or "",
+                        p.email or "", p.website or "", p.cms or "",
+                        p.rating or "", p.score, len(p.issues),
+                        " | ".join(p.issues[:3]), p.maps_url,
+                    ]
+                    for ci, val in enumerate(row_vals, 1):
+                        cell = ws.cell(row=ri, column=ci, value=val)
+                        cell.border = thin_border
+                        cell.alignment = Alignment(vertical="center", wrap_text=(ci == 11))
+                        if ci == 9:  # Score
+                            cell.fill = score_fill
+                            cell.font = Font(bold=True)
+
+                ws.freeze_panes = "A2"
+
+                _xls_buf = io.BytesIO()
+                wb.save(_xls_buf)
+                st.download_button(
+                    label="⬇️ Télécharger Excel",
+                    data=_xls_buf.getvalue(),
+                    file_name=f"prospects_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+            except ImportError:
+                st.button("⬇️ Excel — installe openpyxl", disabled=True, use_container_width=True)
+                st.caption("`pip install openpyxl`")
 
     # ---------------------------------------------------------------------------
-    # Export
+    # Sauvegarde profil custom
     # ---------------------------------------------------------------------------
     st.markdown("---")
-    st.markdown("### 💾 Export")
-
-    import csv, io
-    col_e1, col_e2, col_e3 = st.columns(3)
-
-    with col_e1:
-        json_data = json.dumps([p.to_dict() for p in filtered], ensure_ascii=False, indent=2)
-        st.download_button(
-            label="⬇️ Télécharger JSON",
-            data=json_data,
-            file_name=f"prospects_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-            mime="application/json",
-            use_container_width=True,
-        )
-
-    with col_e2:
-        csv_buffer = io.StringIO()
-        fieldnames = ["name", "keyword", "address", "phone", "email", "website",
-                      "cms", "rating", "score", "issues_count", "issues_summary", "maps_url"]
-        writer = csv.DictWriter(csv_buffer, fieldnames=fieldnames)
-        writer.writeheader()
-        for p in filtered:
-            writer.writerow({
-                "name": p.name,
-                "keyword": p.keyword,
-                "address": p.address,
-                "phone": p.phone or "",
-                "email": p.email or "",
-                "website": p.website or "",
-                "cms": p.cms or "",
-                "rating": p.rating or "",
-                "score": p.score,
-                "issues_count": len(p.issues),
-                "issues_summary": " | ".join(p.issues[:3]),
-                "maps_url": p.maps_url,
-            })
-        st.download_button(
-            label="⬇️ Télécharger CSV",
-            data=csv_buffer.getvalue().encode("utf-8-sig"),
-            file_name=f"prospects_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-
-    with col_e3:
-        try:
-            import openpyxl
-            from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
-            from openpyxl.utils import get_column_letter
-
-            wb = openpyxl.Workbook()
-            ws = wb.active
-            ws.title = "Prospects"
-
-            headers = ["Nom", "Mot-clé", "Adresse", "Téléphone", "Email",
-                       "Site", "CMS", "Note ⭐", "Score", "Nb problèmes", "Problèmes (top 3)", "Google Maps"]
-            col_widths = [30, 15, 40, 15, 32, 40, 12, 8, 8, 12, 70, 50]
-
-            header_fill = PatternFill(start_color="4F46E5", end_color="4F46E5", fill_type="solid")
-            header_font = Font(color="FFFFFF", bold=True)
-            thin_border = Border(
-                left=Side(style="thin"), right=Side(style="thin"),
-                top=Side(style="thin"), bottom=Side(style="thin"),
+    with st.expander("💾 Sauvegarder ce profil pour une prochaine fois"):
+        save_name = st.text_input("Nom du profil", placeholder="Ex: Mon profil Lyon Dev Web")
+        if st.button("💾 Sauvegarder") and save_name:
+            from profile_manager import save_custom_profile
+            from profiles import Profile
+            import re, uuid
+            custom_id = "custom_" + re.sub(r"[^a-z0-9]", "_", save_name.lower())[:20]
+            new_profile = Profile(
+                id=custom_id,
+                emoji="⭐",
+                name=save_name,
+                description=f"Profil personnalisé — {location}",
+                keywords=keywords,
+                location=location,
+                your_title=your_title,
+                your_offer=your_offer,
+                email_hook=email_hook,
+                sms_hook=sms_hook,
+                qualification_criteria=[],
+                radius=radius,
+                max_results=max_results,
             )
+            save_custom_profile(new_profile)
+            st.success(f"✅ Profil « {save_name} » sauvegardé ! Il apparaîtra dans la liste au prochain lancement.")
 
-            for ci, (h, w) in enumerate(zip(headers, col_widths), 1):
-                cell = ws.cell(row=1, column=ci, value=h)
-                cell.fill = header_fill
-                cell.font = header_font
-                cell.alignment = Alignment(horizontal="center", vertical="center")
-                cell.border = thin_border
-                ws.column_dimensions[get_column_letter(ci)].width = w
-            ws.row_dimensions[1].height = 20
+if _page == "Statistiques":
+    # ---------------------------------------------------------------------------
+    # Dashboard de statistiques
+    # ---------------------------------------------------------------------------
+    st.markdown("---")
+    with st.expander("📊 Dashboard — Statistiques globales"):
+        from history_manager import load_history as _lh, _load_contacted_data as _lcd2
+        _hist = _lh()
+        _cdata2 = _lcd2()
 
-            fill_green  = PatternFill(start_color="D1FAE5", end_color="D1FAE5", fill_type="solid")
-            fill_yellow = PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid")
-            fill_red    = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+        if not _hist:
+            st.info("Lancez au moins une campagne pour voir les statistiques.")
+        else:
+            _total_runs      = len(_hist)
+            _total_prospects = sum(r.get("total_prospects", 0) for r in _hist)
+            _total_emails    = sum(r.get("emails_trouvés", 0)  for r in _hist)
+            _total_mobiles   = sum(r.get("mobiles_trouvés", 0) for r in _hist)
+            _total_sent      = sum(r.get("emails_envoyés", 0)  for r in _hist)
+            _total_sms_sent  = sum(r.get("sms_envoyés", 0)     for r in _hist)
+            _total_responded = sum(1 for v in _cdata2.values() if v.get("responded"))
+            _total_contacted = len(_cdata2)
 
-            for ri, p in enumerate(filtered, 2):
-                score_fill = fill_green if p.score >= 70 else (fill_yellow if p.score >= 40 else fill_red)
-                row_vals = [
-                    p.name, p.keyword, p.address, p.phone or "",
-                    p.email or "", p.website or "", p.cms or "",
-                    p.rating or "", p.score, len(p.issues),
-                    " | ".join(p.issues[:3]), p.maps_url,
-                ]
-                for ci, val in enumerate(row_vals, 1):
-                    cell = ws.cell(row=ri, column=ci, value=val)
-                    cell.border = thin_border
-                    cell.alignment = Alignment(vertical="center", wrap_text=(ci == 11))
-                    if ci == 9:  # Score
-                        cell.fill = score_fill
-                        cell.font = Font(bold=True)
+            # Métriques globales
+            dc1, dc2, dc3, dc4, dc5, dc6 = st.columns(6)
+            dc1.metric("Campagnes", _total_runs)
+            dc2.metric("Prospects total", _total_prospects)
+            dc3.metric("Emails trouvés", _total_emails)
+            dc4.metric("Emails envoyés", _total_sent)
+            dc5.metric("SMS envoyés", _total_sms_sent)
+            _rrate = f"{_total_responded / _total_contacted * 100:.0f}%" if _total_contacted else "—"
+            dc6.metric("Taux de réponse", _rrate)
 
-            ws.freeze_panes = "A2"
+            st.markdown("---")
 
-            _xls_buf = io.BytesIO()
-            wb.save(_xls_buf)
-            st.download_button(
-                label="⬇️ Télécharger Excel",
-                data=_xls_buf.getvalue(),
-                file_name=f"prospects_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-            )
-        except ImportError:
-            st.button("⬇️ Excel — installe openpyxl", disabled=True, use_container_width=True)
-            st.caption("`pip install openpyxl`")
+            # Graphique : prospects + emails par campagne (10 dernières)
+            try:
+                import pandas as _pd
 
-# ---------------------------------------------------------------------------
-# Sauvegarde profil custom
-# ---------------------------------------------------------------------------
-st.markdown("---")
-with st.expander("💾 Sauvegarder ce profil pour une prochaine fois"):
-    save_name = st.text_input("Nom du profil", placeholder="Ex: Mon profil Lyon Dev Web")
-    if st.button("💾 Sauvegarder") and save_name:
-        from profile_manager import save_custom_profile
-        from profiles import Profile
-        import re, uuid
-        custom_id = "custom_" + re.sub(r"[^a-z0-9]", "_", save_name.lower())[:20]
-        new_profile = Profile(
-            id=custom_id,
-            emoji="⭐",
-            name=save_name,
-            description=f"Profil personnalisé — {location}",
-            keywords=keywords,
-            location=location,
-            your_title=your_title,
-            your_offer=your_offer,
-            email_hook=email_hook,
-            sms_hook=sms_hook,
-            qualification_criteria=[],
-            radius=radius,
-            max_results=max_results,
-        )
-        save_custom_profile(new_profile)
-        st.success(f"✅ Profil « {save_name} » sauvegardé ! Il apparaîtra dans la liste au prochain lancement.")
+                _runs_data = [{
+                    "Campagne": r["date"][:10],
+                    "Prospects": r.get("total_prospects", 0),
+                    "Emails": r.get("emails_trouvés", 0),
+                    "Mobiles": r.get("mobiles_trouvés", 0),
+                } for r in reversed(_hist[:10])]
+                _df_runs = _pd.DataFrame(_runs_data).set_index("Campagne")
+                st.markdown("**Prospects et emails par campagne (10 dernières)**")
+                st.bar_chart(_df_runs[["Prospects", "Emails"]])
 
-# ---------------------------------------------------------------------------
-# Dashboard de statistiques
-# ---------------------------------------------------------------------------
-st.markdown("---")
-with st.expander("📊 Dashboard — Statistiques globales"):
-    from history_manager import load_history as _lh, _load_contacted_data as _lcd2
-    _hist = _lh()
-    _cdata2 = _lcd2()
+                # Top mots-clés
+                _kw_counts: dict = {}
+                for r in _hist:
+                    for kw in r.get("keywords", []):
+                        _kw_counts[kw] = _kw_counts.get(kw, 0) + r.get("total_prospects", 0)
+                if _kw_counts:
+                    _top_kw = sorted(_kw_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+                    _df_kw = _pd.DataFrame(_top_kw, columns=["Mot-clé", "Prospects"]).set_index("Mot-clé")
+                    st.markdown("**Top mots-clés (par nombre de prospects cumulés)**")
+                    st.bar_chart(_df_kw)
 
-    if not _hist:
-        st.info("Lancez au moins une campagne pour voir les statistiques.")
-    else:
-        _total_runs      = len(_hist)
-        _total_prospects = sum(r.get("total_prospects", 0) for r in _hist)
-        _total_emails    = sum(r.get("emails_trouvés", 0)  for r in _hist)
-        _total_mobiles   = sum(r.get("mobiles_trouvés", 0) for r in _hist)
-        _total_sent      = sum(r.get("emails_envoyés", 0)  for r in _hist)
-        _total_sms_sent  = sum(r.get("sms_envoyés", 0)     for r in _hist)
-        _total_responded = sum(1 for v in _cdata2.values() if v.get("responded"))
-        _total_contacted = len(_cdata2)
+                # Distribution des scores de la dernière campagne
+                if st.session_state.prospects:
+                    _scores = [p.score for p in st.session_state.prospects]
+                    _bins = {"0-20": 0, "21-40": 0, "41-60": 0, "61-80": 0, "81-100": 0}
+                    for s in _scores:
+                        if s <= 20:    _bins["0-20"]   += 1
+                        elif s <= 40:  _bins["21-40"]  += 1
+                        elif s <= 60:  _bins["41-60"]  += 1
+                        elif s <= 80:  _bins["61-80"]  += 1
+                        else:          _bins["81-100"] += 1
+                    _df_score = _pd.DataFrame(list(_bins.items()), columns=["Score", "Nombre"]).set_index("Score")
+                    st.markdown("**Distribution des scores (campagne en cours)**")
+                    st.bar_chart(_df_score)
 
-        # Métriques globales
-        dc1, dc2, dc3, dc4, dc5, dc6 = st.columns(6)
-        dc1.metric("Campagnes", _total_runs)
-        dc2.metric("Prospects total", _total_prospects)
-        dc3.metric("Emails trouvés", _total_emails)
-        dc4.metric("Emails envoyés", _total_sent)
-        dc5.metric("SMS envoyés", _total_sms_sent)
-        _rrate = f"{_total_responded / _total_contacted * 100:.0f}%" if _total_contacted else "—"
-        dc6.metric("Taux de réponse", _rrate)
+            except ImportError:
+                st.caption("pandas non disponible — install `pandas` pour les graphiques.")
 
-        st.markdown("---")
+    # ---------------------------------------------------------------------------
+    # Test A/B — Statistiques de templates
+    # ---------------------------------------------------------------------------
+    st.markdown("---")
+    with st.expander("🧪 Test A/B — Performance des templates email"):
+        from history_manager import get_ab_stats
+        ab = get_ab_stats()
+        st.caption("Les prospects sont répartis 50/50 entre le template A (narratif) et le template B (court/direct).")
+        col_a, col_b = st.columns(2)
+        for col, variant, label in [(col_a, "A", "Template A — Narratif"), (col_b, "B", "Template B — Direct")]:
+            s = ab.get(variant, {"total": 0, "responded": 0})
+            rate = f"{s['responded']/s['total']*100:.0f}%" if s["total"] else "—"
+            with col:
+                st.markdown(f"**{label}**")
+                st.metric("Envoyés", s["total"])
+                st.metric("Réponses", s["responded"])
+                st.metric("Taux de réponse", rate)
 
-        # Graphique : prospects + emails par campagne (10 dernières)
-        try:
-            import pandas as _pd
+    # ---------------------------------------------------------------------------
+    # Historique des campagnes
+    # ---------------------------------------------------------------------------
+    st.markdown("---")
+    with st.expander("🕐 Historique des campagnes"):
+        from history_manager import load_history
+        history = load_history()
+        if not history:
+            st.info("Aucune campagne lancée pour l'instant.")
+        else:
+            st.caption("Clique sur « 📂 Charger » pour réafficher tous les prospects d'une campagne dans l'interface.")
+            for _i, run in enumerate(history):
+                kw_str = ", ".join(run.get("keywords", [])[:3])
+                extra_kw = len(run.get("keywords", [])) - 3
+                kw_display = kw_str + (f" +{extra_kw}" if extra_kw > 0 else "")
+                src_str = " · ".join(run.get("sources", [])) or "—"
+                sector = run.get("target_sector", "")
+                with st.container():
+                    col_h1, col_h2 = st.columns([3, 1])
+                    with col_h1:
+                        st.markdown(
+                            f"**{run['date']}** — {run['profile']} — {run['location']}"
+                            + (f" — *{sector}*" if sector else "")
+                        )
+                        st.caption(f"Sources : {src_str} | Mots-clés : {kw_display}")
+                    with col_h2:
+                        st.markdown(f"**{run['total_prospects']}** prospects")
+                    # Métriques détaillées
+                    m1, m2, m3, m4, m5 = st.columns(5)
+                    m1.metric("Sans site", run.get("sans_site", 0))
+                    m2.metric("Emails scrapés", run.get("emails_trouvés", 0))
+                    m3.metric("Mobiles", run.get("mobiles_trouvés", 0))
+                    m4.metric("Emails envoyés", run.get("emails_envoyés", 0))
+                    m5.metric("SMS envoyés", run.get("sms_envoyés", 0))
+                    # Répartition offres
+                    _ot = run.get("offer_types", {})
+                    if _ot:
+                        _ot_labels = {
+                            "creation": "Création", "migration": "Migration",
+                            "refonte": "Refonte", "widget": "Widget", "audit": "Audit",
+                        }
+                        _ot_str = " | ".join(
+                            f"{_ot_labels.get(k, k)} ×{v}" for k, v in sorted(_ot.items(), key=lambda x: -x[1])
+                        )
+                        st.caption(f"Offres proposées : {_ot_str}")
+                    if run.get("crm_synchronisés"):
+                        st.caption(f"CRM : {run['crm_synchronisés']} synchronisé(s)")
+                    # Bouton pour recharger tous les prospects de cette campagne dans l'UI
+                    _fichier = run.get("fichier", "")
+                    if _fichier and os.path.exists(_fichier):
+                        if st.button("📂 Charger cette campagne", key=f"load_camp_{_i}", use_container_width=True):
+                            try:
+                                with open(_fichier, "r", encoding="utf-8") as _cf:
+                                    _cdata = json.load(_cf)
+                                from services.google_maps import Prospect as _P
+                                st.session_state.prospects = [_P.from_dict(d) for d in _cdata]
+                                st.session_state["_restored_from"] = f"{run['date']} — {run['profile']}"
+                                st.session_state.running = False
+                                st.session_state.run_done = False
+                                st.toast(f"Campagne du {run['date']} chargée ✅", icon="📂")
+                                st.rerun()
+                            except Exception as _e:
+                                st.error(f"Impossible de charger cette campagne : {_e}")
+                    else:
+                        st.caption("⚠️ Fichier de résultats introuvable (effacé lors d'un redéploiement).")
+                st.divider()
 
-            _runs_data = [{
-                "Campagne": r["date"][:10],
-                "Prospects": r.get("total_prospects", 0),
-                "Emails": r.get("emails_trouvés", 0),
-                "Mobiles": r.get("mobiles_trouvés", 0),
-            } for r in reversed(_hist[:10])]
-            _df_runs = _pd.DataFrame(_runs_data).set_index("Campagne")
-            st.markdown("**Prospects et emails par campagne (10 dernières)**")
-            st.bar_chart(_df_runs[["Prospects", "Emails"]])
-
-            # Top mots-clés
-            _kw_counts: dict = {}
-            for r in _hist:
-                for kw in r.get("keywords", []):
-                    _kw_counts[kw] = _kw_counts.get(kw, 0) + r.get("total_prospects", 0)
-            if _kw_counts:
-                _top_kw = sorted(_kw_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-                _df_kw = _pd.DataFrame(_top_kw, columns=["Mot-clé", "Prospects"]).set_index("Mot-clé")
-                st.markdown("**Top mots-clés (par nombre de prospects cumulés)**")
-                st.bar_chart(_df_kw)
-
-            # Distribution des scores de la dernière campagne
-            if st.session_state.prospects:
-                _scores = [p.score for p in st.session_state.prospects]
-                _bins = {"0-20": 0, "21-40": 0, "41-60": 0, "61-80": 0, "81-100": 0}
-                for s in _scores:
-                    if s <= 20:    _bins["0-20"]   += 1
-                    elif s <= 40:  _bins["21-40"]  += 1
-                    elif s <= 60:  _bins["41-60"]  += 1
-                    elif s <= 80:  _bins["61-80"]  += 1
-                    else:          _bins["81-100"] += 1
-                _df_score = _pd.DataFrame(list(_bins.items()), columns=["Score", "Nombre"]).set_index("Score")
-                st.markdown("**Distribution des scores (campagne en cours)**")
-                st.bar_chart(_df_score)
-
-        except ImportError:
-            st.caption("pandas non disponible — install `pandas` pour les graphiques.")
-
-# ---------------------------------------------------------------------------
-# Test A/B — Statistiques de templates
-# ---------------------------------------------------------------------------
-st.markdown("---")
-with st.expander("🧪 Test A/B — Performance des templates email"):
-    from history_manager import get_ab_stats
-    ab = get_ab_stats()
-    st.caption("Les prospects sont répartis 50/50 entre le template A (narratif) et le template B (court/direct).")
-    col_a, col_b = st.columns(2)
-    for col, variant, label in [(col_a, "A", "Template A — Narratif"), (col_b, "B", "Template B — Direct")]:
-        s = ab.get(variant, {"total": 0, "responded": 0})
-        rate = f"{s['responded']/s['total']*100:.0f}%" if s["total"] else "—"
-        with col:
-            st.markdown(f"**{label}**")
-            st.metric("Envoyés", s["total"])
-            st.metric("Réponses", s["responded"])
-            st.metric("Taux de réponse", rate)
-
-# ---------------------------------------------------------------------------
-# Historique des campagnes
-# ---------------------------------------------------------------------------
-st.markdown("---")
-with st.expander("🕐 Historique des campagnes"):
-    from history_manager import load_history
-    history = load_history()
-    if not history:
-        st.info("Aucune campagne lancée pour l'instant.")
-    else:
-        st.caption("Clique sur « 📂 Charger » pour réafficher tous les prospects d'une campagne dans l'interface.")
-        for _i, run in enumerate(history):
-            kw_str = ", ".join(run.get("keywords", [])[:3])
-            extra_kw = len(run.get("keywords", [])) - 3
-            kw_display = kw_str + (f" +{extra_kw}" if extra_kw > 0 else "")
-            src_str = " · ".join(run.get("sources", [])) or "—"
-            sector = run.get("target_sector", "")
-            with st.container():
-                col_h1, col_h2 = st.columns([3, 1])
-                with col_h1:
-                    st.markdown(
-                        f"**{run['date']}** — {run['profile']} — {run['location']}"
-                        + (f" — *{sector}*" if sector else "")
-                    )
-                    st.caption(f"Sources : {src_str} | Mots-clés : {kw_display}")
-                with col_h2:
-                    st.markdown(f"**{run['total_prospects']}** prospects")
-                # Métriques détaillées
-                m1, m2, m3, m4, m5 = st.columns(5)
-                m1.metric("Sans site", run.get("sans_site", 0))
-                m2.metric("Emails scrapés", run.get("emails_trouvés", 0))
-                m3.metric("Mobiles", run.get("mobiles_trouvés", 0))
-                m4.metric("Emails envoyés", run.get("emails_envoyés", 0))
-                m5.metric("SMS envoyés", run.get("sms_envoyés", 0))
-                # Répartition offres
-                _ot = run.get("offer_types", {})
-                if _ot:
-                    _ot_labels = {
-                        "creation": "Création", "migration": "Migration",
-                        "refonte": "Refonte", "widget": "Widget", "audit": "Audit",
-                    }
-                    _ot_str = " | ".join(
-                        f"{_ot_labels.get(k, k)} ×{v}" for k, v in sorted(_ot.items(), key=lambda x: -x[1])
-                    )
-                    st.caption(f"Offres proposées : {_ot_str}")
-                if run.get("crm_synchronisés"):
-                    st.caption(f"CRM : {run['crm_synchronisés']} synchronisé(s)")
-                # Bouton pour recharger tous les prospects de cette campagne dans l'UI
-                _fichier = run.get("fichier", "")
-                if _fichier and os.path.exists(_fichier):
-                    if st.button("📂 Charger cette campagne", key=f"load_camp_{_i}", use_container_width=True):
-                        try:
-                            with open(_fichier, "r", encoding="utf-8") as _cf:
-                                _cdata = json.load(_cf)
-                            from services.google_maps import Prospect as _P
-                            st.session_state.prospects = [_P.from_dict(d) for d in _cdata]
-                            st.session_state["_restored_from"] = f"{run['date']} — {run['profile']}"
-                            st.session_state.running = False
-                            st.session_state.run_done = False
-                            st.toast(f"Campagne du {run['date']} chargée ✅", icon="📂")
-                            st.rerun()
-                        except Exception as _e:
-                            st.error(f"Impossible de charger cette campagne : {_e}")
-                else:
-                    st.caption("⚠️ Fichier de résultats introuvable (effacé lors d'un redéploiement).")
-            st.divider()
-
-# ---------------------------------------------------------------------------
-# Historique
-# ---------------------------------------------------------------------------
-st.markdown("---")
-with st.expander("🗂️ Historique des contacts"):
-    from history_manager import load_contacted_ids
-    contacted = load_contacted_ids()
-    st.write(f"**{len(contacted)}** établissement(s) déjà contacté(s) (ignorés aux prochains runs).")
-    if contacted:
-        if st.button("🗑️ Réinitialiser l'historique", type="secondary"):
-            # On supprime le fichier principal ET la sauvegarde, sinon _load_contacted_data
-            # restaure aussitôt les données depuis le backup → reset sans effet.
-            removed = 0
-            for _fname in ("contacted_place_ids.json", "contacted_place_ids.bak.json"):
-                _path = os.path.join("output", _fname)
-                if os.path.exists(_path):
-                    os.remove(_path)
-                    removed += 1
-            st.success(
-                f"Historique effacé ({removed} fichier(s)). "
-                "Le prochain run reprospectera depuis zéro."
-            )
-            st.rerun()
-
-# ---------------------------------------------------------------------------
-# Emails programmés
-# ---------------------------------------------------------------------------
-st.markdown("---")
-with st.expander("📬 Emails programmés"):
-    from services import scheduler as _sched_ui
-    # Garde les identifiants en RAM pour que l'envoi différé fonctionne
-    # (ils ne sont jamais écrits sur disque).
-    if gmail_address and gmail_password:
-        _sched_ui.remember_credentials(gmail_address, gmail_password)
-    _stats = _sched_ui.get_stats()
-    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
-    col_s1.metric("En attente", _stats["pending"])
-    col_s2.metric("En retard", _stats["overdue"])
-    col_s3.metric("Envoyés", _stats["sent"])
-    col_s4.metric("Total", _stats["total"])
-
-    if _stats["total"] == 0:
-        st.caption("Aucun email programmé pour l'instant.")
-    else:
-        if _stats["overdue"] > 0:
-            st.warning(
-                f"⚠️ {_stats['overdue']} email(s) en retard — leur heure d'envoi est passée "
-                "(l'app était probablement éteinte). Ils partent au prochain cycle, "
-                "ou immédiatement avec le bouton ci-dessous."
-            )
-        if _stats["pending"] > 0:
-            st.info(f"⏰ {_stats['pending']} email(s) en attente — vérification toutes les 60 secondes.")
-        if not _sched_ui.credentials_available():
-            st.error(
-                "🔑 Aucun mot de passe Gmail disponible pour l'envoi différé. "
-                "Renseigne-le dans la barre latérale, **ou mieux** : ajoute `GMAIL_APP_PASSWORD` "
-                "dans les variables Railway pour que les envois programmés survivent aux redémarrages."
-            )
-        if _stats["pending"] > 0 and st.button("📤 Envoyer maintenant les emails dus", use_container_width=True):
-            _r = _sched_ui.process_due()
-            if _r["sent"]:
-                st.success(f"✅ {_r['sent']} email(s) envoyé(s).")
-            if _r["failed"]:
-                st.error(f"❌ {_r['failed']} échec(s) — vérifie tes identifiants Gmail.")
-            if _r["skipped_no_credentials"]:
-                st.warning(f"🔑 {_r['skipped_no_credentials']} email(s) non envoyé(s) : mot de passe Gmail manquant.")
-            st.rerun()
-
-    st.caption(
-        "ℹ️ Les emails programmés ne partent que si l'application tourne. "
-        "Si Railway met le service en veille, ils partiront au prochain réveil (rattrapage automatique)."
-    )
-
-# ---------------------------------------------------------------------------
-# Suivi de réponses
-# ---------------------------------------------------------------------------
-st.markdown("---")
-with st.expander("📬 Suivi des réponses (IMAP)"):
-    from services import reply_tracker as _rt_ui
-    _rt_running = _rt_ui.is_running()
-    if _rt_running:
-        st.success("✅ Suivi actif — vérifie les réponses Gmail toutes les 5 minutes.")
-    elif gmail_address and gmail_password:
-        _rt_ui.ensure_running(gmail_address, gmail_password)
-        st.info("⏳ Thread de suivi en cours de démarrage…")
-    else:
-        st.info("💡 Renseigne ton adresse Gmail et ton mot de passe d'application pour activer le suivi automatique des réponses.")
-    from history_manager import _load_contacted_data as _lcd
-    _cdata = _lcd()
-    _responded = sum(1 for v in _cdata.values() if v.get("responded"))
-    _total_c   = len(_cdata)
-    if _total_c:
-        col_rt1, col_rt2 = st.columns(2)
-        col_rt1.metric("Prospects contactés", _total_c)
-        col_rt2.metric("Réponses reçues", _responded)
-
-# ---------------------------------------------------------------------------
-# Cache d'analyse
-# ---------------------------------------------------------------------------
-st.markdown("---")
-with st.expander("⚡ Cache d'analyse (performances)"):
-    from services import cache as _analysis_cache
-    st.caption(
-        "Les analyses récentes sont mises en cache pour éviter de refaire "
-        "les appels HTTP et PageSpeed pour les mêmes sites."
-    )
-    n_cached = _analysis_cache.count()
-    col_c1, col_c2 = st.columns([3, 1])
-    with col_c1:
-        st.write(f"**{n_cached}** site(s) actuellement en cache.")
-    with col_c2:
-        if st.button("🗑️ Vider", key="clear_cache", use_container_width=True, disabled=(n_cached == 0)):
-            deleted = _analysis_cache.clear_all()
-            st.success(f"✅ {deleted} entrée(s) supprimée(s).")
-            st.rerun()
-
-# ---------------------------------------------------------------------------
-# Relances
-# ---------------------------------------------------------------------------
-st.markdown("---")
-with st.expander("🔄 Relances — contacts sans réponse"):
-    from history_manager import get_due_followups, mark_as_responded, mark_followup_sent
-    followup_delay = int(os.getenv("FOLLOWUP_DELAY_DAYS", "5"))
-    due = get_due_followups(followup_delay)
-
-    from services.mailer import MAX_FOLLOWUPS
-    if not due:
-        st.success(f"✅ Aucun contact à relancer (seuil : {followup_delay} jours sans réponse).")
-    else:
-        st.info(
-            f"**{len(due)} contact(s)** à relancer — séquence de {MAX_FOLLOWUPS} relances "
-            f"à angles distincts, {followup_delay} jours entre chaque message."
-        )
-
-        # Bouton pour générer la PROCHAINE relance de la séquence pour chaque contact
-        if st.button("📝 Générer les prochaines relances", key="gen_followup"):
-            from services.google_maps import Prospect as P
-            from services.mailer import draft_followup_email
-            drafts = []
-            for contact in due:
-                next_step = int(contact.get("followup_step", 0)) + 1
-                p = P(
-                    place_id=contact["place_id"],
-                    name=contact["name"],
-                    address="",
-                    phone=None,
-                    website=None,
-                    rating=None,
-                    user_ratings_total=0,
-                    keyword="",
-                    email=contact.get("email") or None,
+if _page == "Réglages":
+    # ---------------------------------------------------------------------------
+    # Historique
+    # ---------------------------------------------------------------------------
+    st.markdown("---")
+    with st.expander("🗂️ Historique des contacts"):
+        from history_manager import load_contacted_ids
+        contacted = load_contacted_ids()
+        st.write(f"**{len(contacted)}** établissement(s) déjà contacté(s) (ignorés aux prochains runs).")
+        if contacted:
+            if st.button("🗑️ Réinitialiser l'historique", type="secondary"):
+                # On supprime le fichier principal ET la sauvegarde, sinon _load_contacted_data
+                # restaure aussitôt les données depuis le backup → reset sans effet.
+                removed = 0
+                for _fname in ("contacted_place_ids.json", "contacted_place_ids.bak.json"):
+                    _path = os.path.join("output", _fname)
+                    if os.path.exists(_path):
+                        os.remove(_path)
+                        removed += 1
+                st.success(
+                    f"Historique effacé ({removed} fichier(s)). "
+                    "Le prochain run reprospectera depuis zéro."
                 )
-                label = f"{p.name}  ·  relance {next_step}/{MAX_FOLLOWUPS}"
-                drafts.append((label, draft_followup_email(p, step=next_step), contact["place_id"]))
-                mark_followup_sent(contact["place_id"])
-                if crm_type == "notion" and crm_key:
-                    from history_manager import get_notion_page_id
-                    from services.crm.notion import NotionExporter
-                    _np = get_notion_page_id(contact["place_id"])
-                    if _np:
-                        _status = "clôturé" if next_step >= MAX_FOLLOWUPS else f"relancé ({next_step}/{MAX_FOLLOWUPS})"
-                        NotionExporter(crm_key, crm_extra.get("database_id", "")).update_status(_np, _status)
-            st.session_state["followup_drafts"] = drafts
-            st.success(f"✅ {len(drafts)} relance(s) générée(s).")
-            st.rerun()
+                st.rerun()
 
-        # Affichage des drafts générés
-        if st.session_state.get("followup_drafts"):
-            for name, draft, _ in st.session_state["followup_drafts"]:
-                st.markdown(f"**{name}**")
-                st.code(draft, language=None)
-            import io
-            zip_content = "\n\n" + ("=" * 60 + "\n\n").join(
-                f"{name}\n{draft}" for name, draft, _ in st.session_state["followup_drafts"]
-            )
-            st.download_button(
-                "⬇️ Télécharger tous les emails de relance (.txt)",
-                data=zip_content.encode("utf-8"),
-                file_name=f"relances_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                mime="text/plain",
-                use_container_width=True,
+if _page == "Relances":
+    # ---------------------------------------------------------------------------
+    # Emails programmés
+    # ---------------------------------------------------------------------------
+    st.markdown("---")
+    with st.expander("📬 Emails programmés"):
+        from services import scheduler as _sched_ui
+        # Garde les identifiants en RAM pour que l'envoi différé fonctionne
+        # (ils ne sont jamais écrits sur disque).
+        if gmail_address and gmail_password:
+            _sched_ui.remember_credentials(gmail_address, gmail_password)
+        _stats = _sched_ui.get_stats()
+        col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+        col_s1.metric("En attente", _stats["pending"])
+        col_s2.metric("En retard", _stats["overdue"])
+        col_s3.metric("Envoyés", _stats["sent"])
+        col_s4.metric("Total", _stats["total"])
+
+        if _stats["total"] == 0:
+            st.caption("Aucun email programmé pour l'instant.")
+        else:
+            if _stats["overdue"] > 0:
+                st.warning(
+                    f"⚠️ {_stats['overdue']} email(s) en retard — leur heure d'envoi est passée "
+                    "(l'app était probablement éteinte). Ils partent au prochain cycle, "
+                    "ou immédiatement avec le bouton ci-dessous."
+                )
+            if _stats["pending"] > 0:
+                st.info(f"⏰ {_stats['pending']} email(s) en attente — vérification toutes les 60 secondes.")
+            if not _sched_ui.credentials_available():
+                st.error(
+                    "🔑 Aucun mot de passe Gmail disponible pour l'envoi différé. "
+                    "Renseigne-le dans la barre latérale, **ou mieux** : ajoute `GMAIL_APP_PASSWORD` "
+                    "dans les variables Railway pour que les envois programmés survivent aux redémarrages."
+                )
+            if _stats["pending"] > 0 and st.button("📤 Envoyer maintenant les emails dus", use_container_width=True):
+                _r = _sched_ui.process_due()
+                if _r["sent"]:
+                    st.success(f"✅ {_r['sent']} email(s) envoyé(s).")
+                if _r["failed"]:
+                    st.error(f"❌ {_r['failed']} échec(s) — vérifie tes identifiants Gmail.")
+                if _r["skipped_no_credentials"]:
+                    st.warning(f"🔑 {_r['skipped_no_credentials']} email(s) non envoyé(s) : mot de passe Gmail manquant.")
+                st.rerun()
+
+        st.caption(
+            "ℹ️ Les emails programmés ne partent que si l'application tourne. "
+            "Si Railway met le service en veille, ils partiront au prochain réveil (rattrapage automatique)."
+        )
+
+    # ---------------------------------------------------------------------------
+    # Suivi de réponses
+    # ---------------------------------------------------------------------------
+    st.markdown("---")
+    with st.expander("📬 Suivi des réponses (IMAP)"):
+        from services import reply_tracker as _rt_ui
+        _rt_running = _rt_ui.is_running()
+        if _rt_running:
+            st.success("✅ Suivi actif — vérifie les réponses Gmail toutes les 5 minutes.")
+        elif gmail_address and gmail_password:
+            _rt_ui.ensure_running(gmail_address, gmail_password)
+            st.info("⏳ Thread de suivi en cours de démarrage…")
+        else:
+            st.info("💡 Renseigne ton adresse Gmail et ton mot de passe d'application pour activer le suivi automatique des réponses.")
+        from history_manager import _load_contacted_data as _lcd
+        _cdata = _lcd()
+        _responded = sum(1 for v in _cdata.values() if v.get("responded"))
+        _total_c   = len(_cdata)
+        if _total_c:
+            col_rt1, col_rt2 = st.columns(2)
+            col_rt1.metric("Prospects contactés", _total_c)
+            col_rt2.metric("Réponses reçues", _responded)
+
+if _page == "Réglages":
+    # ---------------------------------------------------------------------------
+    # Cache d'analyse
+    # ---------------------------------------------------------------------------
+    st.markdown("---")
+    with st.expander("⚡ Cache d'analyse (performances)"):
+        from services import cache as _analysis_cache
+        st.caption(
+            "Les analyses récentes sont mises en cache pour éviter de refaire "
+            "les appels HTTP et PageSpeed pour les mêmes sites."
+        )
+        n_cached = _analysis_cache.count()
+        col_c1, col_c2 = st.columns([3, 1])
+        with col_c1:
+            st.write(f"**{n_cached}** site(s) actuellement en cache.")
+        with col_c2:
+            if st.button("🗑️ Vider", key="clear_cache", use_container_width=True, disabled=(n_cached == 0)):
+                deleted = _analysis_cache.clear_all()
+                st.success(f"✅ {deleted} entrée(s) supprimée(s).")
+                st.rerun()
+
+    # ---------------------------------------------------------------------------
+    # Relances
+if _page == "Relances":
+    # ---------------------------------------------------------------------------
+    st.markdown("---")
+    with st.expander("🔄 Relances — contacts sans réponse"):
+        from history_manager import get_due_followups, mark_as_responded, mark_followup_sent
+        followup_delay = int(os.getenv("FOLLOWUP_DELAY_DAYS", "5"))
+        due = get_due_followups(followup_delay)
+
+        from services.mailer import MAX_FOLLOWUPS
+        if not due:
+            st.success(f"✅ Aucun contact à relancer (seuil : {followup_delay} jours sans réponse).")
+        else:
+            st.info(
+                f"**{len(due)} contact(s)** à relancer — séquence de {MAX_FOLLOWUPS} relances "
+                f"à angles distincts, {followup_delay} jours entre chaque message."
             )
 
-        # Liste individuelle avec bouton "A répondu"
-        st.markdown("---")
-        st.markdown("**Marquer comme répondu :**")
-        for contact in due:
-            col_name, col_btn = st.columns([4, 1])
-            with col_name:
-                date_str = contact.get("first_contact_date", "?")
-                email_str = contact.get("email", "—")
-                st.markdown(f"**{contact['name']}** — contacté le {date_str} — `{email_str}`")
-            with col_btn:
-                if st.button("✅ Répondu", key=f"responded_{contact['place_id']}"):
-                    mark_as_responded(contact["place_id"])
+            # Bouton pour générer la PROCHAINE relance de la séquence pour chaque contact
+            if st.button("📝 Générer les prochaines relances", key="gen_followup"):
+                from services.google_maps import Prospect as P
+                from services.mailer import draft_followup_email
+                drafts = []
+                for contact in due:
+                    next_step = int(contact.get("followup_step", 0)) + 1
+                    p = P(
+                        place_id=contact["place_id"],
+                        name=contact["name"],
+                        address="",
+                        phone=None,
+                        website=None,
+                        rating=None,
+                        user_ratings_total=0,
+                        keyword="",
+                        email=contact.get("email") or None,
+                    )
+                    label = f"{p.name}  ·  relance {next_step}/{MAX_FOLLOWUPS}"
+                    drafts.append((label, draft_followup_email(p, step=next_step), contact["place_id"]))
+                    mark_followup_sent(contact["place_id"])
                     if crm_type == "notion" and crm_key:
                         from history_manager import get_notion_page_id
                         from services.crm.notion import NotionExporter
                         _np = get_notion_page_id(contact["place_id"])
                         if _np:
-                            NotionExporter(crm_key, crm_extra.get("database_id", "")).update_status(_np, "répondu")
-                    st.rerun()
+                            _status = "clôturé" if next_step >= MAX_FOLLOWUPS else f"relancé ({next_step}/{MAX_FOLLOWUPS})"
+                            NotionExporter(crm_key, crm_extra.get("database_id", "")).update_status(_np, _status)
+                st.session_state["followup_drafts"] = drafts
+                st.success(f"✅ {len(drafts)} relance(s) générée(s).")
+                st.rerun()
 
-# ---------------------------------------------------------------------------
-# Délivrabilité — la délivrabilité bat le volume
-# ---------------------------------------------------------------------------
-st.markdown("---")
-with st.expander("📬 Délivrabilité — éviter les spams (à lire avant d'envoyer en masse)"):
-    st.markdown("""
-**Règle d'or : la délivrabilité bat le volume.** 100 emails/heure depuis un seul domaine = spam garanti.
+            # Affichage des drafts générés
+            if st.session_state.get("followup_drafts"):
+                for name, draft, _ in st.session_state["followup_drafts"]:
+                    st.markdown(f"**{name}**")
+                    st.code(draft, language=None)
+                import io
+                zip_content = "\n\n" + ("=" * 60 + "\n\n").join(
+                    f"{name}\n{draft}" for name, draft, _ in st.session_state["followup_drafts"]
+                )
+                st.download_button(
+                    "⬇️ Télécharger tous les emails de relance (.txt)",
+                    data=zip_content.encode("utf-8"),
+                    file_name=f"relances_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                    mime="text/plain",
+                    use_container_width=True,
+                )
 
-**Avant d'envoyer :**
-- ✅ **SPF, DKIM et DMARC** configurés sur ton domaine d'envoi (dans ta zone DNS). Sans ça, tu pars direct en spam.
-- ✅ **Domaine dédié à la prospection** (ex. `mail-tondomaine.fr`), pas ton domaine principal — pour protéger ta réputation.
-- ✅ **Warmup** : monte en charge progressivement — 5 à 10 emails/jour la 1re semaine, puis augmente sur 4 à 6 semaines.
-- ✅ **Petits volumes ciblés** : 20-50 emails/jour très ciblés > 500 génériques.
+            # Liste individuelle avec bouton "A répondu"
+            st.markdown("---")
+            st.markdown("**Marquer comme répondu :**")
+            for contact in due:
+                col_name, col_btn = st.columns([4, 1])
+                with col_name:
+                    date_str = contact.get("first_contact_date", "?")
+                    email_str = contact.get("email", "—")
+                    st.markdown(f"**{contact['name']}** — contacté le {date_str} — `{email_str}`")
+                with col_btn:
+                    if st.button("✅ Répondu", key=f"responded_{contact['place_id']}"):
+                        mark_as_responded(contact["place_id"])
+                        if crm_type == "notion" and crm_key:
+                            from history_manager import get_notion_page_id
+                            from services.crm.notion import NotionExporter
+                            _np = get_notion_page_id(contact["place_id"])
+                            if _np:
+                                NotionExporter(crm_key, crm_extra.get("database_id", "")).update_status(_np, "répondu")
+                        st.rerun()
 
-**Réglages du bot déjà en place :**
-- Délai de 3 s entre chaque envoi (anti-rafale).
-- Emails uniques et personnalisés (pas de template identique) → moins de signaux spam.
+if _page == "Réglages":
+    # ---------------------------------------------------------------------------
+    # Délivrabilité — la délivrabilité bat le volume
+    # ---------------------------------------------------------------------------
+    st.markdown("---")
+    with st.expander("📬 Délivrabilité — éviter les spams (à lire avant d'envoyer en masse)"):
+        st.markdown("""
+    **Règle d'or : la délivrabilité bat le volume.** 100 emails/heure depuis un seul domaine = spam garanti.
 
-**Cap quotidien conseillé** (à respecter côté envoi) :
-""")
-    _daily_cap = st.slider("Nombre max d'emails à envoyer par jour", 5, 100, 30, key="deliv_cap")
-    st.caption(
-        f"Vise ~{_daily_cap}/jour sur un domaine chauffé. En warmup (domaine récent), "
-        f"reste sous 10/jour la 1re semaine."
-    )
-    st.caption("Astuce : teste ta config sur mail-tester.com avant une campagne — un score < 8/10 = risque spam.")
+    **Avant d'envoyer :**
+    - ✅ **SPF, DKIM et DMARC** configurés sur ton domaine d'envoi (dans ta zone DNS). Sans ça, tu pars direct en spam.
+    - ✅ **Domaine dédié à la prospection** (ex. `mail-tondomaine.fr`), pas ton domaine principal — pour protéger ta réputation.
+    - ✅ **Warmup** : monte en charge progressivement — 5 à 10 emails/jour la 1re semaine, puis augmente sur 4 à 6 semaines.
+    - ✅ **Petits volumes ciblés** : 20-50 emails/jour très ciblés > 500 génériques.
+
+    **Réglages du bot déjà en place :**
+    - Délai de 3 s entre chaque envoi (anti-rafale).
+    - Emails uniques et personnalisés (pas de template identique) → moins de signaux spam.
+
+    **Cap quotidien conseillé** (à respecter côté envoi) :
+    """)
+        _daily_cap = st.slider("Nombre max d'emails à envoyer par jour", 5, 100, 30, key="deliv_cap")
+        st.caption(
+            f"Vise ~{_daily_cap}/jour sur un domaine chauffé. En warmup (domaine récent), "
+            f"reste sous 10/jour la 1re semaine."
+        )
+        st.caption("Astuce : teste ta config sur mail-tester.com avant une campagne — un score < 8/10 = risque spam.")
