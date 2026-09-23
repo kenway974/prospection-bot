@@ -153,6 +153,14 @@ _restore_last_results()
 from services import scheduler as _scheduler
 _scheduler.ensure_running()
 
+# Base CRM (SQLite) : création du schéma + migration des anciens JSON (idempotent)
+import crm_store
+try:
+    _crm_migration = crm_store.ensure_ready()
+except Exception as _crm_init_exc:  # la base ne doit jamais empêcher l'app de démarrer
+    _crm_migration = {}
+    print(f"[CRM] init impossible : {_crm_init_exc}")
+
 # Démarrage du suivi de réponses IMAP (démarré plus tard après lecture des credentials)
 
 # Chargement des paramètres sauvegardés (fallback sur env vars, puis "")
@@ -778,6 +786,17 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                 "on récupère toutes les cibles + leur contact."
             )
         already_contacted = load_contacted_ids()
+        # La base CRM fait aussi foi : elle exclut en plus les clients, les
+        # « pas intéressé » et la blacklist (pas seulement les déjà-contactés).
+        try:
+            import crm_store as _crm
+            _crm_excluded = _crm.contacted_place_ids()
+            _extra = len(_crm_excluded - already_contacted)
+            already_contacted = already_contacted | _crm_excluded
+            if _extra:
+                log_q.put(f"[--] ⛔ {_extra} prospect(s) exclu(s) via le CRM (client, pas intéressé ou blacklist).")
+        except Exception:
+            pass
         if already_contacted:
             log_q.put(
                 f"[--] 📓 {len(already_contacted)} établissement(s) déjà contacté(s) "
@@ -1211,6 +1230,39 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             sources=_source_labels,
             target_sector=params.get("target_sector", ""),
         )
+
+        # 11. Base CRM — campagne + prospects (statuts et notes existants préservés)
+        try:
+            import crm_store as _crm
+            _cid = _crm.add_campaign(
+                profile=params.get("profile_name", "Custom"),
+                location=params["location"],
+                keywords=params["keywords"],
+                sources=_source_labels,
+                target_sector=params.get("target_sector", ""),
+                total_prospects=len(all_prospects),
+                sans_site=sum(1 for p in all_prospects if not p.has_website()),
+                emails_trouves=emails_found,
+                mobiles_trouves=mobiles_found,
+                emails_envoyes=_emails_sent,
+                sms_envoyes=_sms_sent,
+                crm_synchronises=_crm_synced,
+                offer_types=_offer_types,
+                fichier=json_path,
+            )
+            _new = _crm.upsert_prospects(
+                all_prospects, campaign_id=_cid,
+                sector=params.get("target_sector", ""),
+                service_id=params.get("service_id", ""),
+            )
+            if _something_sent:
+                _crm.mark_contacted(
+                    [p.place_id for p in all_prospects],
+                    channel="email" if (_emails_sent or _emails_scheduled) else "sms",
+                )
+            log_q.put(f"[--] 🗃️  CRM : {_new} nouveau(x) prospect(s) ajouté(s) au pipeline.")
+        except Exception as _crmdb_exc:
+            log_q.put(f"[--] ⚠️  Enregistrement CRM impossible : {_crmdb_exc}")
 
     except Exception as exc:
         log_q.put(f"[--] ❌ Erreur critique : {exc}")
