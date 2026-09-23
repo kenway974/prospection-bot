@@ -165,7 +165,9 @@ CREATE TABLE IF NOT EXISTS prospects (
     action_note         TEXT DEFAULT '',
     siren               TEXT DEFAULT '',
     dirigeant           TEXT DEFAULT '',
-    dirigeant_qualite   TEXT DEFAULT ''
+    dirigeant_qualite   TEXT DEFAULT '',
+    email_status        TEXT DEFAULT '',
+    email_status_reason TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS campaigns (
@@ -210,6 +212,8 @@ _ADDED_COLUMNS = {
     "siren":             "TEXT DEFAULT ''",
     "dirigeant":         "TEXT DEFAULT ''",
     "dirigeant_qualite": "TEXT DEFAULT ''",
+    "email_status":        "TEXT DEFAULT ''",
+    "email_status_reason": "TEXT DEFAULT ''",
 }
 
 
@@ -355,6 +359,8 @@ def _prospect_to_row(p, campaign_id: Optional[int], sector: str, service_id: str
         "siren": getattr(p, "siren", "") or "",
         "dirigeant": getattr(p, "dirigeant", "") or "",
         "dirigeant_qualite": getattr(p, "dirigeant_qualite", "") or "",
+        "email_status": getattr(p, "email_status", "") or "",
+        "email_status_reason": getattr(p, "email_status_reason", "") or "",
     }
 
 
@@ -387,6 +393,8 @@ def upsert_prospects(prospects: Iterable, campaign_id: Optional[int] = None,
                          siren=COALESCE(NULLIF(:siren, ''), siren),
                          dirigeant=COALESCE(NULLIF(:dirigeant, ''), dirigeant),
                          dirigeant_qualite=COALESCE(NULLIF(:dirigeant_qualite, ''), dirigeant_qualite),
+                         email_status=COALESCE(NULLIF(:email_status, ''), email_status),
+                         email_status_reason=COALESCE(NULLIF(:email_status_reason, ''), email_status_reason),
                          updated_at=:updated_at
                        WHERE place_id=:place_id""",
                     {**row, "updated_at": now},
@@ -397,13 +405,13 @@ def upsert_prospects(prospects: Iterable, campaign_id: Optional[int] = None,
                        (place_id, name, address, phone, website, email, rating,
                         user_ratings_total, keyword, maps_url, cms, score, issues,
                         issue_keys, email_draft, target_sector, service_id, campaign_id,
-                        siren, dirigeant, dirigeant_qualite,
+                        siren, dirigeant, dirigeant_qualite, email_status, email_status_reason,
                         status, first_seen_at, updated_at)
                        VALUES
                        (:place_id, :name, :address, :phone, :website, :email, :rating,
                         :user_ratings_total, :keyword, :maps_url, :cms, :score, :issues,
                         :issue_keys, :email_draft, :target_sector, :service_id, :campaign_id,
-                        :siren, :dirigeant, :dirigeant_qualite,
+                        :siren, :dirigeant, :dirigeant_qualite, :email_status, :email_status_reason,
                         'nouveau', :first_seen_at, :updated_at)""",
                     {**row, "first_seen_at": now, "updated_at": now},
                 )

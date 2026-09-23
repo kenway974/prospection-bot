@@ -633,7 +633,8 @@ if _page == "Pipeline":
                 _pid = _row["place_id"]
                 _label = f"{crm_store.STATUS_LABELS.get(_row['status'], _row['status'])} · **{_row['name']}**"
                 if _row.get("email"):
-                    _label += f" · 📧 {_row['email']}"
+                    _eb = {"valide": " ✅", "risque": " ⚠️", "invalide": " ❌"}.get(_row.get("email_status") or "", "")
+                    _label += f" · 📧 {_row['email']}{_eb}"
                 with st.container(border=True):
                     st.markdown(_label)
                     _meta = []
@@ -923,8 +924,17 @@ if _page == "Prospection":
             format_func=lambda x: f"{x//1000} km",
         )
         send_emails = st.toggle("📧 Envoyer les emails auto", value=False)
+        send_risky_emails = False
         if send_emails:
-            st.warning("⚠️ Seuls les prospects avec un email trouvé recevront un mail.")
+            st.info(
+                "🛡️ Chaque adresse est vérifiée avant envoi. Les adresses **invalides** "
+                "(domaine inexistant, jetable, faute de frappe, « noreply ») ne reçoivent jamais "
+                "de mail : un taux de rebond > 2 % envoie tous tes mails suivants en spam."
+            )
+            send_risky_emails = st.checkbox(
+                "Envoyer aussi aux adresses « risquées » (domaine sans serveur mail déclaré)",
+                value=False,
+            )
             _email_mode = st.radio(
                 "Mode d'envoi", ["📤 Immédiat", "⏰ Programmé"],
                 horizontal=True, label_visibility="collapsed",
@@ -1098,6 +1108,7 @@ if _page == "Prospection":
             "contact_score_threshold": score_threshold,
             "analysis_workers": int(os.getenv("ANALYSIS_WORKERS", "5")),
             "send_emails": send_emails,
+            "send_risky_emails": send_risky_emails,
             "gmail_address": gmail_address,
             "gmail_password": gmail_password,
             "send_sms": send_sms_toggle,
@@ -1272,7 +1283,10 @@ if _page == "Prospection":
 
                     # Email avec statut
                     if p.email:
-                        st.markdown(f"**📧 Email trouvé :** `{p.email}`")
+                        from services.email_check import STATUS_BADGES as _EB
+                        _st = getattr(p, "email_status", "") or ""
+                        _badge = f" {_EB.get(_st, '')} _{p.email_status_reason}_" if _st else ""
+                        st.markdown(f"**📧 Email trouvé :** `{p.email}`{_badge}")
                     else:
                         st.markdown("**📧 Email :** non trouvé sur le site")
 
