@@ -255,6 +255,27 @@ def set_delay(action: str, days: int) -> None:
         )
 
 
+def get_user_franchises() -> List[str]:
+    """Enseignes ajoutées par l'utilisateur, en plus de la liste intégrée."""
+    with _connect() as conn:
+        row = conn.execute("SELECT value FROM meta WHERE key = 'user_franchises'").fetchone()
+    if not row:
+        return []
+    try:
+        return [s for s in json.loads(row["value"]) if s.strip()]
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+def set_user_franchises(names: Iterable[str]) -> None:
+    clean = sorted({n.strip() for n in names if n and n.strip()}, key=str.lower)
+    with _lock, _connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('user_franchises', ?)",
+            (json.dumps(clean, ensure_ascii=False),),
+        )
+
+
 # ---------------------------------------------------------------------------
 # Prospects
 # ---------------------------------------------------------------------------

@@ -870,6 +870,12 @@ if _page == "Prospection":
         send_sms_toggle = st.toggle("📱 Envoyer les SMS auto", value=False)
         if send_sms_toggle:
             st.warning("⚠️ Seuls les numéros mobiles (06/07) recevront un SMS.")
+        exclude_franchises = st.toggle(
+            "🏢 Exclure les franchises", value=True,
+            help="Fitness Park, Laforêt, Century 21, McDonald's… Le siège décide, "
+                 "pas l'agence locale : aucun budget ni décision sur le digital. "
+                 "Liste complétable dans Réglages.",
+        )
         cache_ttl_days = st.slider(
             "⚡ Cache analyses (jours)", 1, 90, 30,
             help="Durée de validité : un site analysé il y a moins de X jours ne sera pas réanalysé.",
@@ -987,6 +993,11 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         score_direction = params.get("score_direction", "asc")
         weight_overrides = params.get("weight_overrides", {})
         candidacy_mode  = params.get("service_category", "") == "freelance"
+        # Exclusion des franchises et grandes enseignes (siège décide, pas le local)
+        from services.franchises import is_franchise as _is_franchise
+        exclude_franchises = params.get("exclude_franchises", True)
+        _user_franchises = params.get("user_franchises", [])
+        _franchise_hits: list = []   # exclusions venant des sources non-Maps
         if candidacy_mode:
             log_q.put(
                 "[--] 🧑‍💻 Mode candidature freelance : on N'AUDITE PAS les sites, "
@@ -1065,11 +1076,16 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             return qualified
 
         def _dedup(candidates: list) -> list:
-            """Retire les prospects déjà contactés ou vus dans cette session."""
+            """Retire les déjà contactés, les doublons et les franchises."""
             out = []
             for p in candidates:
                 if p.place_id in seen or p.place_id in already_contacted:
                     continue
+                if exclude_franchises:
+                    _hit, _brand = _is_franchise(p.name, _user_franchises)
+                    if _hit:
+                        _franchise_hits.append((p.name, _brand))
+                        continue
                 seen.add(p.place_id)
                 out.append(p)
             return out
@@ -1109,6 +1125,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                             continue
 
                         skip_contacted = skip_seen = 0
+                        skip_franchise: list = []
                         raw_to_build: list = []
                         for raw in raw_candidates:
                             if len(raw_to_build) >= target_per_kw * 4:
@@ -1120,6 +1137,13 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                                 skip_seen += 1; continue
                             if pid in already_contacted:
                                 skip_contacted += 1; continue
+                            # Franchises écartées AVANT Place Details : on ne paie
+                            # pas l'appel API pour un prospect qu'on jette ensuite.
+                            if exclude_franchises:
+                                _is_fr, _brand = _is_franchise(raw.get("name", ""), _user_franchises)
+                                if _is_fr:
+                                    skip_franchise.append((raw.get("name", ""), _brand))
+                                    continue
                             seen.add(pid)
                             raw_to_build.append(raw)
 
@@ -1140,6 +1164,13 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                                 skip_rating += 1
                             else:
                                 candidates.append(p)
+
+                        if skip_franchise:
+                            _noms = ", ".join(f"{n} ({b})" for n, b in skip_franchise[:5])
+                            _reste = f" +{len(skip_franchise) - 5}" if len(skip_franchise) > 5 else ""
+                            log_q.put(
+                                f"[--] 🏢 {len(skip_franchise)} franchise(s) écartée(s) pour '{kw}' : {_noms}{_reste}"
+                            )
 
                         if skip_api or skip_rating:
                             reasons = []
@@ -1601,6 +1632,8 @@ if _page == "Prospection":
             "gmail_password": gmail_password,
             "send_sms": send_sms_toggle,
             "cache_ttl_days": cache_ttl_days,
+            "exclude_franchises": exclude_franchises,
+            "user_franchises": crm_store.get_user_franchises(),
             "email_send_mode": _email_mode,
             "sched_date": _sched_date.isoformat() if _sched_date else None,
             "sched_time": _sched_time.strftime("%H:%M") if _sched_time else None,
@@ -2116,6 +2149,29 @@ if _page == "Réglages":
             if _v != crm_store.get_delay(_a):
                 crm_store.set_delay(_a, int(_v))
                 st.toast(f"{crm_store.ACTION_LABELS[_a]} : {_v} j ouvrés ✅")
+
+    # ---------------------------------------------------------------------------
+    # Franchises exclues
+    # ---------------------------------------------------------------------------
+    with st.expander("🏢 Franchises exclues de la prospection", expanded=False):
+        from services.franchises import FRANCHISES as _BUILTIN
+        st.caption(
+            f"{len(_BUILTIN)} enseignes nationales sont exclues d'office "
+            "(Fitness Park, Laforêt, Century 21, McDonald's, Basic-Fit…) : "
+            "le siège décide, pas l'agence locale. Ajoute ici les enseignes "
+            "régionales que tu ne veux jamais prospecter, une par ligne."
+        )
+        _uf = crm_store.get_user_franchises()
+        _uf_text = st.text_area(
+            "Mes enseignes à exclure", value="\n".join(_uf),
+            placeholder="Ti Resto\nMaison Péi", height=120, key="user_franchises_input",
+        )
+        if st.button("💾 Enregistrer la liste", key="save_franchises"):
+            crm_store.set_user_franchises(_uf_text.splitlines())
+            st.success("Liste enregistrée ✅")
+            st.rerun()
+        if _uf:
+            st.caption(f"Actuellement : {', '.join(_uf)}")
 
     # ---------------------------------------------------------------------------
     # Historique
