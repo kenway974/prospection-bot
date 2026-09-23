@@ -175,217 +175,81 @@ def _get(key: str, env_var: str = "", default: str = "") -> str:
 # ---------------------------------------------------------------------------
 # Sidebar — Configuration
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Réglages de connexion — source de vérité UNIQUE, lue par toutes les pages.
+# Priorité : saisie de la session > output/settings.json > variable d'env.
+# Les champs de saisie sont dans la page ⚙️ Réglages ; la barre latérale ne
+# sert plus qu'à naviguer. Chaque champ est enregistré dès qu'il change.
+# ---------------------------------------------------------------------------
+_SECRET_KEYS = {"gmail_password"}   # jamais écrit sur disque
+
+
+def _cfg(key: str, env_var: str = "", default=""):
+    val = st.session_state.get(f"cfg_{key}")
+    if val is not None:
+        return val
+    if key in _SECRET_KEYS:
+        return os.getenv(env_var, "") or default
+    return _get(key, env_var, default)
+
+
+def _persist_cfg(key: str) -> None:
+    """Callback des champs de réglage : garde la valeur en session + sur disque."""
+    val = st.session_state.get(f"w_{key}")
+    st.session_state[f"cfg_{key}"] = val
+    if key not in _SECRET_KEYS:
+        _save_settings({key: ",".join(val) if isinstance(val, list) else val})
+
+
+from services.sources import SOURCE_LABELS as _SRC_LABELS
+_src_raw = _cfg("source_types") or "google_maps"
+source_types = [
+    s for s in (_src_raw if isinstance(_src_raw, list) else str(_src_raw).split(","))
+    if s in _SRC_LABELS
+] or ["google_maps"]
+google_key_required = "google_maps" in source_types or "google_search" in source_types
+
+google_key       = _cfg("google_api_key", "GOOGLE_PLACES_API_KEY")
+google_cx        = _cfg("google_cx", "GOOGLE_CX")
+ft_client_id     = _cfg("ft_client_id", "FT_CLIENT_ID")
+ft_client_secret = _cfg("ft_client_secret", "FT_CLIENT_SECRET")
+
+crm_type = (_cfg("crm_type") or "aucun").lower()
+if crm_type == "notion":
+    crm_key = _cfg("notion_api_key", "NOTION_API_KEY")
+    crm_extra = {"database_id": _cfg("notion_database_id", "NOTION_DATABASE_ID")}
+elif crm_type == "hubspot":
+    crm_key = _cfg("hubspot_api_key", "HUBSPOT_API_KEY")
+    crm_extra = {}
+else:
+    crm_key, crm_extra = "", {}
+notion_key = crm_key if crm_type == "notion" else ""   # compat historique/relances
+
+brevo_key      = _cfg("brevo_api_key", "BREVO_API_KEY")
+gmail_address  = _cfg("gmail_address", "GMAIL_ADDRESS")
+gmail_password = _cfg("gmail_password", "GMAIL_APP_PASSWORD")
+
+your_name    = _cfg("your_name", "YOUR_NAME")
+your_title   = _cfg("your_title", "YOUR_TITLE")
+your_email   = _cfg("your_email", "YOUR_EMAIL")
+your_website = _cfg("your_website", "YOUR_WEBSITE")
+
+# Démarrage auto du suivi des réponses Gmail si les identifiants sont connus
+if gmail_address and gmail_password:
+    from services import reply_tracker as _rt
+    _rt.ensure_running(gmail_address, gmail_password)
+
+# Barre latérale : le menu (ajouté par st.navigation) + l'état des connexions
 with st.sidebar:
-    st.markdown("## 🎯 Prospection B2B")
-    st.markdown("---")
-
-    st.markdown("### 📡 Sources de prospection")
-    from services.sources import SOURCE_LABELS as _SRC_LABELS
-    source_types = st.multiselect(
-        "Sources",
-        options=list(_SRC_LABELS.keys()),
-        default=[s for s in (_get("source_types") or "google_maps").split(",") if s in _SRC_LABELS],
-        format_func=lambda x: _SRC_LABELS[x],
-        label_visibility="collapsed",
-    )
-    if not source_types:
-        source_types = ["google_maps"]
-
-    # Config spécifique à la source
-    ft_client_id = ft_client_secret = google_cx = ""
-
-    if "france_travail" in source_types:
-        st.markdown("**Client ID France Travail**")
-        ft_client_id = st.text_input(
-            "FT Client ID", value=_get("ft_client_id", "FT_CLIENT_ID"),
-            placeholder="PAR_xxxx…", label_visibility="collapsed",
-        )
-        st.markdown("**Client Secret France Travail**")
-        ft_client_secret = st.text_input(
-            "FT Client Secret", type="password",
-            value=_get("ft_client_secret", "FT_CLIENT_SECRET"),
-            placeholder="xxxxxxxx-xxxx-…", label_visibility="collapsed",
-        )
-        with st.expander("ℹ️ Comment obtenir les identifiants France Travail ?"):
-            st.markdown("""
-1. Inscris-toi sur [francetravail.io](https://francetravail.io/inscription)
-2. **Mes APIs** → **Référencer une nouvelle application**
-3. Coche **Offres d'emploi v2** dans les API souhaitées
-4. Récupère **Client ID** et **Client Secret** dans l'onglet **Mes applications**
-""")
-
-    if "google_search" in source_types:
-        st.markdown("**Custom Search Engine ID (cx)**")
-        google_cx = st.text_input(
-            "CX", value=_get("google_cx", "GOOGLE_CX"),
-            placeholder="017576…:xxxxxxx", label_visibility="collapsed",
-        )
-        with st.expander("ℹ️ Comment créer un moteur de recherche Google ?"):
-            st.markdown("""
-1. Va sur [programmablesearchengine.google.com](https://programmablesearchengine.google.com/controlpanel/all)
-2. **Ajouter** → donne un nom → **Rechercher dans tout le web** ✓ → **Créer**
-3. Copie l'**ID du moteur de recherche** (`017576…:xxx`) et colle-le ci-dessus
-4. La clé Google API existante est réutilisée automatiquement
-""")
-
-    if "sirene" in source_types:
-        st.caption("✅ Aucune clé requise — Sirene (gratuite)")
-
-    if "pages_jaunes" in source_types:
-        st.caption("✅ Aucune clé requise — Pages Jaunes")
-
-    if "linkedin_csv" in source_types:
-        st.caption("📎 Le fichier CSV s'importe en bas")
-
-    st.markdown("---")
-    st.markdown("### 🔑 Clés API")
-
-    google_key_required = "google_maps" in source_types or "google_search" in source_types
-    st.markdown(
-        "**Google Places / Search API Key** "
-        "— [Obtenir ici ↗](https://console.cloud.google.com/apis/credentials)"
-        + ("" if google_key_required else " *(optionnel pour cette source)*")
-    )
-    google_key = st.text_input(
-        "Google Places API Key",
-        type="password",
-        value=_get("google_api_key", "GOOGLE_PLACES_API_KEY"),
-        placeholder="AIzaSy...",
-        label_visibility="collapsed",
-    )
-    with st.expander("ℹ️ Comment créer cette clé ?"):
-        st.markdown("""
-1. Va sur [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
-2. **Créer des identifiants** → **Clé API**
-3. Dans **Bibliothèque d'API**, active :
-   - *Places API* (obligatoire pour Google Maps)
-   - *Custom Search JSON API* (pour la source Google Search)
-   - *PageSpeed Insights API* (pour les scores de perf mobile)
-4. Optionnel : restreins la clé à ces API (onglet **Restrictions de clé API**)
-5. Copie la clé (`AIzaSy…`) et colle-la ci-dessus
-""")
-
-    st.markdown("**CRM**")
-    crm_type = st.selectbox(
-        "CRM", options=["Aucun", "Notion", "HubSpot"],
-        label_visibility="collapsed",
-    ).lower()
-    if crm_type == "notion":
-        crm_key = st.text_input(
-            "Notion API Key", type="password",
-            value=_get("notion_api_key", "NOTION_API_KEY"), placeholder="ntn_… ou secret_…",
-            label_visibility="collapsed",
-        )
-        crm_extra = {
-            "database_id": st.text_input(
-                "Notion Database ID", value=_get("notion_database_id", "NOTION_DATABASE_ID"),
-                placeholder="c2507703-...", label_visibility="collapsed",
-            )
-        }
-        with st.expander("ℹ️ Notion — comment créer la clé et le Database ID ?"):
-            st.markdown("""
-**Token d'intégration :**
-1. Va sur [notion.so/my-integrations](https://www.notion.so/my-integrations)
-2. **+ Nouvelle intégration** → nom "ProspectionBot" → Submit
-3. Copie le **Token d'intégration interne** (`secret_…`)
-
-**Database ID :**
-1. Ouvre ta base Notion dans le navigateur
-2. URL : `notion.so/MonEspace/`**`c2507703175647aaf2132a76c00e06`**`?v=…`
-3. Le Database ID est la partie surlignée (32 car.). Tu peux coller le lien entier, l'app extrait l'ID automatiquement.
-
-**⚠️ Cause n°1 quand « rien ne se passe » :**
-L'intégration n'est **pas connectée à la base**. Ouvre ta base → **⋯** (en haut à droite) → **Connexions** → ajoute "ProspectionBot". Sans ça, Notion renvoie une erreur 404 et aucune fiche n'est créée.
-""")
-    elif crm_type == "hubspot":
-        crm_key = st.text_input(
-            "HubSpot Private App Token", type="password",
-            value=_get("hubspot_api_key", "HUBSPOT_API_KEY"), placeholder="pat-eu1-...",
-            label_visibility="collapsed",
-        )
-        with st.expander("ℹ️ HubSpot — comment créer un token ?"):
-            st.markdown("""
-1. Dans HubSpot, va dans **Paramètres** (⚙️) → **Intégrations** → **Applications privées**
-2. **Créer une application privée** → donne-lui un nom (ex: ProspectionBot)
-3. Onglet **Portées** : coche `crm.objects.contacts.write` et `crm.objects.contacts.read`
-4. **Créer l'application** → copie le token (`pat-eu1-…`)
-""")
-        crm_extra = {}
-    else:
-        crm_key  = ""
-        crm_extra = {}
-
-    # Garder notion_key pour compat avec les sections historique/relances
-    notion_key = crm_key if crm_type == "notion" else ""
-
-    st.markdown(
-        "**Brevo API Key** "
-        "— [Obtenir ici ↗](https://app.brevo.com/settings/keys/api)"
-    )
-    brevo_key = st.text_input(
-        "Brevo API Key",
-        type="password",
-        value=_get("brevo_api_key", "BREVO_API_KEY"),
-        placeholder="xsmtpsib-...",
-        label_visibility="collapsed",
-    )
-    with st.expander("ℹ️ Comment créer cette clé ?"):
-        st.markdown("""
-1. Connecte-toi sur [app.brevo.com](https://app.brevo.com)
-2. Clique sur ton **avatar** en haut à droite → **SMTP & API**
-3. Onglet **API Keys** → **Générer une nouvelle clé API**
-4. Donne-lui un nom → copie la clé (`xsmtpsib-…`)
-""")
-
-    st.markdown("---")
-    st.markdown("### 📧 Gmail (optionnel)")
-
-    st.markdown("**Adresse Gmail**")
-    gmail_address = st.text_input(
-        "Adresse Gmail",
-        value=_get("gmail_address", "GMAIL_ADDRESS"),
-        placeholder="toi@gmail.com",
-        label_visibility="collapsed",
-    )
-
-    st.markdown(
-        "**Mot de passe d'application** "
-        "— [Générer ici ↗](https://myaccount.google.com/apppasswords) *(pas ton vrai mdp)*"
-    )
-    gmail_password = st.text_input(
-        "Mot de passe d'application",
-        type="password",
-        value=os.getenv("GMAIL_APP_PASSWORD", ""),
-        placeholder="xxxx xxxx xxxx xxxx",
-        label_visibility="collapsed",
-    )
-    with st.expander("ℹ️ Comment créer un mot de passe d'application Google ?"):
-        st.markdown("""
-1. Va sur [myaccount.google.com/security](https://myaccount.google.com/security)
-2. Active la **Validation en 2 étapes** si ce n'est pas déjà fait
-3. Recherche **"Mots de passe des applications"** dans la barre de recherche de ton compte
-4. Sélectionne **Autre (nom personnalisé)** → entre "ProspectionBot" → **Générer**
-5. Copie le mot de passe à 16 caractères affiché (`xxxx xxxx xxxx xxxx`)
-6. Entre TON adresse Gmail dans le champ "Adresse Gmail" ci-dessus
-""")
-
-    st.markdown("---")
-    st.markdown("### 👤 Ta signature")
-    your_name = st.text_input("Prénom", value=_get("your_name", "YOUR_NAME"))
-    your_title = st.text_input("Titre", value=_get("your_title", "YOUR_TITLE"))
-    your_email = st.text_input("Ton email", value=_get("your_email", "YOUR_EMAIL"))
-    your_website = st.text_input("Ton site", value=_get("your_website", "YOUR_WEBSITE"))
-
-    st.markdown("---")
-
-    # Démarrage auto du suivi de réponses si credentials présents
-    _rt_addr = _get("gmail_address", "GMAIL_ADDRESS")
-    _rt_pwd  = os.getenv("GMAIL_APP_PASSWORD", "")
-    if _rt_addr and _rt_pwd:
-        from services import reply_tracker as _rt
-        _rt.ensure_running(_rt_addr, _rt_pwd)
-
-    st.caption("🔒 Tes clés restent sur ta machine. Rien n'est envoyé à l'extérieur.")
+    _conn = [
+        ("Google", bool(google_key)),
+        ("Gmail", bool(gmail_address and gmail_password)),
+        ("CRM", crm_type != "aucun" and bool(crm_key)),
+        ("SMS", bool(brevo_key)),
+    ]
+    st.caption("**Connexions** · " + " · ".join(f"{'🟢' if ok else '⚪'} {n}" for n, ok in _conn))
+    if not google_key:
+        st.caption("👉 Configure tes clés dans **⚙️ Réglages**.")
 
 
 # ---------------------------------------------------------------------------
@@ -401,9 +265,6 @@ from target_segments import (
     get_target, list_targets,
 )
 
-st.markdown("# 🎯 Prospection B2B Automatisée")
-st.markdown("Trouve des prospects locaux, analyse leur besoin et génère des cold emails/SMS en un clic.")
-st.markdown("---")
 
 def _linkedin_panel(row: dict, key_prefix: str) -> None:
     """
@@ -491,7 +352,8 @@ from pipeline import run_prospection  # noqa: E402
 # ===========================================================================
 
 def page_ma_journee():
-    st.markdown("### ☀️ Ma journée")
+    st.title("☀️ Ma journée")
+    st.caption("Tes actions du jour : relances, rappels, maquettes à envoyer, messages LinkedIn.")
 
     _sum = crm_store.actions_summary()
     _m1, _m2, _m3 = st.columns(3)
@@ -578,6 +440,27 @@ def page_ma_journee():
                 _linkedin_panel(_d, key_prefix=f"mj_{_pid}")
 
 def page_prospection():
+    st.title("🔍 Nouvelle campagne")
+
+    st.markdown("### 📡 Sources")
+    st.multiselect(
+        "Sources", options=list(_SRC_LABELS.keys()), default=source_types,
+        format_func=lambda x: _SRC_LABELS[x], key="w_source_types",
+        on_change=_persist_cfg, args=("source_types",), label_visibility="collapsed",
+    )
+    _missing = []
+    if google_key_required and not google_key:
+        _missing.append("la clé Google")
+    if "google_search" in source_types and not google_cx:
+        _missing.append("le Custom Search Engine ID")
+    if "france_travail" in source_types and not (ft_client_id and ft_client_secret):
+        _missing.append("les identifiants France Travail")
+    if _missing:
+        st.warning(f"⚙️ Il manque {', '.join(_missing)} — à renseigner dans **Réglages**.")
+    _free = [n for s_, n in (("sirene", "Sirène"), ("pages_jaunes", "Pages Jaunes")) if s_ in source_types]
+    if _free:
+        st.caption(f"✅ {' et '.join(_free)} : gratuit, aucune clé requise.")
+    st.markdown("---")
     # ---------------------------------------------------------------------------
     # Sélection service × cible
     # ---------------------------------------------------------------------------
@@ -908,11 +791,11 @@ def page_prospection():
         launch = st.button("🚀 Lancer la prospection", disabled=_launch_disabled)
 
     if ("google_maps" in source_types or "google_search" in source_types) and not google_key:
-        st.info("👈 Renseigne ta clé Google Places dans la barre latérale pour commencer.")
+        st.info("⚙️ Renseigne ta clé Google Places dans ⚙️ Réglages pour commencer.")
     if "google_search" in source_types and not google_cx:
-        st.info("👈 Renseigne ton Custom Search Engine ID (cx) dans la barre latérale.")
+        st.info("⚙️ Renseigne ton Custom Search Engine ID (cx) dans ⚙️ Réglages.")
     if "france_travail" in source_types and (not ft_client_id or not ft_client_secret):
-        st.info("👈 Renseigne tes identifiants France Travail dans la barre latérale.")
+        st.info("⚙️ Renseigne tes identifiants France Travail dans ⚙️ Réglages.")
     if "linkedin_csv" in source_types and not linkedin_content:
         st.info("👆 Importe un fichier CSV LinkedIn ci-dessus pour commencer.")
 
@@ -1357,108 +1240,111 @@ def page_pipeline():
         pass
     _pipe_total = sum(_pipe_counts.values())
 
-    with st.expander(f"📋 Pipeline — {_pipe_total} prospect(s) suivi(s)", expanded=bool(_pipe_total)):
-        if not _pipe_total:
-            st.info(
-                "Ton pipeline est vide. Lance une prospection : les prospects trouvés "
-                "y seront ajoutés automatiquement et tu pourras suivre chacun d'eux "
-                "(contacté, intéressé, RDV, client…)."
+    st.title(f"📋 Pipeline — {_pipe_total} prospect(s)")
+    st.caption("Tous tes prospects suivis, par statut. Change un statut ou ajoute une note en un clic.")
+    if not _pipe_total:
+        st.info(
+            "Ton pipeline est vide. Lance une prospection : les prospects trouvés "
+            "y seront ajoutés automatiquement et tu pourras suivre chacun d'eux "
+            "(contacté, intéressé, RDV, client…)."
+        )
+    else:
+        # Compteurs par statut
+        _active = [s for s in crm_store.STATUS_ORDER if _pipe_counts.get(s)]
+        if _active:
+            _cols = st.columns(len(_active))
+            for _c, _s in zip(_cols, _active):
+                _c.metric(crm_store.STATUS_LABELS[_s], _pipe_counts[_s])
+
+        st.markdown("---")
+
+        # Filtres
+        _f1, _f2, _f3 = st.columns([2, 2, 3])
+        with _f1:
+            _filter_status = st.selectbox(
+                "Statut",
+                options=["(tous)"] + crm_store.STATUS_ORDER,
+                format_func=lambda s: "Tous les statuts" if s == "(tous)" else crm_store.STATUS_LABELS[s],
+                key="pipe_status",
             )
-        else:
-            # Compteurs par statut
-            _active = [s for s in crm_store.STATUS_ORDER if _pipe_counts.get(s)]
-            if _active:
-                _cols = st.columns(len(_active))
-                for _c, _s in zip(_cols, _active):
-                    _c.metric(crm_store.STATUS_LABELS[_s], _pipe_counts[_s])
-
-            st.markdown("---")
-
-            # Filtres
-            _f1, _f2, _f3 = st.columns([2, 2, 3])
-            with _f1:
-                _filter_status = st.selectbox(
-                    "Statut",
-                    options=["(tous)"] + crm_store.STATUS_ORDER,
-                    format_func=lambda s: "Tous les statuts" if s == "(tous)" else crm_store.STATUS_LABELS[s],
-                    key="pipe_status",
-                )
-            with _f2:
-                _filter_email = st.selectbox(
-                    "Email",
-                    options=["(tous)", "avec", "sans"],
-                    format_func=lambda v: {"(tous)": "Avec ou sans email",
-                                           "avec": "📧 Avec email seulement",
-                                           "sans": "Sans email"}[v],
-                    key="pipe_email",
-                )
-            with _f3:
-                _filter_search = st.text_input("Rechercher", placeholder="Nom, email, site…", key="pipe_search")
-
-            _rows = crm_store.list_prospects(
-                status=None if _filter_status == "(tous)" else _filter_status,
-                has_email={"(tous)": None, "avec": True, "sans": False}[_filter_email],
-                search=_filter_search.strip(),
+        with _f2:
+            _filter_email = st.selectbox(
+                "Email",
+                options=["(tous)", "avec", "sans"],
+                format_func=lambda v: {"(tous)": "Avec ou sans email",
+                                       "avec": "📧 Avec email seulement",
+                                       "sans": "Sans email"}[v],
+                key="pipe_email",
             )
-            st.caption(f"{len(_rows)} prospect(s) affiché(s)")
+        with _f3:
+            _filter_search = st.text_input("Rechercher", placeholder="Nom, email, site…", key="pipe_search")
 
-            for _row in _rows:
-                _pid = _row["place_id"]
-                _label = f"{crm_store.STATUS_LABELS.get(_row['status'], _row['status'])} · **{_row['name']}**"
-                if _row.get("email"):
-                    _eb = {"valide": " ✅", "risque": " ⚠️", "invalide": " ❌"}.get(_row.get("email_status") or "", "")
-                    _label += f" · 📧 {_row['email']}{_eb}"
-                with st.container(border=True):
-                    st.markdown(_label)
-                    _meta = []
-                    if _row.get("dirigeant"):
-                        _q = f" ({_row['dirigeant_qualite']})" if _row.get("dirigeant_qualite") else ""
-                        _meta.append(f"👤 {_row['dirigeant']}{_q}")
-                    if _row.get("phone"):
-                        _meta.append(f"📞 {_row['phone']}")
-                    if _row.get("website"):
-                        _meta.append(f"[🌐 site]({_row['website']})")
-                    if _row.get("score") is not None:
-                        _meta.append(f"score {_row['score']}/100")
-                    if _row.get("last_contact_date"):
-                        _meta.append(f"dernier contact {_row['last_contact_date']}")
-                    if _row.get("followup_step"):
-                        _meta.append(f"{_row['followup_step']} relance(s)")
-                    if _meta:
-                        st.caption(" · ".join(_meta))
+        _rows = crm_store.list_prospects(
+            status=None if _filter_status == "(tous)" else _filter_status,
+            has_email={"(tous)": None, "avec": True, "sans": False}[_filter_email],
+            search=_filter_search.strip(),
+        )
+        st.caption(f"{len(_rows)} prospect(s) affiché(s)")
 
-                    _a1, _a2 = st.columns([2, 3])
-                    with _a1:
-                        _new_status = st.selectbox(
-                            "Statut", options=crm_store.STATUS_ORDER,
-                            index=crm_store.STATUS_ORDER.index(_row["status"])
-                            if _row["status"] in crm_store.STATUS_ORDER else 0,
-                            format_func=lambda s: crm_store.STATUS_LABELS[s],
-                            key=f"st_{_pid}", label_visibility="collapsed",
-                        )
-                        if _new_status != _row["status"]:
-                            crm_store.set_status(_pid, _new_status)
-                            st.rerun()
-                    with _a2:
-                        _new_notes = st.text_input(
-                            "Notes", value=_row.get("notes") or "",
-                            placeholder="Note (rappeler en janvier, budget serré…)",
-                            key=f"nt_{_pid}", label_visibility="collapsed",
-                        )
-                        if _new_notes != (_row.get("notes") or ""):
-                            crm_store.set_notes(_pid, _new_notes)
-                            st.toast("Note enregistrée ✅")
+        for _row in _rows:
+            _pid = _row["place_id"]
+            _label = f"{crm_store.STATUS_LABELS.get(_row['status'], _row['status'])} · **{_row['name']}**"
+            if _row.get("email"):
+                _eb = {"valide": " ✅", "risque": " ⚠️", "invalide": " ❌"}.get(_row.get("email_status") or "", "")
+                _label += f" · 📧 {_row['email']}{_eb}"
+            with st.container(border=True):
+                st.markdown(_label)
+                _meta = []
+                if _row.get("dirigeant"):
+                    _q = f" ({_row['dirigeant_qualite']})" if _row.get("dirigeant_qualite") else ""
+                    _meta.append(f"👤 {_row['dirigeant']}{_q}")
+                if _row.get("phone"):
+                    _meta.append(f"📞 {_row['phone']}")
+                if _row.get("website"):
+                    _meta.append(f"[🌐 site]({_row['website']})")
+                if _row.get("score") is not None:
+                    _meta.append(f"score {_row['score']}/100")
+                if _row.get("last_contact_date"):
+                    _meta.append(f"dernier contact {_row['last_contact_date']}")
+                if _row.get("followup_step"):
+                    _meta.append(f"{_row['followup_step']} relance(s)")
+                if _meta:
+                    st.caption(" · ".join(_meta))
 
-                    with st.expander("💬 LinkedIn", expanded=False):
-                        _linkedin_panel(_row, key_prefix=f"pl_{_pid}")
+                _a1, _a2 = st.columns([2, 3])
+                with _a1:
+                    _new_status = st.selectbox(
+                        "Statut", options=crm_store.STATUS_ORDER,
+                        index=crm_store.STATUS_ORDER.index(_row["status"])
+                        if _row["status"] in crm_store.STATUS_ORDER else 0,
+                        format_func=lambda s: crm_store.STATUS_LABELS[s],
+                        key=f"st_{_pid}", label_visibility="collapsed",
+                    )
+                    if _new_status != _row["status"]:
+                        crm_store.set_status(_pid, _new_status)
+                        st.rerun()
+                with _a2:
+                    _new_notes = st.text_input(
+                        "Notes", value=_row.get("notes") or "",
+                        placeholder="Note (rappeler en janvier, budget serré…)",
+                        key=f"nt_{_pid}", label_visibility="collapsed",
+                    )
+                    if _new_notes != (_row.get("notes") or ""):
+                        crm_store.set_notes(_pid, _new_notes)
+                        st.toast("Note enregistrée ✅")
 
-                    _events = crm_store.get_events(_pid, limit=5)
-                    if _events:
-                        with st.expander("🕮 Historique", expanded=False):
-                            for _e in _events:
-                                st.caption(f"{_e['at'][:16].replace('T', ' ')} — **{_e['kind']}** {_e['detail']}")
+                with st.expander("💬 LinkedIn", expanded=False):
+                    _linkedin_panel(_row, key_prefix=f"pl_{_pid}")
+
+                _events = crm_store.get_events(_pid, limit=5)
+                if _events:
+                    with st.expander("🕮 Historique", expanded=False):
+                        for _e in _events:
+                            st.caption(f"{_e['at'][:16].replace('T', ' ')} — **{_e['kind']}** {_e['detail']}")
 
 def page_relances():
+    st.title("🔄 Relances")
+    st.caption("Séquences de relance, emails programmés et suivi des réponses.")
     # ---------------------------------------------------------------------------
     # Emails programmés
     # ---------------------------------------------------------------------------
@@ -1490,7 +1376,7 @@ def page_relances():
             if not _sched_ui.credentials_available():
                 st.error(
                     "🔑 Aucun mot de passe Gmail disponible pour l'envoi différé. "
-                    "Renseigne-le dans la barre latérale, **ou mieux** : ajoute `GMAIL_APP_PASSWORD` "
+                    "Renseigne-le dans ⚙️ Réglages, **ou mieux** : ajoute `GMAIL_APP_PASSWORD` "
                     "dans les variables Railway pour que les envois programmés survivent aux redémarrages."
                 )
             if _stats["pending"] > 0 and st.button("📤 Envoyer maintenant les emails dus", use_container_width=True):
@@ -1617,6 +1503,8 @@ def page_relances():
                         st.rerun()
 
 def page_statistiques():
+    st.title("📊 Statistiques")
+    st.caption("Tes campagnes passées et leurs résultats.")
     # ---------------------------------------------------------------------------
     # Dashboard de statistiques
     # ---------------------------------------------------------------------------
@@ -1778,6 +1666,100 @@ def page_statistiques():
                 st.divider()
 
 def page_reglages():
+    st.title("⚙️ Réglages")
+    st.caption("Chaque champ est enregistré automatiquement dès que tu le modifies.")
+
+    def _field(label, key, env="", secret=False, placeholder="", help_=None):
+        return st.text_input(
+            label, value=_cfg(key, env), key=f"w_{key}", type="password" if secret else "default",
+            placeholder=placeholder, help=help_, on_change=_persist_cfg, args=(key,),
+        )
+
+    # ---------------------------------------------------------------------------
+    # Connexions & clés API
+    # ---------------------------------------------------------------------------
+    st.subheader("🔌 Connexions")
+
+    with st.container(border=True):
+        st.markdown("**🗺️ Google** — recherche Maps, performance des sites · "
+                    "[obtenir une clé ↗](https://console.cloud.google.com/apis/credentials)")
+        _field("Clé API Google", "google_api_key", "GOOGLE_PLACES_API_KEY", secret=True, placeholder="AIzaSy…")
+        with st.expander("Comment créer cette clé ?"):
+            st.markdown(
+                "1. [Google Cloud Console](https://console.cloud.google.com/apis/credentials) → "
+                "**Créer des identifiants** → **Clé API**\n"
+                "2. Dans **Bibliothèque d'API**, active *Places API*, *PageSpeed Insights API* "
+                "(et *Custom Search JSON API* pour la source Google Search)\n"
+                "3. Copie la clé (`AIzaSy…`) et colle-la ci-dessus"
+            )
+        _field("Custom Search Engine ID (source Google Search, optionnel)", "google_cx", "GOOGLE_CX",
+               placeholder="017576…:xxxxxxx",
+               help_="Créé sur programmablesearchengine.google.com → « Rechercher dans tout le web ».")
+
+    with st.container(border=True):
+        st.markdown("**📧 Gmail** — envoi des emails et détection des réponses · "
+                    "[mot de passe d'application ↗](https://myaccount.google.com/apppasswords)")
+        _field("Adresse Gmail", "gmail_address", "GMAIL_ADDRESS", placeholder="toi@gmail.com")
+        _field("Mot de passe d'application (pas ton vrai mot de passe)", "gmail_password",
+               "GMAIL_APP_PASSWORD", secret=True, placeholder="xxxx xxxx xxxx xxxx")
+        st.caption("🔒 Le mot de passe n'est jamais enregistré sur disque : il reste le temps de la "
+                   "session. Pour ne plus le ressaisir, ajoute `GMAIL_APP_PASSWORD` dans les variables Railway.")
+        with st.expander("Comment créer un mot de passe d'application ?"):
+            st.markdown(
+                "1. [myaccount.google.com/security](https://myaccount.google.com/security) → active la "
+                "**validation en 2 étapes**\n"
+                "2. Cherche **« Mots de passe des applications »** → nom « ProspectionBot » → **Générer**\n"
+                "3. Copie les 16 caractères affichés"
+            )
+
+    with st.container(border=True):
+        st.markdown("**🗂️ CRM** — synchronisation des prospects")
+        _crm_opts = ["aucun", "notion", "hubspot"]
+        st.selectbox(
+            "CRM", options=_crm_opts, index=_crm_opts.index(crm_type) if crm_type in _crm_opts else 0,
+            format_func=lambda c: {"aucun": "Aucun", "notion": "Notion", "hubspot": "HubSpot"}[c],
+            key="w_crm_type", on_change=_persist_cfg, args=("crm_type",),
+        )
+        if crm_type == "notion":
+            _field("Token d'intégration Notion", "notion_api_key", "NOTION_API_KEY", secret=True,
+                   placeholder="ntn_… ou secret_…")
+            _field("Database ID (ou lien complet de la base)", "notion_database_id", "NOTION_DATABASE_ID",
+                   placeholder="c2507703…")
+            st.warning("⚠️ Cause n°1 quand « rien ne se passe » : l'intégration n'est pas connectée à la base. "
+                       "Ouvre ta base Notion → **⋯** → **Connexions** → ajoute ton intégration.")
+        elif crm_type == "hubspot":
+            _field("Token d'application privée HubSpot", "hubspot_api_key", "HUBSPOT_API_KEY", secret=True,
+                   placeholder="pat-eu1-…",
+                   help_="HubSpot → Paramètres → Intégrations → Applications privées. Portées : "
+                         "crm.objects.contacts.read / write.")
+
+    with st.container(border=True):
+        st.markdown("**📱 SMS (Brevo)** · [obtenir une clé ↗](https://app.brevo.com/settings/keys/api)")
+        _field("Clé API Brevo", "brevo_api_key", "BREVO_API_KEY", secret=True, placeholder="xsmtpsib-…")
+
+    with st.container(border=True):
+        st.markdown("**🏛️ France Travail** — source « offres d'emploi » (optionnel) · "
+                    "[francetravail.io ↗](https://francetravail.io/inscription)")
+        _c1, _c2 = st.columns(2)
+        with _c1:
+            _field("Client ID", "ft_client_id", "FT_CLIENT_ID", placeholder="PAR_xxxx…")
+        with _c2:
+            _field("Client Secret", "ft_client_secret", "FT_CLIENT_SECRET", secret=True)
+
+    # ---------------------------------------------------------------------------
+    # Signature
+    # ---------------------------------------------------------------------------
+    st.subheader("👤 Ta signature")
+    with st.container(border=True):
+        _s1, _s2 = st.columns(2)
+        with _s1:
+            _field("Prénom Nom", "your_name", "YOUR_NAME")
+            _field("Email", "your_email", "YOUR_EMAIL")
+        with _s2:
+            _field("Titre", "your_title", "YOUR_TITLE", placeholder="Développeur web fullstack")
+            _field("Site / portfolio / GitHub", "your_website", "YOUR_WEBSITE")
+
+    st.subheader("🧰 Préférences")
     # ---------------------------------------------------------------------------
     # Délais des actions (jours ouvrés)
     # ---------------------------------------------------------------------------
