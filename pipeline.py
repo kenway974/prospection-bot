@@ -379,6 +379,19 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             except Exception as _dir_exc:
                 log_q.put(f"[--] ⚠️  Recherche des dirigeants impossible : {_dir_exc}")
 
+        # Vérification des emails : une adresse morte fait monter le taux de
+        # rebond et envoie TOUS tes mails suivants en spam.
+        try:
+            from services.email_check import check_prospects
+            _ec = check_prospects(all_prospects, log=log_q.put)
+            if sum(_ec.values()):
+                log_q.put(
+                    f"[--] 📧 Emails vérifiés : ✅ {_ec['valide']} valide(s) · "
+                    f"⚠️ {_ec['risque']} risqué(s) · ❌ {_ec['invalide']} invalide(s)."
+                )
+        except Exception as _ec_exc:
+            log_q.put(f"[--] ⚠️  Vérification des emails impossible : {_ec_exc}")
+
         # Emails
         style_dict = params.get("email_style", {})
         _email_style = _EmailStyle(
@@ -455,7 +468,18 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         # empêcher la suite du run (SMS, historique) de s'exécuter.
         if params["send_emails"] and params["gmail_address"] and params["gmail_password"]:
             try:
-                _with_email = [p for p in all_prospects if p.email]
+                from services.email_check import is_sendable as _is_sendable
+                _allow_risky = params.get("send_risky_emails", False)
+                _with_email = [p for p in all_prospects if _is_sendable(p, _allow_risky)]
+                _sendable_ids = {p.place_id for p in _with_email}
+                _blocked = [p for p in all_prospects if p.email and p.place_id not in _sendable_ids]
+                if _blocked:
+                    log_q.put(
+                        f"[--] 🛡️  {len(_blocked)} email(s) NON envoyé(s) pour protéger ta délivrabilité "
+                        f"(adresse invalide{'' if _allow_risky else ' ou risquée'}) : "
+                        + ", ".join(f"{p.email}" for p in _blocked[:5])
+                        + (f" +{len(_blocked) - 5}" if len(_blocked) > 5 else "")
+                    )
                 _without_email = len(all_prospects) - len(_with_email)
                 if params.get("email_send_mode") == "⏰ Programmé" and params.get("sched_date"):
                     from datetime import datetime as _dtime
@@ -466,7 +490,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                     ).timestamp()
                     _n_sched = 0
                     for _p in all_prospects:
-                        if not _p.email or not _p.email_draft:
+                        if _p.place_id not in _sendable_ids or not _p.email_draft:
                             continue
                         _sched_mod.add_pending(
                             place_id=_p.place_id,

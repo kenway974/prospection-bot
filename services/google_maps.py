@@ -47,6 +47,9 @@ class Prospect:
     siren: str = ""             # Numéro SIREN de l'entreprise
     dirigeant: str = ""         # « Jean Dupont » — représentant légal
     dirigeant_qualite: str = "" # « Président », « Gérant », « Directeur général »…
+    # Rempli par services/email_check.py
+    email_status: str = ""        # « valide » | « risque » | « invalide »
+    email_status_reason: str = "" # explication lisible
 
     def has_website(self) -> bool:
         """Retourne True si le prospect a un site web valide."""
@@ -80,6 +83,8 @@ class Prospect:
             "siren": self.siren,
             "dirigeant": self.dirigeant,
             "dirigeant_qualite": self.dirigeant_qualite,
+            "email_status": self.email_status,
+            "email_status_reason": self.email_status_reason,
         }
 
 

@@ -175,237 +175,81 @@ def _get(key: str, env_var: str = "", default: str = "") -> str:
 # ---------------------------------------------------------------------------
 # Sidebar — Configuration
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Réglages de connexion — source de vérité UNIQUE, lue par toutes les pages.
+# Priorité : saisie de la session > output/settings.json > variable d'env.
+# Les champs de saisie sont dans la page ⚙️ Réglages ; la barre latérale ne
+# sert plus qu'à naviguer. Chaque champ est enregistré dès qu'il change.
+# ---------------------------------------------------------------------------
+_SECRET_KEYS = {"gmail_password"}   # jamais écrit sur disque
+
+
+def _cfg(key: str, env_var: str = "", default=""):
+    val = st.session_state.get(f"cfg_{key}")
+    if val is not None:
+        return val
+    if key in _SECRET_KEYS:
+        return os.getenv(env_var, "") or default
+    return _get(key, env_var, default)
+
+
+def _persist_cfg(key: str) -> None:
+    """Callback des champs de réglage : garde la valeur en session + sur disque."""
+    val = st.session_state.get(f"w_{key}")
+    st.session_state[f"cfg_{key}"] = val
+    if key not in _SECRET_KEYS:
+        _save_settings({key: ",".join(val) if isinstance(val, list) else val})
+
+
+from services.sources import SOURCE_LABELS as _SRC_LABELS
+_src_raw = _cfg("source_types") or "google_maps"
+source_types = [
+    s for s in (_src_raw if isinstance(_src_raw, list) else str(_src_raw).split(","))
+    if s in _SRC_LABELS
+] or ["google_maps"]
+google_key_required = "google_maps" in source_types or "google_search" in source_types
+
+google_key       = _cfg("google_api_key", "GOOGLE_PLACES_API_KEY")
+google_cx        = _cfg("google_cx", "GOOGLE_CX")
+ft_client_id     = _cfg("ft_client_id", "FT_CLIENT_ID")
+ft_client_secret = _cfg("ft_client_secret", "FT_CLIENT_SECRET")
+
+crm_type = (_cfg("crm_type") or "aucun").lower()
+if crm_type == "notion":
+    crm_key = _cfg("notion_api_key", "NOTION_API_KEY")
+    crm_extra = {"database_id": _cfg("notion_database_id", "NOTION_DATABASE_ID")}
+elif crm_type == "hubspot":
+    crm_key = _cfg("hubspot_api_key", "HUBSPOT_API_KEY")
+    crm_extra = {}
+else:
+    crm_key, crm_extra = "", {}
+notion_key = crm_key if crm_type == "notion" else ""   # compat historique/relances
+
+brevo_key      = _cfg("brevo_api_key", "BREVO_API_KEY")
+gmail_address  = _cfg("gmail_address", "GMAIL_ADDRESS")
+gmail_password = _cfg("gmail_password", "GMAIL_APP_PASSWORD")
+
+your_name    = _cfg("your_name", "YOUR_NAME")
+your_title   = _cfg("your_title", "YOUR_TITLE")
+your_email   = _cfg("your_email", "YOUR_EMAIL")
+your_website = _cfg("your_website", "YOUR_WEBSITE")
+
+# Démarrage auto du suivi des réponses Gmail si les identifiants sont connus
+if gmail_address and gmail_password:
+    from services import reply_tracker as _rt
+    _rt.ensure_running(gmail_address, gmail_password)
+
+# Barre latérale : le menu (ajouté par st.navigation) + l'état des connexions
 with st.sidebar:
-    st.markdown("## 🎯 Prospection B2B")
-    # Badge d'actions dues, affiché directement dans le menu
-    try:
-        _act = crm_store.actions_summary()
-        _due_now = _act["en_retard"] + _act["aujourdhui"]
-    except Exception:
-        _due_now = 0
-    _page = st.radio(
-        "Navigation",
-        options=["Ma journée", "Prospection", "Pipeline", "Relances", "Statistiques", "Réglages"],
-        format_func=lambda p: {
-            "Ma journée":   f"☀️  Ma journée{f'  ({_due_now})' if _due_now else ''}",
-            "Prospection":  "🔍  Prospection",
-            "Pipeline":     "📋  Pipeline",
-            "Relances":     "🔄  Relances",
-            "Statistiques": "📊  Statistiques",
-            "Réglages":     "⚙️  Réglages",
-        }[p],
-        label_visibility="collapsed",
-        key="nav_page",
-    )
-    st.markdown("---")
-
-    st.markdown("### 📡 Sources de prospection")
-    from services.sources import SOURCE_LABELS as _SRC_LABELS
-    source_types = st.multiselect(
-        "Sources",
-        options=list(_SRC_LABELS.keys()),
-        default=[s for s in (_get("source_types") or "google_maps").split(",") if s in _SRC_LABELS],
-        format_func=lambda x: _SRC_LABELS[x],
-        label_visibility="collapsed",
-    )
-    if not source_types:
-        source_types = ["google_maps"]
-
-    # Config spécifique à la source
-    ft_client_id = ft_client_secret = google_cx = ""
-
-    if "france_travail" in source_types:
-        st.markdown("**Client ID France Travail**")
-        ft_client_id = st.text_input(
-            "FT Client ID", value=_get("ft_client_id", "FT_CLIENT_ID"),
-            placeholder="PAR_xxxx…", label_visibility="collapsed",
-        )
-        st.markdown("**Client Secret France Travail**")
-        ft_client_secret = st.text_input(
-            "FT Client Secret", type="password",
-            value=_get("ft_client_secret", "FT_CLIENT_SECRET"),
-            placeholder="xxxxxxxx-xxxx-…", label_visibility="collapsed",
-        )
-        with st.expander("ℹ️ Comment obtenir les identifiants France Travail ?"):
-            st.markdown("""
-1. Inscris-toi sur [francetravail.io](https://francetravail.io/inscription)
-2. **Mes APIs** → **Référencer une nouvelle application**
-3. Coche **Offres d'emploi v2** dans les API souhaitées
-4. Récupère **Client ID** et **Client Secret** dans l'onglet **Mes applications**
-""")
-
-    if "google_search" in source_types:
-        st.markdown("**Custom Search Engine ID (cx)**")
-        google_cx = st.text_input(
-            "CX", value=_get("google_cx", "GOOGLE_CX"),
-            placeholder="017576…:xxxxxxx", label_visibility="collapsed",
-        )
-        with st.expander("ℹ️ Comment créer un moteur de recherche Google ?"):
-            st.markdown("""
-1. Va sur [programmablesearchengine.google.com](https://programmablesearchengine.google.com/controlpanel/all)
-2. **Ajouter** → donne un nom → **Rechercher dans tout le web** ✓ → **Créer**
-3. Copie l'**ID du moteur de recherche** (`017576…:xxx`) et colle-le ci-dessus
-4. La clé Google API existante est réutilisée automatiquement
-""")
-
-    if "sirene" in source_types:
-        st.caption("✅ Aucune clé requise — Sirene (gratuite)")
-
-    if "pages_jaunes" in source_types:
-        st.caption("✅ Aucune clé requise — Pages Jaunes")
-
-    if "linkedin_csv" in source_types:
-        st.caption("📎 Le fichier CSV s'importe en bas")
-
-    st.markdown("---")
-    st.markdown("### 🔑 Clés API")
-
-    google_key_required = "google_maps" in source_types or "google_search" in source_types
-    st.markdown(
-        "**Google Places / Search API Key** "
-        "— [Obtenir ici ↗](https://console.cloud.google.com/apis/credentials)"
-        + ("" if google_key_required else " *(optionnel pour cette source)*")
-    )
-    google_key = st.text_input(
-        "Google Places API Key",
-        type="password",
-        value=_get("google_api_key", "GOOGLE_PLACES_API_KEY"),
-        placeholder="AIzaSy...",
-        label_visibility="collapsed",
-    )
-    with st.expander("ℹ️ Comment créer cette clé ?"):
-        st.markdown("""
-1. Va sur [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
-2. **Créer des identifiants** → **Clé API**
-3. Dans **Bibliothèque d'API**, active :
-   - *Places API* (obligatoire pour Google Maps)
-   - *Custom Search JSON API* (pour la source Google Search)
-   - *PageSpeed Insights API* (pour les scores de perf mobile)
-4. Optionnel : restreins la clé à ces API (onglet **Restrictions de clé API**)
-5. Copie la clé (`AIzaSy…`) et colle-la ci-dessus
-""")
-
-    st.markdown("**CRM**")
-    crm_type = st.selectbox(
-        "CRM", options=["Aucun", "Notion", "HubSpot"],
-        label_visibility="collapsed",
-    ).lower()
-    if crm_type == "notion":
-        crm_key = st.text_input(
-            "Notion API Key", type="password",
-            value=_get("notion_api_key", "NOTION_API_KEY"), placeholder="ntn_… ou secret_…",
-            label_visibility="collapsed",
-        )
-        crm_extra = {
-            "database_id": st.text_input(
-                "Notion Database ID", value=_get("notion_database_id", "NOTION_DATABASE_ID"),
-                placeholder="c2507703-...", label_visibility="collapsed",
-            )
-        }
-        with st.expander("ℹ️ Notion — comment créer la clé et le Database ID ?"):
-            st.markdown("""
-**Token d'intégration :**
-1. Va sur [notion.so/my-integrations](https://www.notion.so/my-integrations)
-2. **+ Nouvelle intégration** → nom "ProspectionBot" → Submit
-3. Copie le **Token d'intégration interne** (`secret_…`)
-
-**Database ID :**
-1. Ouvre ta base Notion dans le navigateur
-2. URL : `notion.so/MonEspace/`**`c2507703175647aaf2132a76c00e06`**`?v=…`
-3. Le Database ID est la partie surlignée (32 car.). Tu peux coller le lien entier, l'app extrait l'ID automatiquement.
-
-**⚠️ Cause n°1 quand « rien ne se passe » :**
-L'intégration n'est **pas connectée à la base**. Ouvre ta base → **⋯** (en haut à droite) → **Connexions** → ajoute "ProspectionBot". Sans ça, Notion renvoie une erreur 404 et aucune fiche n'est créée.
-""")
-    elif crm_type == "hubspot":
-        crm_key = st.text_input(
-            "HubSpot Private App Token", type="password",
-            value=_get("hubspot_api_key", "HUBSPOT_API_KEY"), placeholder="pat-eu1-...",
-            label_visibility="collapsed",
-        )
-        with st.expander("ℹ️ HubSpot — comment créer un token ?"):
-            st.markdown("""
-1. Dans HubSpot, va dans **Paramètres** (⚙️) → **Intégrations** → **Applications privées**
-2. **Créer une application privée** → donne-lui un nom (ex: ProspectionBot)
-3. Onglet **Portées** : coche `crm.objects.contacts.write` et `crm.objects.contacts.read`
-4. **Créer l'application** → copie le token (`pat-eu1-…`)
-""")
-        crm_extra = {}
-    else:
-        crm_key  = ""
-        crm_extra = {}
-
-    # Garder notion_key pour compat avec les sections historique/relances
-    notion_key = crm_key if crm_type == "notion" else ""
-
-    st.markdown(
-        "**Brevo API Key** "
-        "— [Obtenir ici ↗](https://app.brevo.com/settings/keys/api)"
-    )
-    brevo_key = st.text_input(
-        "Brevo API Key",
-        type="password",
-        value=_get("brevo_api_key", "BREVO_API_KEY"),
-        placeholder="xsmtpsib-...",
-        label_visibility="collapsed",
-    )
-    with st.expander("ℹ️ Comment créer cette clé ?"):
-        st.markdown("""
-1. Connecte-toi sur [app.brevo.com](https://app.brevo.com)
-2. Clique sur ton **avatar** en haut à droite → **SMTP & API**
-3. Onglet **API Keys** → **Générer une nouvelle clé API**
-4. Donne-lui un nom → copie la clé (`xsmtpsib-…`)
-""")
-
-    st.markdown("---")
-    st.markdown("### 📧 Gmail (optionnel)")
-
-    st.markdown("**Adresse Gmail**")
-    gmail_address = st.text_input(
-        "Adresse Gmail",
-        value=_get("gmail_address", "GMAIL_ADDRESS"),
-        placeholder="toi@gmail.com",
-        label_visibility="collapsed",
-    )
-
-    st.markdown(
-        "**Mot de passe d'application** "
-        "— [Générer ici ↗](https://myaccount.google.com/apppasswords) *(pas ton vrai mdp)*"
-    )
-    gmail_password = st.text_input(
-        "Mot de passe d'application",
-        type="password",
-        value=os.getenv("GMAIL_APP_PASSWORD", ""),
-        placeholder="xxxx xxxx xxxx xxxx",
-        label_visibility="collapsed",
-    )
-    with st.expander("ℹ️ Comment créer un mot de passe d'application Google ?"):
-        st.markdown("""
-1. Va sur [myaccount.google.com/security](https://myaccount.google.com/security)
-2. Active la **Validation en 2 étapes** si ce n'est pas déjà fait
-3. Recherche **"Mots de passe des applications"** dans la barre de recherche de ton compte
-4. Sélectionne **Autre (nom personnalisé)** → entre "ProspectionBot" → **Générer**
-5. Copie le mot de passe à 16 caractères affiché (`xxxx xxxx xxxx xxxx`)
-6. Entre TON adresse Gmail dans le champ "Adresse Gmail" ci-dessus
-""")
-
-    st.markdown("---")
-    st.markdown("### 👤 Ta signature")
-    your_name = st.text_input("Prénom", value=_get("your_name", "YOUR_NAME"))
-    your_title = st.text_input("Titre", value=_get("your_title", "YOUR_TITLE"))
-    your_email = st.text_input("Ton email", value=_get("your_email", "YOUR_EMAIL"))
-    your_website = st.text_input("Ton site", value=_get("your_website", "YOUR_WEBSITE"))
-
-    st.markdown("---")
-
-    # Démarrage auto du suivi de réponses si credentials présents
-    _rt_addr = _get("gmail_address", "GMAIL_ADDRESS")
-    _rt_pwd  = os.getenv("GMAIL_APP_PASSWORD", "")
-    if _rt_addr and _rt_pwd:
-        from services import reply_tracker as _rt
-        _rt.ensure_running(_rt_addr, _rt_pwd)
-
-    st.caption("🔒 Tes clés restent sur ta machine. Rien n'est envoyé à l'extérieur.")
+    _conn = [
+        ("Google", bool(google_key)),
+        ("Gmail", bool(gmail_address and gmail_password)),
+        ("CRM", crm_type != "aucun" and bool(crm_key)),
+        ("SMS", bool(brevo_key)),
+    ]
+    st.caption("**Connexions** · " + " · ".join(f"{'🟢' if ok else '⚪'} {n}" for n, ok in _conn))
+    if not google_key:
+        st.caption("👉 Configure tes clés dans **⚙️ Réglages**.")
 
 
 # ---------------------------------------------------------------------------
@@ -421,12 +265,95 @@ from target_segments import (
     get_target, list_targets,
 )
 
-st.markdown("# 🎯 Prospection B2B Automatisée")
-st.markdown("Trouve des prospects locaux, analyse leur besoin et génère des cold emails/SMS en un clic.")
-st.markdown("---")
 
-if _page == "Ma journée":
-    st.markdown("### ☀️ Ma journée")
+def _linkedin_panel(row: dict, key_prefix: str) -> None:
+    """
+    Panneau LinkedIn ASSISTÉ pour un prospect : lien vers le bon profil,
+    message prêt à copier, et bouton « envoyé » qui met à jour le suivi.
+    Rien n'est jamais envoyé automatiquement.
+    """
+    from services import linkedin as _li
+    pid = row["place_id"]
+    company = row.get("name", "")
+    dirigeant = row.get("dirigeant") or ""
+    is_freelance = (row.get("service_id") or "") == "web_freelance"
+
+    # 1) Trouver la bonne personne
+    st.markdown("**1. Trouver la personne**")
+    _links = []
+    if dirigeant:
+        _links.append(f"[👤 {dirigeant}]({_li.people_search_url(company, dirigeant=dirigeant)})")
+    for _role in ("CTO", "Product Owner"):
+        _links.append(f"[{_role}]({_li.people_search_url(company, role=_role)})")
+    _links.append(f"[🏢 Page entreprise]({_li.company_search_url(company)})")
+    st.markdown(" · ".join(_links))
+    st.caption("Chaque lien ouvre une recherche LinkedIn déjà remplie.")
+
+    # 2) Le message
+    st.markdown("**2. Copier le message**")
+    _kind = st.radio(
+        "Type", ["invitation", "message"], horizontal=True, key=f"{key_prefix}_likind",
+        format_func=lambda k: "Note d'invitation" if k == "invitation" else "1er message (après acceptation)",
+        label_visibility="collapsed",
+    )
+    _angle = st.radio(
+        "Angle", ["freelance", "service"], index=0 if is_freelance else 1, horizontal=True,
+        key=f"{key_prefix}_liangle", label_visibility="collapsed",
+        format_func=lambda a: "🧑‍💻 Candidature freelance" if a == "freelance" else "🌐 Proposition de service",
+    )
+    _note_key, _msg_key = _li.default_templates_for(_angle == "freelance")
+    _tpl = _li.get_template(_note_key if _kind == "invitation" else _msg_key, crm_store.get_linkedin_templates())
+    _text = _li.render(
+        _tpl, dirigeant=dirigeant, entreprise=company,
+        mon_nom=your_name, mon_titre=your_title, mon_site=your_website,
+    )
+    _edited = st.text_area(
+        "Message", value=_text, height=110 if _kind == "invitation" else 200,
+        key=f"{key_prefix}_litext_{_kind}_{_angle}", label_visibility="collapsed",
+    )
+    if _kind == "invitation":
+        _lvl, _msg = _li.note_verdict(_edited)
+        {"ok": st.success, "warn": st.warning, "error": st.error}[_lvl](_msg)
+        st.caption("Compte gratuit : ~5 notes personnalisées par mois. Garde-les pour tes meilleurs prospects.")
+    st.code(_edited, language=None)   # icône « copier » en haut à droite du bloc
+    st.caption("⬆️ Clique sur l'icône en haut à droite du bloc pour copier.")
+
+    # 3) Marquer comme envoyé
+    st.markdown("**3. Une fois envoyé sur LinkedIn**")
+    _label = "✅ Invitation envoyée" if _kind == "invitation" else "✅ Message envoyé"
+    if st.button(_label, key=f"{key_prefix}_lisent_{_kind}", type="primary"):
+        _due = crm_store.mark_linkedin_sent(pid, _kind)
+        st.toast(f"Suivi programmé pour le {_due} ✅")
+        st.rerun()
+
+
+
+
+
+# ---------------------------------------------------------------------------
+# Orchestration de campagne → pipeline.py (aucune dépendance à Streamlit)
+# ---------------------------------------------------------------------------
+from pipeline import run_prospection  # noqa: E402
+
+
+
+
+
+
+
+    # ---------------------------------------------------------------------------
+    # Relances
+
+
+
+# ===========================================================================
+# PAGES — navigation officielle Streamlit (st.Page + st.navigation)
+# https://docs.streamlit.io/develop/concepts/multipage-apps/page-and-navigation
+# ===========================================================================
+
+def page_ma_journee():
+    st.title("☀️ Ma journée")
+    st.caption("Tes actions du jour : relances, rappels, maquettes à envoyer, messages LinkedIn.")
 
     _sum = crm_store.actions_summary()
     _m1, _m2, _m3 = st.columns(3)
@@ -509,115 +436,31 @@ if _page == "Ma journée":
                     st.toast(f"Programmé pour le {_dd} ✅")
                     st.rerun()
 
-if _page == "Pipeline":
-    # ---------------------------------------------------------------------------
-    # 📋 Pipeline CRM — tous les prospects suivis, par statut
-    # ---------------------------------------------------------------------------
-    _pipe_counts = {}
-    try:
-        _pipe_counts = crm_store.status_counts()
-    except Exception:
-        pass
-    _pipe_total = sum(_pipe_counts.values())
+            with st.expander("💬 LinkedIn", expanded=_d["next_action"] == crm_store.ACTION_LINKEDIN):
+                _linkedin_panel(_d, key_prefix=f"mj_{_pid}")
 
-    with st.expander(f"📋 Pipeline — {_pipe_total} prospect(s) suivi(s)", expanded=bool(_pipe_total)):
-        if not _pipe_total:
-            st.info(
-                "Ton pipeline est vide. Lance une prospection : les prospects trouvés "
-                "y seront ajoutés automatiquement et tu pourras suivre chacun d'eux "
-                "(contacté, intéressé, RDV, client…)."
-            )
-        else:
-            # Compteurs par statut
-            _active = [s for s in crm_store.STATUS_ORDER if _pipe_counts.get(s)]
-            if _active:
-                _cols = st.columns(len(_active))
-                for _c, _s in zip(_cols, _active):
-                    _c.metric(crm_store.STATUS_LABELS[_s], _pipe_counts[_s])
+def page_prospection():
+    st.title("🔍 Nouvelle campagne")
 
-            st.markdown("---")
-
-            # Filtres
-            _f1, _f2, _f3 = st.columns([2, 2, 3])
-            with _f1:
-                _filter_status = st.selectbox(
-                    "Statut",
-                    options=["(tous)"] + crm_store.STATUS_ORDER,
-                    format_func=lambda s: "Tous les statuts" if s == "(tous)" else crm_store.STATUS_LABELS[s],
-                    key="pipe_status",
-                )
-            with _f2:
-                _filter_email = st.selectbox(
-                    "Email",
-                    options=["(tous)", "avec", "sans"],
-                    format_func=lambda v: {"(tous)": "Avec ou sans email",
-                                           "avec": "📧 Avec email seulement",
-                                           "sans": "Sans email"}[v],
-                    key="pipe_email",
-                )
-            with _f3:
-                _filter_search = st.text_input("Rechercher", placeholder="Nom, email, site…", key="pipe_search")
-
-            _rows = crm_store.list_prospects(
-                status=None if _filter_status == "(tous)" else _filter_status,
-                has_email={"(tous)": None, "avec": True, "sans": False}[_filter_email],
-                search=_filter_search.strip(),
-            )
-            st.caption(f"{len(_rows)} prospect(s) affiché(s)")
-
-            for _row in _rows:
-                _pid = _row["place_id"]
-                _label = f"{crm_store.STATUS_LABELS.get(_row['status'], _row['status'])} · **{_row['name']}**"
-                if _row.get("email"):
-                    _label += f" · 📧 {_row['email']}"
-                with st.container(border=True):
-                    st.markdown(_label)
-                    _meta = []
-                    if _row.get("dirigeant"):
-                        _q = f" ({_row['dirigeant_qualite']})" if _row.get("dirigeant_qualite") else ""
-                        _meta.append(f"👤 {_row['dirigeant']}{_q}")
-                    if _row.get("phone"):
-                        _meta.append(f"📞 {_row['phone']}")
-                    if _row.get("website"):
-                        _meta.append(f"[🌐 site]({_row['website']})")
-                    if _row.get("score") is not None:
-                        _meta.append(f"score {_row['score']}/100")
-                    if _row.get("last_contact_date"):
-                        _meta.append(f"dernier contact {_row['last_contact_date']}")
-                    if _row.get("followup_step"):
-                        _meta.append(f"{_row['followup_step']} relance(s)")
-                    if _meta:
-                        st.caption(" · ".join(_meta))
-
-                    _a1, _a2 = st.columns([2, 3])
-                    with _a1:
-                        _new_status = st.selectbox(
-                            "Statut", options=crm_store.STATUS_ORDER,
-                            index=crm_store.STATUS_ORDER.index(_row["status"])
-                            if _row["status"] in crm_store.STATUS_ORDER else 0,
-                            format_func=lambda s: crm_store.STATUS_LABELS[s],
-                            key=f"st_{_pid}", label_visibility="collapsed",
-                        )
-                        if _new_status != _row["status"]:
-                            crm_store.set_status(_pid, _new_status)
-                            st.rerun()
-                    with _a2:
-                        _new_notes = st.text_input(
-                            "Notes", value=_row.get("notes") or "",
-                            placeholder="Note (rappeler en janvier, budget serré…)",
-                            key=f"nt_{_pid}", label_visibility="collapsed",
-                        )
-                        if _new_notes != (_row.get("notes") or ""):
-                            crm_store.set_notes(_pid, _new_notes)
-                            st.toast("Note enregistrée ✅")
-
-                    _events = crm_store.get_events(_pid, limit=5)
-                    if _events:
-                        with st.expander("🕮 Historique", expanded=False):
-                            for _e in _events:
-                                st.caption(f"{_e['at'][:16].replace('T', ' ')} — **{_e['kind']}** {_e['detail']}")
-
-if _page == "Prospection":
+    st.markdown("### 📡 Sources")
+    st.multiselect(
+        "Sources", options=list(_SRC_LABELS.keys()), default=source_types,
+        format_func=lambda x: _SRC_LABELS[x], key="w_source_types",
+        on_change=_persist_cfg, args=("source_types",), label_visibility="collapsed",
+    )
+    _missing = []
+    if google_key_required and not google_key:
+        _missing.append("la clé Google")
+    if "google_search" in source_types and not google_cx:
+        _missing.append("le Custom Search Engine ID")
+    if "france_travail" in source_types and not (ft_client_id and ft_client_secret):
+        _missing.append("les identifiants France Travail")
+    if _missing:
+        st.warning(f"⚙️ Il manque {', '.join(_missing)} — à renseigner dans **Réglages**.")
+    _free = [n for s_, n in (("sirene", "Sirène"), ("pages_jaunes", "Pages Jaunes")) if s_ in source_types]
+    if _free:
+        st.caption(f"✅ {' et '.join(_free)} : gratuit, aucune clé requise.")
+    st.markdown("---")
     # ---------------------------------------------------------------------------
     # Sélection service × cible
     # ---------------------------------------------------------------------------
@@ -856,8 +699,17 @@ if _page == "Prospection":
             format_func=lambda x: f"{x//1000} km",
         )
         send_emails = st.toggle("📧 Envoyer les emails auto", value=False)
+        send_risky_emails = False
         if send_emails:
-            st.warning("⚠️ Seuls les prospects avec un email trouvé recevront un mail.")
+            st.info(
+                "🛡️ Chaque adresse est vérifiée avant envoi. Les adresses **invalides** "
+                "(domaine inexistant, jetable, faute de frappe, « noreply ») ne reçoivent jamais "
+                "de mail : un taux de rebond > 2 % envoie tous tes mails suivants en spam."
+            )
+            send_risky_emails = st.checkbox(
+                "Envoyer aussi aux adresses « risquées » (domaine sans serveur mail déclaré)",
+                value=False,
+            )
             _email_mode = st.radio(
                 "Mode d'envoi", ["📤 Immédiat", "⏰ Programmé"],
                 horizontal=True, label_visibility="collapsed",
@@ -917,13 +769,6 @@ if _page == "Prospection":
 
     st.markdown("---")
 
-# ---------------------------------------------------------------------------
-# Orchestration de campagne → pipeline.py (aucune dépendance à Streamlit)
-# ---------------------------------------------------------------------------
-from pipeline import run_prospection  # noqa: E402
-
-
-if _page == "Prospection":
     # ---------------------------------------------------------------------------
     # Bouton de lancement
     # ---------------------------------------------------------------------------
@@ -946,11 +791,11 @@ if _page == "Prospection":
         launch = st.button("🚀 Lancer la prospection", disabled=_launch_disabled)
 
     if ("google_maps" in source_types or "google_search" in source_types) and not google_key:
-        st.info("👈 Renseigne ta clé Google Places dans la barre latérale pour commencer.")
+        st.info("⚙️ Renseigne ta clé Google Places dans ⚙️ Réglages pour commencer.")
     if "google_search" in source_types and not google_cx:
-        st.info("👈 Renseigne ton Custom Search Engine ID (cx) dans la barre latérale.")
+        st.info("⚙️ Renseigne ton Custom Search Engine ID (cx) dans ⚙️ Réglages.")
     if "france_travail" in source_types and (not ft_client_id or not ft_client_secret):
-        st.info("👈 Renseigne tes identifiants France Travail dans la barre latérale.")
+        st.info("⚙️ Renseigne tes identifiants France Travail dans ⚙️ Réglages.")
     if "linkedin_csv" in source_types and not linkedin_content:
         st.info("👆 Importe un fichier CSV LinkedIn ci-dessus pour commencer.")
 
@@ -1031,6 +876,7 @@ if _page == "Prospection":
             "contact_score_threshold": score_threshold,
             "analysis_workers": int(os.getenv("ANALYSIS_WORKERS", "5")),
             "send_emails": send_emails,
+            "send_risky_emails": send_risky_emails,
             "gmail_address": gmail_address,
             "gmail_password": gmail_password,
             "send_sms": send_sms_toggle,
@@ -1205,7 +1051,10 @@ if _page == "Prospection":
 
                     # Email avec statut
                     if p.email:
-                        st.markdown(f"**📧 Email trouvé :** `{p.email}`")
+                        from services.email_check import STATUS_BADGES as _EB
+                        _st = getattr(p, "email_status", "") or ""
+                        _badge = f" {_EB.get(_st, '')} _{p.email_status_reason}_" if _st else ""
+                        st.markdown(f"**📧 Email trouvé :** `{p.email}`{_badge}")
                     else:
                         st.markdown("**📧 Email :** non trouvé sur le site")
 
@@ -1380,7 +1229,282 @@ if _page == "Prospection":
             save_custom_profile(new_profile)
             st.success(f"✅ Profil « {save_name} » sauvegardé ! Il apparaîtra dans la liste au prochain lancement.")
 
-if _page == "Statistiques":
+def page_pipeline():
+    # ---------------------------------------------------------------------------
+    # 📋 Pipeline CRM — tous les prospects suivis, par statut
+    # ---------------------------------------------------------------------------
+    _pipe_counts = {}
+    try:
+        _pipe_counts = crm_store.status_counts()
+    except Exception:
+        pass
+    _pipe_total = sum(_pipe_counts.values())
+
+    st.title(f"📋 Pipeline — {_pipe_total} prospect(s)")
+    st.caption("Tous tes prospects suivis, par statut. Change un statut ou ajoute une note en un clic.")
+    if not _pipe_total:
+        st.info(
+            "Ton pipeline est vide. Lance une prospection : les prospects trouvés "
+            "y seront ajoutés automatiquement et tu pourras suivre chacun d'eux "
+            "(contacté, intéressé, RDV, client…)."
+        )
+    else:
+        # Compteurs par statut
+        _active = [s for s in crm_store.STATUS_ORDER if _pipe_counts.get(s)]
+        if _active:
+            _cols = st.columns(len(_active))
+            for _c, _s in zip(_cols, _active):
+                _c.metric(crm_store.STATUS_LABELS[_s], _pipe_counts[_s])
+
+        st.markdown("---")
+
+        # Filtres
+        _f1, _f2, _f3 = st.columns([2, 2, 3])
+        with _f1:
+            _filter_status = st.selectbox(
+                "Statut",
+                options=["(tous)"] + crm_store.STATUS_ORDER,
+                format_func=lambda s: "Tous les statuts" if s == "(tous)" else crm_store.STATUS_LABELS[s],
+                key="pipe_status",
+            )
+        with _f2:
+            _filter_email = st.selectbox(
+                "Email",
+                options=["(tous)", "avec", "sans"],
+                format_func=lambda v: {"(tous)": "Avec ou sans email",
+                                       "avec": "📧 Avec email seulement",
+                                       "sans": "Sans email"}[v],
+                key="pipe_email",
+            )
+        with _f3:
+            _filter_search = st.text_input("Rechercher", placeholder="Nom, email, site…", key="pipe_search")
+
+        _rows = crm_store.list_prospects(
+            status=None if _filter_status == "(tous)" else _filter_status,
+            has_email={"(tous)": None, "avec": True, "sans": False}[_filter_email],
+            search=_filter_search.strip(),
+        )
+        st.caption(f"{len(_rows)} prospect(s) affiché(s)")
+
+        for _row in _rows:
+            _pid = _row["place_id"]
+            _label = f"{crm_store.STATUS_LABELS.get(_row['status'], _row['status'])} · **{_row['name']}**"
+            if _row.get("email"):
+                _eb = {"valide": " ✅", "risque": " ⚠️", "invalide": " ❌"}.get(_row.get("email_status") or "", "")
+                _label += f" · 📧 {_row['email']}{_eb}"
+            with st.container(border=True):
+                st.markdown(_label)
+                _meta = []
+                if _row.get("dirigeant"):
+                    _q = f" ({_row['dirigeant_qualite']})" if _row.get("dirigeant_qualite") else ""
+                    _meta.append(f"👤 {_row['dirigeant']}{_q}")
+                if _row.get("phone"):
+                    _meta.append(f"📞 {_row['phone']}")
+                if _row.get("website"):
+                    _meta.append(f"[🌐 site]({_row['website']})")
+                if _row.get("score") is not None:
+                    _meta.append(f"score {_row['score']}/100")
+                if _row.get("last_contact_date"):
+                    _meta.append(f"dernier contact {_row['last_contact_date']}")
+                if _row.get("followup_step"):
+                    _meta.append(f"{_row['followup_step']} relance(s)")
+                if _meta:
+                    st.caption(" · ".join(_meta))
+
+                _a1, _a2 = st.columns([2, 3])
+                with _a1:
+                    _new_status = st.selectbox(
+                        "Statut", options=crm_store.STATUS_ORDER,
+                        index=crm_store.STATUS_ORDER.index(_row["status"])
+                        if _row["status"] in crm_store.STATUS_ORDER else 0,
+                        format_func=lambda s: crm_store.STATUS_LABELS[s],
+                        key=f"st_{_pid}", label_visibility="collapsed",
+                    )
+                    if _new_status != _row["status"]:
+                        crm_store.set_status(_pid, _new_status)
+                        st.rerun()
+                with _a2:
+                    _new_notes = st.text_input(
+                        "Notes", value=_row.get("notes") or "",
+                        placeholder="Note (rappeler en janvier, budget serré…)",
+                        key=f"nt_{_pid}", label_visibility="collapsed",
+                    )
+                    if _new_notes != (_row.get("notes") or ""):
+                        crm_store.set_notes(_pid, _new_notes)
+                        st.toast("Note enregistrée ✅")
+
+                with st.expander("💬 LinkedIn", expanded=False):
+                    _linkedin_panel(_row, key_prefix=f"pl_{_pid}")
+
+                _events = crm_store.get_events(_pid, limit=5)
+                if _events:
+                    with st.expander("🕮 Historique", expanded=False):
+                        for _e in _events:
+                            st.caption(f"{_e['at'][:16].replace('T', ' ')} — **{_e['kind']}** {_e['detail']}")
+
+def page_relances():
+    st.title("🔄 Relances")
+    st.caption("Séquences de relance, emails programmés et suivi des réponses.")
+    # ---------------------------------------------------------------------------
+    # Emails programmés
+    # ---------------------------------------------------------------------------
+    st.markdown("---")
+    with st.expander("📬 Emails programmés"):
+        from services import scheduler as _sched_ui
+        # Garde les identifiants en RAM pour que l'envoi différé fonctionne
+        # (ils ne sont jamais écrits sur disque).
+        if gmail_address and gmail_password:
+            _sched_ui.remember_credentials(gmail_address, gmail_password)
+        _stats = _sched_ui.get_stats()
+        col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+        col_s1.metric("En attente", _stats["pending"])
+        col_s2.metric("En retard", _stats["overdue"])
+        col_s3.metric("Envoyés", _stats["sent"])
+        col_s4.metric("Total", _stats["total"])
+
+        if _stats["total"] == 0:
+            st.caption("Aucun email programmé pour l'instant.")
+        else:
+            if _stats["overdue"] > 0:
+                st.warning(
+                    f"⚠️ {_stats['overdue']} email(s) en retard — leur heure d'envoi est passée "
+                    "(l'app était probablement éteinte). Ils partent au prochain cycle, "
+                    "ou immédiatement avec le bouton ci-dessous."
+                )
+            if _stats["pending"] > 0:
+                st.info(f"⏰ {_stats['pending']} email(s) en attente — vérification toutes les 60 secondes.")
+            if not _sched_ui.credentials_available():
+                st.error(
+                    "🔑 Aucun mot de passe Gmail disponible pour l'envoi différé. "
+                    "Renseigne-le dans ⚙️ Réglages, **ou mieux** : ajoute `GMAIL_APP_PASSWORD` "
+                    "dans les variables Railway pour que les envois programmés survivent aux redémarrages."
+                )
+            if _stats["pending"] > 0 and st.button("📤 Envoyer maintenant les emails dus", use_container_width=True):
+                _r = _sched_ui.process_due()
+                if _r["sent"]:
+                    st.success(f"✅ {_r['sent']} email(s) envoyé(s).")
+                if _r["failed"]:
+                    st.error(f"❌ {_r['failed']} échec(s) — vérifie tes identifiants Gmail.")
+                if _r["skipped_no_credentials"]:
+                    st.warning(f"🔑 {_r['skipped_no_credentials']} email(s) non envoyé(s) : mot de passe Gmail manquant.")
+                st.rerun()
+
+        st.caption(
+            "ℹ️ Les emails programmés ne partent que si l'application tourne. "
+            "Si Railway met le service en veille, ils partiront au prochain réveil (rattrapage automatique)."
+        )
+
+    # ---------------------------------------------------------------------------
+    # Suivi de réponses
+    # ---------------------------------------------------------------------------
+    st.markdown("---")
+    with st.expander("📬 Suivi des réponses (IMAP)"):
+        from services import reply_tracker as _rt_ui
+        _rt_running = _rt_ui.is_running()
+        if _rt_running:
+            st.success("✅ Suivi actif — vérifie les réponses Gmail toutes les 5 minutes.")
+        elif gmail_address and gmail_password:
+            _rt_ui.ensure_running(gmail_address, gmail_password)
+            st.info("⏳ Thread de suivi en cours de démarrage…")
+        else:
+            st.info("💡 Renseigne ton adresse Gmail et ton mot de passe d'application pour activer le suivi automatique des réponses.")
+        from history_manager import _load_contacted_data as _lcd
+        _cdata = _lcd()
+        _responded = sum(1 for v in _cdata.values() if v.get("responded"))
+        _total_c   = len(_cdata)
+        if _total_c:
+            col_rt1, col_rt2 = st.columns(2)
+            col_rt1.metric("Prospects contactés", _total_c)
+            col_rt2.metric("Réponses reçues", _responded)
+
+    # ---------------------------------------------------------------------------
+    st.markdown("---")
+    with st.expander("🔄 Relances — contacts sans réponse"):
+        from history_manager import get_due_followups, mark_as_responded, mark_followup_sent
+        followup_delay = int(os.getenv("FOLLOWUP_DELAY_DAYS", "5"))
+        due = get_due_followups(followup_delay)
+
+        from services.mailer import MAX_FOLLOWUPS
+        if not due:
+            st.success(f"✅ Aucun contact à relancer (seuil : {followup_delay} jours sans réponse).")
+        else:
+            st.info(
+                f"**{len(due)} contact(s)** à relancer — séquence de {MAX_FOLLOWUPS} relances "
+                f"à angles distincts, {followup_delay} jours entre chaque message."
+            )
+
+            # Bouton pour générer la PROCHAINE relance de la séquence pour chaque contact
+            if st.button("📝 Générer les prochaines relances", key="gen_followup"):
+                from services.google_maps import Prospect as P
+                from services.mailer import draft_followup_email
+                drafts = []
+                for contact in due:
+                    next_step = int(contact.get("followup_step", 0)) + 1
+                    p = P(
+                        place_id=contact["place_id"],
+                        name=contact["name"],
+                        address="",
+                        phone=None,
+                        website=None,
+                        rating=None,
+                        user_ratings_total=0,
+                        keyword="",
+                        email=contact.get("email") or None,
+                    )
+                    label = f"{p.name}  ·  relance {next_step}/{MAX_FOLLOWUPS}"
+                    drafts.append((label, draft_followup_email(p, step=next_step), contact["place_id"]))
+                    mark_followup_sent(contact["place_id"])
+                    if crm_type == "notion" and crm_key:
+                        from history_manager import get_notion_page_id
+                        from services.crm.notion import NotionExporter
+                        _np = get_notion_page_id(contact["place_id"])
+                        if _np:
+                            _status = "clôturé" if next_step >= MAX_FOLLOWUPS else f"relancé ({next_step}/{MAX_FOLLOWUPS})"
+                            NotionExporter(crm_key, crm_extra.get("database_id", "")).update_status(_np, _status)
+                st.session_state["followup_drafts"] = drafts
+                st.success(f"✅ {len(drafts)} relance(s) générée(s).")
+                st.rerun()
+
+            # Affichage des drafts générés
+            if st.session_state.get("followup_drafts"):
+                for name, draft, _ in st.session_state["followup_drafts"]:
+                    st.markdown(f"**{name}**")
+                    st.code(draft, language=None)
+                import io
+                zip_content = "\n\n" + ("=" * 60 + "\n\n").join(
+                    f"{name}\n{draft}" for name, draft, _ in st.session_state["followup_drafts"]
+                )
+                st.download_button(
+                    "⬇️ Télécharger tous les emails de relance (.txt)",
+                    data=zip_content.encode("utf-8"),
+                    file_name=f"relances_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                    mime="text/plain",
+                    use_container_width=True,
+                )
+
+            # Liste individuelle avec bouton "A répondu"
+            st.markdown("---")
+            st.markdown("**Marquer comme répondu :**")
+            for contact in due:
+                col_name, col_btn = st.columns([4, 1])
+                with col_name:
+                    date_str = contact.get("first_contact_date", "?")
+                    email_str = contact.get("email", "—")
+                    st.markdown(f"**{contact['name']}** — contacté le {date_str} — `{email_str}`")
+                with col_btn:
+                    if st.button("✅ Répondu", key=f"responded_{contact['place_id']}"):
+                        mark_as_responded(contact["place_id"])
+                        if crm_type == "notion" and crm_key:
+                            from history_manager import get_notion_page_id
+                            from services.crm.notion import NotionExporter
+                            _np = get_notion_page_id(contact["place_id"])
+                            if _np:
+                                NotionExporter(crm_key, crm_extra.get("database_id", "")).update_status(_np, "répondu")
+                        st.rerun()
+
+def page_statistiques():
+    st.title("📊 Statistiques")
+    st.caption("Tes campagnes passées et leurs résultats.")
     # ---------------------------------------------------------------------------
     # Dashboard de statistiques
     # ---------------------------------------------------------------------------
@@ -1541,7 +1665,101 @@ if _page == "Statistiques":
                         st.caption("⚠️ Fichier de résultats introuvable (effacé lors d'un redéploiement).")
                 st.divider()
 
-if _page == "Réglages":
+def page_reglages():
+    st.title("⚙️ Réglages")
+    st.caption("Chaque champ est enregistré automatiquement dès que tu le modifies.")
+
+    def _field(label, key, env="", secret=False, placeholder="", help_=None):
+        return st.text_input(
+            label, value=_cfg(key, env), key=f"w_{key}", type="password" if secret else "default",
+            placeholder=placeholder, help=help_, on_change=_persist_cfg, args=(key,),
+        )
+
+    # ---------------------------------------------------------------------------
+    # Connexions & clés API
+    # ---------------------------------------------------------------------------
+    st.subheader("🔌 Connexions")
+
+    with st.container(border=True):
+        st.markdown("**🗺️ Google** — recherche Maps, performance des sites · "
+                    "[obtenir une clé ↗](https://console.cloud.google.com/apis/credentials)")
+        _field("Clé API Google", "google_api_key", "GOOGLE_PLACES_API_KEY", secret=True, placeholder="AIzaSy…")
+        with st.expander("Comment créer cette clé ?"):
+            st.markdown(
+                "1. [Google Cloud Console](https://console.cloud.google.com/apis/credentials) → "
+                "**Créer des identifiants** → **Clé API**\n"
+                "2. Dans **Bibliothèque d'API**, active *Places API*, *PageSpeed Insights API* "
+                "(et *Custom Search JSON API* pour la source Google Search)\n"
+                "3. Copie la clé (`AIzaSy…`) et colle-la ci-dessus"
+            )
+        _field("Custom Search Engine ID (source Google Search, optionnel)", "google_cx", "GOOGLE_CX",
+               placeholder="017576…:xxxxxxx",
+               help_="Créé sur programmablesearchengine.google.com → « Rechercher dans tout le web ».")
+
+    with st.container(border=True):
+        st.markdown("**📧 Gmail** — envoi des emails et détection des réponses · "
+                    "[mot de passe d'application ↗](https://myaccount.google.com/apppasswords)")
+        _field("Adresse Gmail", "gmail_address", "GMAIL_ADDRESS", placeholder="toi@gmail.com")
+        _field("Mot de passe d'application (pas ton vrai mot de passe)", "gmail_password",
+               "GMAIL_APP_PASSWORD", secret=True, placeholder="xxxx xxxx xxxx xxxx")
+        st.caption("🔒 Le mot de passe n'est jamais enregistré sur disque : il reste le temps de la "
+                   "session. Pour ne plus le ressaisir, ajoute `GMAIL_APP_PASSWORD` dans les variables Railway.")
+        with st.expander("Comment créer un mot de passe d'application ?"):
+            st.markdown(
+                "1. [myaccount.google.com/security](https://myaccount.google.com/security) → active la "
+                "**validation en 2 étapes**\n"
+                "2. Cherche **« Mots de passe des applications »** → nom « ProspectionBot » → **Générer**\n"
+                "3. Copie les 16 caractères affichés"
+            )
+
+    with st.container(border=True):
+        st.markdown("**🗂️ CRM** — synchronisation des prospects")
+        _crm_opts = ["aucun", "notion", "hubspot"]
+        st.selectbox(
+            "CRM", options=_crm_opts, index=_crm_opts.index(crm_type) if crm_type in _crm_opts else 0,
+            format_func=lambda c: {"aucun": "Aucun", "notion": "Notion", "hubspot": "HubSpot"}[c],
+            key="w_crm_type", on_change=_persist_cfg, args=("crm_type",),
+        )
+        if crm_type == "notion":
+            _field("Token d'intégration Notion", "notion_api_key", "NOTION_API_KEY", secret=True,
+                   placeholder="ntn_… ou secret_…")
+            _field("Database ID (ou lien complet de la base)", "notion_database_id", "NOTION_DATABASE_ID",
+                   placeholder="c2507703…")
+            st.warning("⚠️ Cause n°1 quand « rien ne se passe » : l'intégration n'est pas connectée à la base. "
+                       "Ouvre ta base Notion → **⋯** → **Connexions** → ajoute ton intégration.")
+        elif crm_type == "hubspot":
+            _field("Token d'application privée HubSpot", "hubspot_api_key", "HUBSPOT_API_KEY", secret=True,
+                   placeholder="pat-eu1-…",
+                   help_="HubSpot → Paramètres → Intégrations → Applications privées. Portées : "
+                         "crm.objects.contacts.read / write.")
+
+    with st.container(border=True):
+        st.markdown("**📱 SMS (Brevo)** · [obtenir une clé ↗](https://app.brevo.com/settings/keys/api)")
+        _field("Clé API Brevo", "brevo_api_key", "BREVO_API_KEY", secret=True, placeholder="xsmtpsib-…")
+
+    with st.container(border=True):
+        st.markdown("**🏛️ France Travail** — source « offres d'emploi » (optionnel) · "
+                    "[francetravail.io ↗](https://francetravail.io/inscription)")
+        _c1, _c2 = st.columns(2)
+        with _c1:
+            _field("Client ID", "ft_client_id", "FT_CLIENT_ID", placeholder="PAR_xxxx…")
+        with _c2:
+            _field("Client Secret", "ft_client_secret", "FT_CLIENT_SECRET", secret=True)
+
+    # ---------------------------------------------------------------------------
+    # Signature
+    # ---------------------------------------------------------------------------
+    st.subheader("👤 Ta signature")
+    with st.container(border=True):
+        _s1, _s2 = st.columns(2)
+        with _s1:
+            _field("Prénom Nom", "your_name", "YOUR_NAME")
+            _field("Email", "your_email", "YOUR_EMAIL")
+        with _s2:
+            _field("Titre", "your_title", "YOUR_TITLE", placeholder="Développeur web fullstack")
+            _field("Site / portfolio / GitHub", "your_website", "YOUR_WEBSITE")
+
+    st.subheader("🧰 Préférences")
     # ---------------------------------------------------------------------------
     # Délais des actions (jours ouvrés)
     # ---------------------------------------------------------------------------
@@ -1559,6 +1777,41 @@ if _page == "Réglages":
             if _v != crm_store.get_delay(_a):
                 crm_store.set_delay(_a, int(_v))
                 st.toast(f"{crm_store.ACTION_LABELS[_a]} : {_v} j ouvrés ✅")
+
+    # ---------------------------------------------------------------------------
+    # Modèles de messages LinkedIn
+    # ---------------------------------------------------------------------------
+    with st.expander("💬 Modèles de messages LinkedIn", expanded=False):
+        from services import linkedin as _li
+        st.caption(
+            "Variables disponibles : `{prenom}` (du dirigeant), `{entreprise}`, "
+            "`{mon_prenom}`, `{mon_titre}`, `{mon_site}`. Sans prénom connu, "
+            "« Bonjour {prenom}, » devient automatiquement « Bonjour, »."
+        )
+        _custom = crm_store.get_linkedin_templates()
+        for _k, _lbl in _li.TEMPLATE_LABELS.items():
+            st.markdown(f"**{_lbl}**" + ("  · _personnalisé_" if _k in _custom else "  · _par défaut_"))
+            _val = st.text_area(
+                _lbl, value=_li.get_template(_k, _custom),
+                height=90 if _k.startswith("note") else 180,
+                key=f"litpl_{_k}", label_visibility="collapsed",
+            )
+            _preview = _li.render(_val, dirigeant="Jean Dupont", entreprise="ESN Alpha",
+                                  mon_nom=your_name or "Kenny", mon_titre=your_title,
+                                  mon_site=your_website)
+            if _k.startswith("note"):
+                _lvl, _msg = _li.note_verdict(_preview)
+                st.caption(("✅ " if _lvl == "ok" else "⚠️ ") + _msg + " (aperçu avec « Jean Dupont / ESN Alpha »)")
+            _s1, _s2, _ = st.columns([1, 1, 3])
+            if _s1.button("💾 Enregistrer", key=f"litpl_save_{_k}", type="primary", use_container_width=True):
+                crm_store.set_linkedin_template(_k, _val)
+                st.success("Modèle enregistré ✅")
+            if _s2.button("↩️ Par défaut", key=f"litpl_reset_{_k}", use_container_width=True,
+                          disabled=_k not in _custom):
+                crm_store.reset_linkedin_template(_k)
+                st.session_state.pop(f"litpl_{_k}", None)
+                st.rerun()
+            st.markdown("")
 
     # ---------------------------------------------------------------------------
     # Franchises exclues
@@ -1607,80 +1860,6 @@ if _page == "Réglages":
                 )
                 st.rerun()
 
-if _page == "Relances":
-    # ---------------------------------------------------------------------------
-    # Emails programmés
-    # ---------------------------------------------------------------------------
-    st.markdown("---")
-    with st.expander("📬 Emails programmés"):
-        from services import scheduler as _sched_ui
-        # Garde les identifiants en RAM pour que l'envoi différé fonctionne
-        # (ils ne sont jamais écrits sur disque).
-        if gmail_address and gmail_password:
-            _sched_ui.remember_credentials(gmail_address, gmail_password)
-        _stats = _sched_ui.get_stats()
-        col_s1, col_s2, col_s3, col_s4 = st.columns(4)
-        col_s1.metric("En attente", _stats["pending"])
-        col_s2.metric("En retard", _stats["overdue"])
-        col_s3.metric("Envoyés", _stats["sent"])
-        col_s4.metric("Total", _stats["total"])
-
-        if _stats["total"] == 0:
-            st.caption("Aucun email programmé pour l'instant.")
-        else:
-            if _stats["overdue"] > 0:
-                st.warning(
-                    f"⚠️ {_stats['overdue']} email(s) en retard — leur heure d'envoi est passée "
-                    "(l'app était probablement éteinte). Ils partent au prochain cycle, "
-                    "ou immédiatement avec le bouton ci-dessous."
-                )
-            if _stats["pending"] > 0:
-                st.info(f"⏰ {_stats['pending']} email(s) en attente — vérification toutes les 60 secondes.")
-            if not _sched_ui.credentials_available():
-                st.error(
-                    "🔑 Aucun mot de passe Gmail disponible pour l'envoi différé. "
-                    "Renseigne-le dans la barre latérale, **ou mieux** : ajoute `GMAIL_APP_PASSWORD` "
-                    "dans les variables Railway pour que les envois programmés survivent aux redémarrages."
-                )
-            if _stats["pending"] > 0 and st.button("📤 Envoyer maintenant les emails dus", use_container_width=True):
-                _r = _sched_ui.process_due()
-                if _r["sent"]:
-                    st.success(f"✅ {_r['sent']} email(s) envoyé(s).")
-                if _r["failed"]:
-                    st.error(f"❌ {_r['failed']} échec(s) — vérifie tes identifiants Gmail.")
-                if _r["skipped_no_credentials"]:
-                    st.warning(f"🔑 {_r['skipped_no_credentials']} email(s) non envoyé(s) : mot de passe Gmail manquant.")
-                st.rerun()
-
-        st.caption(
-            "ℹ️ Les emails programmés ne partent que si l'application tourne. "
-            "Si Railway met le service en veille, ils partiront au prochain réveil (rattrapage automatique)."
-        )
-
-    # ---------------------------------------------------------------------------
-    # Suivi de réponses
-    # ---------------------------------------------------------------------------
-    st.markdown("---")
-    with st.expander("📬 Suivi des réponses (IMAP)"):
-        from services import reply_tracker as _rt_ui
-        _rt_running = _rt_ui.is_running()
-        if _rt_running:
-            st.success("✅ Suivi actif — vérifie les réponses Gmail toutes les 5 minutes.")
-        elif gmail_address and gmail_password:
-            _rt_ui.ensure_running(gmail_address, gmail_password)
-            st.info("⏳ Thread de suivi en cours de démarrage…")
-        else:
-            st.info("💡 Renseigne ton adresse Gmail et ton mot de passe d'application pour activer le suivi automatique des réponses.")
-        from history_manager import _load_contacted_data as _lcd
-        _cdata = _lcd()
-        _responded = sum(1 for v in _cdata.values() if v.get("responded"))
-        _total_c   = len(_cdata)
-        if _total_c:
-            col_rt1, col_rt2 = st.columns(2)
-            col_rt1.metric("Prospects contactés", _total_c)
-            col_rt2.metric("Réponses reçues", _responded)
-
-if _page == "Réglages":
     # ---------------------------------------------------------------------------
     # Cache d'analyse
     # ---------------------------------------------------------------------------
@@ -1701,95 +1880,6 @@ if _page == "Réglages":
                 st.success(f"✅ {deleted} entrée(s) supprimée(s).")
                 st.rerun()
 
-    # ---------------------------------------------------------------------------
-    # Relances
-if _page == "Relances":
-    # ---------------------------------------------------------------------------
-    st.markdown("---")
-    with st.expander("🔄 Relances — contacts sans réponse"):
-        from history_manager import get_due_followups, mark_as_responded, mark_followup_sent
-        followup_delay = int(os.getenv("FOLLOWUP_DELAY_DAYS", "5"))
-        due = get_due_followups(followup_delay)
-
-        from services.mailer import MAX_FOLLOWUPS
-        if not due:
-            st.success(f"✅ Aucun contact à relancer (seuil : {followup_delay} jours sans réponse).")
-        else:
-            st.info(
-                f"**{len(due)} contact(s)** à relancer — séquence de {MAX_FOLLOWUPS} relances "
-                f"à angles distincts, {followup_delay} jours entre chaque message."
-            )
-
-            # Bouton pour générer la PROCHAINE relance de la séquence pour chaque contact
-            if st.button("📝 Générer les prochaines relances", key="gen_followup"):
-                from services.google_maps import Prospect as P
-                from services.mailer import draft_followup_email
-                drafts = []
-                for contact in due:
-                    next_step = int(contact.get("followup_step", 0)) + 1
-                    p = P(
-                        place_id=contact["place_id"],
-                        name=contact["name"],
-                        address="",
-                        phone=None,
-                        website=None,
-                        rating=None,
-                        user_ratings_total=0,
-                        keyword="",
-                        email=contact.get("email") or None,
-                    )
-                    label = f"{p.name}  ·  relance {next_step}/{MAX_FOLLOWUPS}"
-                    drafts.append((label, draft_followup_email(p, step=next_step), contact["place_id"]))
-                    mark_followup_sent(contact["place_id"])
-                    if crm_type == "notion" and crm_key:
-                        from history_manager import get_notion_page_id
-                        from services.crm.notion import NotionExporter
-                        _np = get_notion_page_id(contact["place_id"])
-                        if _np:
-                            _status = "clôturé" if next_step >= MAX_FOLLOWUPS else f"relancé ({next_step}/{MAX_FOLLOWUPS})"
-                            NotionExporter(crm_key, crm_extra.get("database_id", "")).update_status(_np, _status)
-                st.session_state["followup_drafts"] = drafts
-                st.success(f"✅ {len(drafts)} relance(s) générée(s).")
-                st.rerun()
-
-            # Affichage des drafts générés
-            if st.session_state.get("followup_drafts"):
-                for name, draft, _ in st.session_state["followup_drafts"]:
-                    st.markdown(f"**{name}**")
-                    st.code(draft, language=None)
-                import io
-                zip_content = "\n\n" + ("=" * 60 + "\n\n").join(
-                    f"{name}\n{draft}" for name, draft, _ in st.session_state["followup_drafts"]
-                )
-                st.download_button(
-                    "⬇️ Télécharger tous les emails de relance (.txt)",
-                    data=zip_content.encode("utf-8"),
-                    file_name=f"relances_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                    mime="text/plain",
-                    use_container_width=True,
-                )
-
-            # Liste individuelle avec bouton "A répondu"
-            st.markdown("---")
-            st.markdown("**Marquer comme répondu :**")
-            for contact in due:
-                col_name, col_btn = st.columns([4, 1])
-                with col_name:
-                    date_str = contact.get("first_contact_date", "?")
-                    email_str = contact.get("email", "—")
-                    st.markdown(f"**{contact['name']}** — contacté le {date_str} — `{email_str}`")
-                with col_btn:
-                    if st.button("✅ Répondu", key=f"responded_{contact['place_id']}"):
-                        mark_as_responded(contact["place_id"])
-                        if crm_type == "notion" and crm_key:
-                            from history_manager import get_notion_page_id
-                            from services.crm.notion import NotionExporter
-                            _np = get_notion_page_id(contact["place_id"])
-                            if _np:
-                                NotionExporter(crm_key, crm_extra.get("database_id", "")).update_status(_np, "répondu")
-                        st.rerun()
-
-if _page == "Réglages":
     # ---------------------------------------------------------------------------
     # Délivrabilité — la délivrabilité bat le volume
     # ---------------------------------------------------------------------------
@@ -1816,3 +1906,27 @@ if _page == "Réglages":
             f"reste sous 10/jour la 1re semaine."
         )
         st.caption("Astuce : teste ta config sur mail-tester.com avant une campagne — un score < 8/10 = risque spam.")
+
+
+try:
+    _sum_nav = crm_store.actions_summary()
+    _due_now = _sum_nav["en_retard"] + _sum_nav["aujourdhui"]
+except Exception:
+    _due_now = 0
+
+_nav = st.navigation({
+    "Au quotidien": [
+        st.Page(page_ma_journee, title=f"Ma journée ({_due_now})" if _due_now else "Ma journée",
+                icon="☀️", url_path="ma-journee", default=True),
+        st.Page(page_pipeline, title="Pipeline", icon="📋", url_path="pipeline"),
+        st.Page(page_relances, title="Relances", icon="🔄", url_path="relances"),
+    ],
+    "Prospecter": [
+        st.Page(page_prospection, title="Nouvelle campagne", icon="🔍", url_path="prospection"),
+        st.Page(page_statistiques, title="Statistiques", icon="📊", url_path="statistiques"),
+    ],
+    "Paramètres": [
+        st.Page(page_reglages, title="Réglages", icon="⚙️", url_path="reglages"),
+    ],
+})
+_nav.run()

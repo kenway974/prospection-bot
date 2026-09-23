@@ -165,7 +165,9 @@ CREATE TABLE IF NOT EXISTS prospects (
     action_note         TEXT DEFAULT '',
     siren               TEXT DEFAULT '',
     dirigeant           TEXT DEFAULT '',
-    dirigeant_qualite   TEXT DEFAULT ''
+    dirigeant_qualite   TEXT DEFAULT '',
+    email_status        TEXT DEFAULT '',
+    email_status_reason TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS campaigns (
@@ -210,6 +212,8 @@ _ADDED_COLUMNS = {
     "siren":             "TEXT DEFAULT ''",
     "dirigeant":         "TEXT DEFAULT ''",
     "dirigeant_qualite": "TEXT DEFAULT ''",
+    "email_status":        "TEXT DEFAULT ''",
+    "email_status_reason": "TEXT DEFAULT ''",
 }
 
 
@@ -261,6 +265,52 @@ def set_delay(action: str, days: int) -> None:
         )
 
 
+def get_linkedin_templates() -> Dict[str, str]:
+    """Modèles LinkedIn personnalisés par l'utilisateur ({clé: texte})."""
+    with _connect() as conn:
+        rows = conn.execute("SELECT key, value FROM meta WHERE key LIKE 'li_tpl_%'").fetchall()
+    return {r["key"][len("li_tpl_"):]: r["value"] for r in rows if (r["value"] or "").strip()}
+
+
+def set_linkedin_template(key: str, text: str) -> None:
+    with _lock, _connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (f"li_tpl_{key}", text)
+        )
+
+
+def reset_linkedin_template(key: str) -> None:
+    """Revient au modèle par défaut."""
+    with _lock, _connect() as conn:
+        conn.execute("DELETE FROM meta WHERE key = ?", (f"li_tpl_{key}",))
+
+
+# Délai avant de vérifier qu'une invitation a été acceptée (jours ouvrés)
+LINKEDIN_ACCEPT_CHECK_DAYS = 3
+
+
+def mark_linkedin_sent(place_id: str, kind: str, detail: str = "") -> str:
+    """
+    Trace un envoi LinkedIn fait À LA MAIN et programme la suite :
+      - « invitation » → vérifier l'acceptation et envoyer le 1er message ;
+      - « message »    → relancer si pas de réponse.
+    Retourne la date d'échéance de la suite.
+    """
+    if kind not in ("invitation", "message"):
+        raise ValueError(f"Type d'envoi LinkedIn inconnu : {kind}")
+    label = "Invitation LinkedIn envoyée" if kind == "invitation" else "Message LinkedIn envoyé"
+    add_event(place_id, "linkedin", label + (f" · {detail}" if detail else ""))
+    mark_contacted([place_id], channel="linkedin")
+    if kind == "invitation":
+        return set_next_action(
+            place_id, ACTION_LINKEDIN, delay_days=LINKEDIN_ACCEPT_CHECK_DAYS,
+            note="Invitation envoyée : si acceptée, envoyer le 1er message",
+        )
+    return set_next_action(
+        place_id, ACTION_RELANCER, note="Message LinkedIn envoyé : relancer si pas de réponse",
+    )
+
+
 def get_user_franchises() -> List[str]:
     """Enseignes ajoutées par l'utilisateur, en plus de la liste intégrée."""
     with _connect() as conn:
@@ -309,6 +359,8 @@ def _prospect_to_row(p, campaign_id: Optional[int], sector: str, service_id: str
         "siren": getattr(p, "siren", "") or "",
         "dirigeant": getattr(p, "dirigeant", "") or "",
         "dirigeant_qualite": getattr(p, "dirigeant_qualite", "") or "",
+        "email_status": getattr(p, "email_status", "") or "",
+        "email_status_reason": getattr(p, "email_status_reason", "") or "",
     }
 
 
@@ -341,6 +393,8 @@ def upsert_prospects(prospects: Iterable, campaign_id: Optional[int] = None,
                          siren=COALESCE(NULLIF(:siren, ''), siren),
                          dirigeant=COALESCE(NULLIF(:dirigeant, ''), dirigeant),
                          dirigeant_qualite=COALESCE(NULLIF(:dirigeant_qualite, ''), dirigeant_qualite),
+                         email_status=COALESCE(NULLIF(:email_status, ''), email_status),
+                         email_status_reason=COALESCE(NULLIF(:email_status_reason, ''), email_status_reason),
                          updated_at=:updated_at
                        WHERE place_id=:place_id""",
                     {**row, "updated_at": now},
@@ -351,13 +405,13 @@ def upsert_prospects(prospects: Iterable, campaign_id: Optional[int] = None,
                        (place_id, name, address, phone, website, email, rating,
                         user_ratings_total, keyword, maps_url, cms, score, issues,
                         issue_keys, email_draft, target_sector, service_id, campaign_id,
-                        siren, dirigeant, dirigeant_qualite,
+                        siren, dirigeant, dirigeant_qualite, email_status, email_status_reason,
                         status, first_seen_at, updated_at)
                        VALUES
                        (:place_id, :name, :address, :phone, :website, :email, :rating,
                         :user_ratings_total, :keyword, :maps_url, :cms, :score, :issues,
                         :issue_keys, :email_draft, :target_sector, :service_id, :campaign_id,
-                        :siren, :dirigeant, :dirigeant_qualite,
+                        :siren, :dirigeant, :dirigeant_qualite, :email_status, :email_status_reason,
                         'nouveau', :first_seen_at, :updated_at)""",
                     {**row, "first_seen_at": now, "updated_at": now},
                 )
