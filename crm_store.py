@@ -261,6 +261,52 @@ def set_delay(action: str, days: int) -> None:
         )
 
 
+def get_linkedin_templates() -> Dict[str, str]:
+    """Modèles LinkedIn personnalisés par l'utilisateur ({clé: texte})."""
+    with _connect() as conn:
+        rows = conn.execute("SELECT key, value FROM meta WHERE key LIKE 'li_tpl_%'").fetchall()
+    return {r["key"][len("li_tpl_"):]: r["value"] for r in rows if (r["value"] or "").strip()}
+
+
+def set_linkedin_template(key: str, text: str) -> None:
+    with _lock, _connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (f"li_tpl_{key}", text)
+        )
+
+
+def reset_linkedin_template(key: str) -> None:
+    """Revient au modèle par défaut."""
+    with _lock, _connect() as conn:
+        conn.execute("DELETE FROM meta WHERE key = ?", (f"li_tpl_{key}",))
+
+
+# Délai avant de vérifier qu'une invitation a été acceptée (jours ouvrés)
+LINKEDIN_ACCEPT_CHECK_DAYS = 3
+
+
+def mark_linkedin_sent(place_id: str, kind: str, detail: str = "") -> str:
+    """
+    Trace un envoi LinkedIn fait À LA MAIN et programme la suite :
+      - « invitation » → vérifier l'acceptation et envoyer le 1er message ;
+      - « message »    → relancer si pas de réponse.
+    Retourne la date d'échéance de la suite.
+    """
+    if kind not in ("invitation", "message"):
+        raise ValueError(f"Type d'envoi LinkedIn inconnu : {kind}")
+    label = "Invitation LinkedIn envoyée" if kind == "invitation" else "Message LinkedIn envoyé"
+    add_event(place_id, "linkedin", label + (f" · {detail}" if detail else ""))
+    mark_contacted([place_id], channel="linkedin")
+    if kind == "invitation":
+        return set_next_action(
+            place_id, ACTION_LINKEDIN, delay_days=LINKEDIN_ACCEPT_CHECK_DAYS,
+            note="Invitation envoyée : si acceptée, envoyer le 1er message",
+        )
+    return set_next_action(
+        place_id, ACTION_RELANCER, note="Message LinkedIn envoyé : relancer si pas de réponse",
+    )
+
+
 def get_user_franchises() -> List[str]:
     """Enseignes ajoutées par l'utilisateur, en plus de la liste intégrée."""
     with _connect() as conn:

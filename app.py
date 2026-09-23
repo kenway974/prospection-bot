@@ -425,6 +425,67 @@ st.markdown("# 🎯 Prospection B2B Automatisée")
 st.markdown("Trouve des prospects locaux, analyse leur besoin et génère des cold emails/SMS en un clic.")
 st.markdown("---")
 
+def _linkedin_panel(row: dict, key_prefix: str) -> None:
+    """
+    Panneau LinkedIn ASSISTÉ pour un prospect : lien vers le bon profil,
+    message prêt à copier, et bouton « envoyé » qui met à jour le suivi.
+    Rien n'est jamais envoyé automatiquement.
+    """
+    from services import linkedin as _li
+    pid = row["place_id"]
+    company = row.get("name", "")
+    dirigeant = row.get("dirigeant") or ""
+    is_freelance = (row.get("service_id") or "") == "web_freelance"
+
+    # 1) Trouver la bonne personne
+    st.markdown("**1. Trouver la personne**")
+    _links = []
+    if dirigeant:
+        _links.append(f"[👤 {dirigeant}]({_li.people_search_url(company, dirigeant=dirigeant)})")
+    for _role in ("CTO", "Product Owner"):
+        _links.append(f"[{_role}]({_li.people_search_url(company, role=_role)})")
+    _links.append(f"[🏢 Page entreprise]({_li.company_search_url(company)})")
+    st.markdown(" · ".join(_links))
+    st.caption("Chaque lien ouvre une recherche LinkedIn déjà remplie.")
+
+    # 2) Le message
+    st.markdown("**2. Copier le message**")
+    _kind = st.radio(
+        "Type", ["invitation", "message"], horizontal=True, key=f"{key_prefix}_likind",
+        format_func=lambda k: "Note d'invitation" if k == "invitation" else "1er message (après acceptation)",
+        label_visibility="collapsed",
+    )
+    _angle = st.radio(
+        "Angle", ["freelance", "service"], index=0 if is_freelance else 1, horizontal=True,
+        key=f"{key_prefix}_liangle", label_visibility="collapsed",
+        format_func=lambda a: "🧑‍💻 Candidature freelance" if a == "freelance" else "🌐 Proposition de service",
+    )
+    _note_key, _msg_key = _li.default_templates_for(_angle == "freelance")
+    _tpl = _li.get_template(_note_key if _kind == "invitation" else _msg_key, crm_store.get_linkedin_templates())
+    _text = _li.render(
+        _tpl, dirigeant=dirigeant, entreprise=company,
+        mon_nom=your_name, mon_titre=your_title, mon_site=your_website,
+    )
+    _edited = st.text_area(
+        "Message", value=_text, height=110 if _kind == "invitation" else 200,
+        key=f"{key_prefix}_litext_{_kind}_{_angle}", label_visibility="collapsed",
+    )
+    if _kind == "invitation":
+        _lvl, _msg = _li.note_verdict(_edited)
+        {"ok": st.success, "warn": st.warning, "error": st.error}[_lvl](_msg)
+        st.caption("Compte gratuit : ~5 notes personnalisées par mois. Garde-les pour tes meilleurs prospects.")
+    st.code(_edited, language=None)   # icône « copier » en haut à droite du bloc
+    st.caption("⬆️ Clique sur l'icône en haut à droite du bloc pour copier.")
+
+    # 3) Marquer comme envoyé
+    st.markdown("**3. Une fois envoyé sur LinkedIn**")
+    _label = "✅ Invitation envoyée" if _kind == "invitation" else "✅ Message envoyé"
+    if st.button(_label, key=f"{key_prefix}_lisent_{_kind}", type="primary"):
+        _due = crm_store.mark_linkedin_sent(pid, _kind)
+        st.toast(f"Suivi programmé pour le {_due} ✅")
+        st.rerun()
+
+
 if _page == "Ma journée":
     st.markdown("### ☀️ Ma journée")
 
@@ -508,6 +569,9 @@ if _page == "Ma journée":
                     _dd = crm_store.set_next_action(_pid, _next, delay_days=int(_delay), note=_note)
                     st.toast(f"Programmé pour le {_dd} ✅")
                     st.rerun()
+
+            with st.expander("💬 LinkedIn", expanded=_d["next_action"] == crm_store.ACTION_LINKEDIN):
+                _linkedin_panel(_d, key_prefix=f"mj_{_pid}")
 
 if _page == "Pipeline":
     # ---------------------------------------------------------------------------
@@ -610,6 +674,9 @@ if _page == "Pipeline":
                         if _new_notes != (_row.get("notes") or ""):
                             crm_store.set_notes(_pid, _new_notes)
                             st.toast("Note enregistrée ✅")
+
+                    with st.expander("💬 LinkedIn", expanded=False):
+                        _linkedin_panel(_row, key_prefix=f"pl_{_pid}")
 
                     _events = crm_store.get_events(_pid, limit=5)
                     if _events:
@@ -1559,6 +1626,41 @@ if _page == "Réglages":
             if _v != crm_store.get_delay(_a):
                 crm_store.set_delay(_a, int(_v))
                 st.toast(f"{crm_store.ACTION_LABELS[_a]} : {_v} j ouvrés ✅")
+
+    # ---------------------------------------------------------------------------
+    # Modèles de messages LinkedIn
+    # ---------------------------------------------------------------------------
+    with st.expander("💬 Modèles de messages LinkedIn", expanded=False):
+        from services import linkedin as _li
+        st.caption(
+            "Variables disponibles : `{prenom}` (du dirigeant), `{entreprise}`, "
+            "`{mon_prenom}`, `{mon_titre}`, `{mon_site}`. Sans prénom connu, "
+            "« Bonjour {prenom}, » devient automatiquement « Bonjour, »."
+        )
+        _custom = crm_store.get_linkedin_templates()
+        for _k, _lbl in _li.TEMPLATE_LABELS.items():
+            st.markdown(f"**{_lbl}**" + ("  · _personnalisé_" if _k in _custom else "  · _par défaut_"))
+            _val = st.text_area(
+                _lbl, value=_li.get_template(_k, _custom),
+                height=90 if _k.startswith("note") else 180,
+                key=f"litpl_{_k}", label_visibility="collapsed",
+            )
+            _preview = _li.render(_val, dirigeant="Jean Dupont", entreprise="ESN Alpha",
+                                  mon_nom=your_name or "Kenny", mon_titre=your_title,
+                                  mon_site=your_website)
+            if _k.startswith("note"):
+                _lvl, _msg = _li.note_verdict(_preview)
+                st.caption(("✅ " if _lvl == "ok" else "⚠️ ") + _msg + " (aperçu avec « Jean Dupont / ESN Alpha »)")
+            _s1, _s2, _ = st.columns([1, 1, 3])
+            if _s1.button("💾 Enregistrer", key=f"litpl_save_{_k}", type="primary", use_container_width=True):
+                crm_store.set_linkedin_template(_k, _val)
+                st.success("Modèle enregistré ✅")
+            if _s2.button("↩️ Par défaut", key=f"litpl_reset_{_k}", use_container_width=True,
+                          disabled=_k not in _custom):
+                crm_store.reset_linkedin_template(_k)
+                st.session_state.pop(f"litpl_{_k}", None)
+                st.rerun()
+            st.markdown("")
 
     # ---------------------------------------------------------------------------
     # Franchises exclues
