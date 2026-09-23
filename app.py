@@ -406,6 +406,110 @@ st.markdown("Trouve des prospects locaux, analyse leur besoin et génère des co
 st.markdown("---")
 
 # ---------------------------------------------------------------------------
+# 📋 Pipeline CRM — tous les prospects suivis, par statut
+# ---------------------------------------------------------------------------
+_pipe_counts = {}
+try:
+    _pipe_counts = crm_store.status_counts()
+except Exception:
+    pass
+_pipe_total = sum(_pipe_counts.values())
+
+with st.expander(f"📋 Pipeline — {_pipe_total} prospect(s) suivi(s)", expanded=bool(_pipe_total)):
+    if not _pipe_total:
+        st.info(
+            "Ton pipeline est vide. Lance une prospection : les prospects trouvés "
+            "y seront ajoutés automatiquement et tu pourras suivre chacun d'eux "
+            "(contacté, intéressé, RDV, client…)."
+        )
+    else:
+        # Compteurs par statut
+        _active = [s for s in crm_store.STATUS_ORDER if _pipe_counts.get(s)]
+        if _active:
+            _cols = st.columns(len(_active))
+            for _c, _s in zip(_cols, _active):
+                _c.metric(crm_store.STATUS_LABELS[_s], _pipe_counts[_s])
+
+        st.markdown("---")
+
+        # Filtres
+        _f1, _f2, _f3 = st.columns([2, 2, 3])
+        with _f1:
+            _filter_status = st.selectbox(
+                "Statut",
+                options=["(tous)"] + crm_store.STATUS_ORDER,
+                format_func=lambda s: "Tous les statuts" if s == "(tous)" else crm_store.STATUS_LABELS[s],
+                key="pipe_status",
+            )
+        with _f2:
+            _filter_email = st.selectbox(
+                "Email",
+                options=["(tous)", "avec", "sans"],
+                format_func=lambda v: {"(tous)": "Avec ou sans email",
+                                       "avec": "📧 Avec email seulement",
+                                       "sans": "Sans email"}[v],
+                key="pipe_email",
+            )
+        with _f3:
+            _filter_search = st.text_input("Rechercher", placeholder="Nom, email, site…", key="pipe_search")
+
+        _rows = crm_store.list_prospects(
+            status=None if _filter_status == "(tous)" else _filter_status,
+            has_email={"(tous)": None, "avec": True, "sans": False}[_filter_email],
+            search=_filter_search.strip(),
+        )
+        st.caption(f"{len(_rows)} prospect(s) affiché(s)")
+
+        for _row in _rows:
+            _pid = _row["place_id"]
+            _label = f"{crm_store.STATUS_LABELS.get(_row['status'], _row['status'])} · **{_row['name']}**"
+            if _row.get("email"):
+                _label += f" · 📧 {_row['email']}"
+            with st.container(border=True):
+                st.markdown(_label)
+                _meta = []
+                if _row.get("phone"):
+                    _meta.append(f"📞 {_row['phone']}")
+                if _row.get("website"):
+                    _meta.append(f"[🌐 site]({_row['website']})")
+                if _row.get("score") is not None:
+                    _meta.append(f"score {_row['score']}/100")
+                if _row.get("last_contact_date"):
+                    _meta.append(f"dernier contact {_row['last_contact_date']}")
+                if _row.get("followup_step"):
+                    _meta.append(f"{_row['followup_step']} relance(s)")
+                if _meta:
+                    st.caption(" · ".join(_meta))
+
+                _a1, _a2 = st.columns([2, 3])
+                with _a1:
+                    _new_status = st.selectbox(
+                        "Statut", options=crm_store.STATUS_ORDER,
+                        index=crm_store.STATUS_ORDER.index(_row["status"])
+                        if _row["status"] in crm_store.STATUS_ORDER else 0,
+                        format_func=lambda s: crm_store.STATUS_LABELS[s],
+                        key=f"st_{_pid}", label_visibility="collapsed",
+                    )
+                    if _new_status != _row["status"]:
+                        crm_store.set_status(_pid, _new_status)
+                        st.rerun()
+                with _a2:
+                    _new_notes = st.text_input(
+                        "Notes", value=_row.get("notes") or "",
+                        placeholder="Note (rappeler en janvier, budget serré…)",
+                        key=f"nt_{_pid}", label_visibility="collapsed",
+                    )
+                    if _new_notes != (_row.get("notes") or ""):
+                        crm_store.set_notes(_pid, _new_notes)
+                        st.toast("Note enregistrée ✅")
+
+                _events = crm_store.get_events(_pid, limit=5)
+                if _events:
+                    with st.expander("🕮 Historique", expanded=False):
+                        for _e in _events:
+                            st.caption(f"{_e['at'][:16].replace('T', ' ')} — **{_e['kind']}** {_e['detail']}")
+
+# ---------------------------------------------------------------------------
 # Sélection service × cible
 # ---------------------------------------------------------------------------
 st.markdown("### 🧩 Votre activité")
