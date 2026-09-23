@@ -22,7 +22,7 @@ import os
 import sqlite3
 import threading
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional
 
 DB_FILE = os.path.join("output", "crm.db")
@@ -63,9 +63,55 @@ STATUS_LABELS: Dict[str, str] = {
 # Statuts qui sortent le prospect du flux de prospection/relance
 CLOSED_STATUSES = {STATUS_CLIENT, STATUS_PAS_INTERESSE, STATUS_BLACKLIST}
 
+# ---------------------------------------------------------------------------
+# Prochaines actions — la colonne vertébrale de l'écran « Ma journée »
+# ---------------------------------------------------------------------------
+
+ACTION_RELANCER = "relancer"
+ACTION_MAQUETTE = "envoyer_maquette"
+ACTION_RAPPELER = "rappeler"
+ACTION_PROPALE  = "envoyer_propale"
+ACTION_LINKEDIN = "message_linkedin"
+ACTION_AUTRE    = "autre"
+
+ACTION_LABELS: Dict[str, str] = {
+    ACTION_RELANCER: "🔄 Relancer",
+    ACTION_MAQUETTE: "🎨 Envoyer la maquette",
+    ACTION_RAPPELER: "📞 Rappeler",
+    ACTION_PROPALE:  "📄 Envoyer la propale",
+    ACTION_LINKEDIN: "💬 Message LinkedIn",
+    ACTION_AUTRE:    "📌 À faire",
+}
+
+# Délais par défaut, en JOURS OUVRÉS. Modifiables dans Réglages (table meta).
+DEFAULT_DELAYS: Dict[str, int] = {
+    ACTION_RELANCER: 4,   # relance si pas de réponse
+    ACTION_MAQUETTE: 1,   # dès le lendemain : on voit tout de suite qu'il faut l'envoyer
+    ACTION_RAPPELER: 1,   # « il devait me rappeler » → on rappelle le lendemain
+    ACTION_PROPALE:  1,
+    ACTION_LINKEDIN: 1,
+    ACTION_AUTRE:    1,
+}
+
 
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+def add_business_days(start: Optional[date], n: int) -> str:
+    """
+    Ajoute n jours OUVRÉS (week-ends exclus) et retourne 'YYYY-MM-DD'.
+    n=1 un vendredi → le lundi suivant.
+    """
+    d = start or date.today()
+    if isinstance(d, datetime):
+        d = d.date()
+    added = 0
+    while added < n:
+        d += timedelta(days=1)
+        if d.weekday() < 5:      # 0-4 = lundi-vendredi
+            added += 1
+    return d.isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -113,10 +159,11 @@ CREATE TABLE IF NOT EXISTS prospects (
     followup_step       INTEGER DEFAULT 0,
     responded           INTEGER DEFAULT 0,
     notion_page_id      TEXT DEFAULT '',
-    email_template      TEXT DEFAULT ''
+    email_template      TEXT DEFAULT '',
+    next_action         TEXT DEFAULT '',
+    due_date            TEXT DEFAULT '',
+    action_note         TEXT DEFAULT ''
 );
-CREATE INDEX IF NOT EXISTS idx_prospects_status ON prospects(status);
-CREATE INDEX IF NOT EXISTS idx_prospects_campaign ON prospects(campaign_id);
 
 CREATE TABLE IF NOT EXISTS campaigns (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -144,7 +191,6 @@ CREATE TABLE IF NOT EXISTS events (
     kind      TEXT NOT NULL,
     detail    TEXT DEFAULT ''
 );
-CREATE INDEX IF NOT EXISTS idx_events_place ON events(place_id);
 
 CREATE TABLE IF NOT EXISTS meta (
     key    TEXT PRIMARY KEY,
@@ -153,10 +199,60 @@ CREATE TABLE IF NOT EXISTS meta (
 """
 
 
+# Colonnes ajoutées après coup : migrées sur les bases déjà créées.
+_ADDED_COLUMNS = {
+    "next_action": "TEXT DEFAULT ''",
+    "due_date":    "TEXT DEFAULT ''",
+    "action_note": "TEXT DEFAULT ''",
+}
+
+
+# Index créés APRÈS la migration des colonnes : sur une base ancienne, indexer
+# une colonne pas encore ajoutée ferait échouer tout le schéma.
+_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_prospects_status ON prospects(status);
+CREATE INDEX IF NOT EXISTS idx_prospects_campaign ON prospects(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_prospects_due ON prospects(due_date);
+CREATE INDEX IF NOT EXISTS idx_events_place ON events(place_id);
+"""
+
+
 def init_db() -> None:
-    """Crée le schéma si besoin (idempotent)."""
+    """Crée le schéma si besoin, ajoute les colonnes manquantes, puis les index."""
     with _lock, _connect() as conn:
         conn.executescript(_SCHEMA)
+        existing = {r["name"] for r in conn.execute("PRAGMA table_info(prospects)")}
+        for col, ddl in _ADDED_COLUMNS.items():
+            if col not in existing:
+                conn.execute(f"ALTER TABLE prospects ADD COLUMN {col} {ddl}")
+        try:
+            conn.executescript(_INDEXES)
+        except sqlite3.OperationalError:
+            pass  # base héritée sans certaines colonnes indexables : non bloquant
+
+
+# ---------------------------------------------------------------------------
+# Réglages persistants (délais configurables)
+# ---------------------------------------------------------------------------
+
+def get_delay(action: str) -> int:
+    """Délai en jours ouvrés pour une action (réglage utilisateur ou défaut)."""
+    with _connect() as conn:
+        row = conn.execute("SELECT value FROM meta WHERE key = ?", (f"delay_{action}",)).fetchone()
+    if row:
+        try:
+            return int(row["value"])
+        except (TypeError, ValueError):
+            pass
+    return DEFAULT_DELAYS.get(action, 1)
+
+
+def set_delay(action: str, days: int) -> None:
+    with _lock, _connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+            (f"delay_{action}", str(max(0, int(days)))),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -326,6 +422,112 @@ def mark_contacted(place_ids: Iterable[str], channel: str = "email") -> None:
                 "INSERT INTO events (place_id, at, kind, detail) VALUES (?, ?, 'contact', ?)",
                 (pid, now, channel),
             )
+
+
+def set_next_action(place_id: str, action: str, delay_days: Optional[int] = None,
+                    due_date: Optional[str] = None, note: str = "") -> str:
+    """
+    Programme la prochaine action sur un prospect.
+
+    - `due_date` (YYYY-MM-DD) prioritaire si fourni (saisie manuelle) ;
+    - sinon `delay_days` en jours ouvrés ;
+    - sinon le délai configuré pour cette action.
+    Retourne la date d'échéance retenue.
+    """
+    if action not in ACTION_LABELS:
+        raise ValueError(f"Action inconnue : {action}")
+    if not due_date:
+        days = get_delay(action) if delay_days is None else int(delay_days)
+        due_date = add_business_days(None, days) if days > 0 else datetime.now().strftime("%Y-%m-%d")
+    with _lock, _connect() as conn:
+        conn.execute(
+            """UPDATE prospects SET next_action = ?, due_date = ?, action_note = ?, updated_at = ?
+               WHERE place_id = ?""",
+            (action, due_date, note, _now(), place_id),
+        )
+        conn.execute(
+            "INSERT INTO events (place_id, at, kind, detail) VALUES (?, ?, 'action', ?)",
+            (place_id, _now(), f"{ACTION_LABELS[action]} → {due_date}" + (f" · {note}" if note else "")),
+        )
+    return due_date
+
+
+def clear_next_action(place_id: str, done_note: str = "") -> None:
+    """Marque l'action comme faite : on la retire de « Ma journée »."""
+    with _lock, _connect() as conn:
+        conn.execute(
+            """UPDATE prospects SET next_action = '', due_date = '', action_note = '', updated_at = ?
+               WHERE place_id = ?""",
+            (_now(), place_id),
+        )
+        if done_note:
+            conn.execute(
+                "INSERT INTO events (place_id, at, kind, detail) VALUES (?, ?, 'fait', ?)",
+                (place_id, _now(), done_note),
+            )
+
+
+def due_actions(on_date: Optional[str] = None, include_future: bool = False) -> List[dict]:
+    """
+    Les actions à faire : échéance passée ou aujourd'hui, prospect non clos.
+    Triées par échéance (les plus en retard d'abord).
+    """
+    day = on_date or datetime.now().strftime("%Y-%m-%d")
+    cmp_op = "<= ?" if not include_future else "!= ''"
+    params: list = [] if include_future else [day]
+    with _connect() as conn:
+        rows = conn.execute(
+            f"""SELECT * FROM prospects
+                WHERE next_action != '' AND due_date != '' AND due_date {cmp_op}
+                  AND status NOT IN ('client', 'pas_interesse', 'blacklist')
+                ORDER BY due_date ASC""",
+            params,
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def mark_responded(place_id: str, how: str = "email", note: str = "",
+                   next_action: Optional[str] = None,
+                   delay_days: Optional[int] = None,
+                   due_date: Optional[str] = None) -> None:
+    """
+    Le prospect a répondu (mail détecté OU retour téléphonique saisi à la main).
+
+    → statut « intéressé » (s'il n'est pas déjà plus avancé), relance ANNULÉE,
+      et éventuellement une nouvelle action programmée (envoyer maquette, rappeler…).
+    """
+    with _lock, _connect() as conn:
+        row = conn.execute("SELECT status, next_action FROM prospects WHERE place_id = ?",
+                           (place_id,)).fetchone()
+        current = row["status"] if row else STATUS_NOUVEAU
+        # On ne dégrade jamais un statut déjà plus avancé (RDV, client…)
+        new_status = current if current in (STATUS_RDV, STATUS_CLIENT) else STATUS_INTERESSE
+        conn.execute(
+            """UPDATE prospects
+               SET responded = 1, status = ?, next_action = '', due_date = '', updated_at = ?
+               WHERE place_id = ?""",
+            (new_status, _now(), place_id),
+        )
+        conn.execute(
+            "INSERT INTO events (place_id, at, kind, detail) VALUES (?, ?, 'reponse', ?)",
+            (place_id, _now(), f"Réponse ({how})" + (f" · {note}" if note else "")),
+        )
+    if next_action:
+        set_next_action(place_id, next_action, delay_days=delay_days, due_date=due_date, note=note)
+
+
+def actions_summary() -> Dict[str, int]:
+    """{en_retard, aujourdhui, a_venir} pour le badge de « Ma journée »."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    with _connect() as conn:
+        rows = conn.execute(
+            """SELECT due_date FROM prospects
+               WHERE next_action != '' AND due_date != ''
+                 AND status NOT IN ('client', 'pas_interesse', 'blacklist')"""
+        ).fetchall()
+    late = sum(1 for r in rows if r["due_date"] < today)
+    now_ = sum(1 for r in rows if r["due_date"] == today)
+    return {"en_retard": late, "aujourdhui": now_, "a_venir": len(rows) - late - now_}
 
 
 def contacted_place_ids() -> set:
