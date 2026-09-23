@@ -193,6 +193,10 @@ def search_sirene(
                 keyword=keyword,
                 maps_url=f"https://annuaire-entreprises.data.gouv.fr/entreprise/{siren}",
             )
+            # Le dirigeant est déjà dans la réponse : aucun appel supplémentaire
+            from services.dirigeants import extract_dirigeant
+            prospect.siren = siren
+            prospect.dirigeant, prospect.dirigeant_qualite = extract_dirigeant(entry)
             prospects.append(prospect)
 
         if page >= total_pages:

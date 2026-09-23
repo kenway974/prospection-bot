@@ -43,6 +43,10 @@ class Prospect:
     cms: Optional[str] = None   # CMS/builder détecté (ex: "WordPress", "Wix")
     # Rempli par mailer.py
     email_draft: str = ""       # Brouillon de cold email prêt à envoyer
+    # Rempli par services/dirigeants.py (registre Sirène, données publiques)
+    siren: str = ""             # Numéro SIREN de l'entreprise
+    dirigeant: str = ""         # « Jean Dupont » — représentant légal
+    dirigeant_qualite: str = "" # « Président », « Gérant », « Directeur général »…
 
     def has_website(self) -> bool:
         """Retourne True si le prospect a un site web valide."""
@@ -73,6 +77,9 @@ class Prospect:
             "email": self.email,
             "cms": self.cms,
             "email_draft": self.email_draft,
+            "siren": self.siren,
+            "dirigeant": self.dirigeant,
+            "dirigeant_qualite": self.dirigeant_qualite,
         }
 
 
