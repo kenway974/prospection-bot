@@ -177,10 +177,17 @@ def _get(key: str, env_var: str = "", default: str = "") -> str:
 # ---------------------------------------------------------------------------
 with st.sidebar:
     st.markdown("## 🎯 Prospection B2B")
+    # Badge d'actions dues, affiché directement dans le menu
+    try:
+        _act = crm_store.actions_summary()
+        _due_now = _act["en_retard"] + _act["aujourdhui"]
+    except Exception:
+        _due_now = 0
     _page = st.radio(
         "Navigation",
-        options=["Prospection", "Pipeline", "Relances", "Statistiques", "Réglages"],
+        options=["Ma journée", "Prospection", "Pipeline", "Relances", "Statistiques", "Réglages"],
         format_func=lambda p: {
+            "Ma journée":   f"☀️  Ma journée{f'  ({_due_now})' if _due_now else ''}",
             "Prospection":  "🔍  Prospection",
             "Pipeline":     "📋  Pipeline",
             "Relances":     "🔄  Relances",
@@ -417,6 +424,87 @@ from target_segments import (
 st.markdown("# 🎯 Prospection B2B Automatisée")
 st.markdown("Trouve des prospects locaux, analyse leur besoin et génère des cold emails/SMS en un clic.")
 st.markdown("---")
+
+if _page == "Ma journée":
+    st.markdown("### ☀️ Ma journée")
+
+    _sum = crm_store.actions_summary()
+    _m1, _m2, _m3 = st.columns(3)
+    _m1.metric("🔴 En retard", _sum["en_retard"])
+    _m2.metric("🟠 Aujourd'hui", _sum["aujourdhui"])
+    _m3.metric("🗓️ À venir", _sum["a_venir"])
+
+    _due = crm_store.due_actions()
+    _today_str = datetime.now().strftime("%Y-%m-%d")
+
+    if not _due:
+        st.success(
+            "✅ Rien à faire aujourd'hui. "
+            "Les actions programmées (relances, maquettes, rappels) apparaîtront ici à leur échéance."
+        )
+    else:
+        st.caption(f"{len(_due)} action(s) à traiter — les plus en retard d'abord.")
+
+    for _d in _due:
+        _pid = _d["place_id"]
+        _late = _d["due_date"] < _today_str
+        with st.container(border=True):
+            _h1, _h2 = st.columns([3, 1])
+            with _h1:
+                st.markdown(
+                    f"{crm_store.ACTION_LABELS.get(_d['next_action'], _d['next_action'])} "
+                    f"— **{_d['name']}**"
+                )
+                _info = []
+                if _d.get("email"):
+                    _info.append(f"📧 {_d['email']}")
+                if _d.get("phone"):
+                    _info.append(f"📞 {_d['phone']}")
+                if _d.get("website"):
+                    _info.append(f"[🌐 site]({_d['website']})")
+                if _info:
+                    st.caption(" · ".join(_info))
+                if _d.get("action_note"):
+                    st.info(_d["action_note"])
+            with _h2:
+                if _late:
+                    st.markdown(f"🔴 **en retard**  \n_{_d['due_date']}_")
+                else:
+                    st.markdown("🟠 **aujourd'hui**")
+
+            # Actions rapides : un clic après un appel ou une réponse
+            _b1, _b2, _b3, _b4 = st.columns(4)
+            if _b1.button("✅ Fait", key=f"done_{_pid}", use_container_width=True):
+                crm_store.clear_next_action(_pid, done_note=crm_store.ACTION_LABELS.get(_d["next_action"], ""))
+                st.rerun()
+            if _b2.button("💬 A répondu", key=f"rep_{_pid}", use_container_width=True):
+                crm_store.mark_responded(_pid, how="saisie manuelle")
+                st.rerun()
+            if _b3.button("📅 Demain", key=f"tom_{_pid}", use_container_width=True):
+                crm_store.set_next_action(_pid, _d["next_action"] or crm_store.ACTION_RAPPELER,
+                                          delay_days=1, note=_d.get("action_note", ""))
+                st.rerun()
+            if _b4.button("🚫 Pas intéressé", key=f"no_{_pid}", use_container_width=True):
+                crm_store.set_status(_pid, crm_store.STATUS_PAS_INTERESSE)
+                crm_store.clear_next_action(_pid)
+                st.rerun()
+
+            # Programmer une suite précise (issue d'appel)
+            with st.expander("➡️ Programmer la suite", expanded=False):
+                _c1, _c2, _c3 = st.columns([2, 1, 1])
+                _next = _c1.selectbox(
+                    "Action", options=list(crm_store.ACTION_LABELS.keys()),
+                    format_func=lambda a: crm_store.ACTION_LABELS[a],
+                    key=f"na_{_pid}",
+                )
+                _delay = _c2.number_input("Dans (j. ouvrés)", min_value=0, max_value=60,
+                                          value=crm_store.get_delay(_next), key=f"nd_{_pid}")
+                _note = st.text_input("Note", placeholder="ex : l'associé devait rappeler",
+                                      key=f"nn_{_pid}")
+                if _c3.button("Programmer", key=f"nb_{_pid}", use_container_width=True):
+                    _dd = crm_store.set_next_action(_pid, _next, delay_days=int(_delay), note=_note)
+                    st.toast(f"Programmé pour le {_dd} ✅")
+                    st.rerun()
 
 if _page == "Pipeline":
     # ---------------------------------------------------------------------------
@@ -1375,9 +1463,19 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                 service_id=params.get("service_id", ""),
             )
             if _something_sent:
+                _contacted_ids = [p.place_id for p in all_prospects]
                 _crm.mark_contacted(
-                    [p.place_id for p in all_prospects],
+                    _contacted_ids,
                     channel="email" if (_emails_sent or _emails_scheduled) else "sms",
+                )
+                # Relance automatique programmée : elle sera annulée d'elle-même
+                # si le prospect répond (mark_responded efface l'action).
+                _delay = _crm.get_delay(_crm.ACTION_RELANCER)
+                for _cid_p in _contacted_ids:
+                    _crm.set_next_action(_cid_p, _crm.ACTION_RELANCER, delay_days=_delay)
+                log_q.put(
+                    f"[--] ⏳ Relance programmée dans {_delay} jour(s) ouvré(s) pour "
+                    f"{len(_contacted_ids)} prospect(s) — annulée automatiquement s'ils répondent."
                 )
             log_q.put(f"[--] 🗃️  CRM : {_new} nouveau(x) prospect(s) ajouté(s) au pipeline.")
         except Exception as _crmdb_exc:
@@ -2001,6 +2099,24 @@ if _page == "Statistiques":
                 st.divider()
 
 if _page == "Réglages":
+    # ---------------------------------------------------------------------------
+    # Délais des actions (jours ouvrés)
+    # ---------------------------------------------------------------------------
+    with st.expander("⏱️ Délais des actions (en jours ouvrés)", expanded=False):
+        st.caption(
+            "Combien de temps avant qu'une action réapparaisse dans « Ma journée ». "
+            "Les week-ends ne comptent pas. Tu peux toujours saisir un délai différent au cas par cas."
+        )
+        for _a in (crm_store.ACTION_RELANCER, crm_store.ACTION_MAQUETTE,
+                   crm_store.ACTION_RAPPELER, crm_store.ACTION_PROPALE):
+            _v = st.number_input(
+                crm_store.ACTION_LABELS[_a], min_value=0, max_value=60,
+                value=crm_store.get_delay(_a), key=f"delay_{_a}",
+            )
+            if _v != crm_store.get_delay(_a):
+                crm_store.set_delay(_a, int(_v))
+                st.toast(f"{crm_store.ACTION_LABELS[_a]} : {_v} j ouvrés ✅")
+
     # ---------------------------------------------------------------------------
     # Historique
     # ---------------------------------------------------------------------------
