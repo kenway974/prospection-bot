@@ -10,6 +10,16 @@ import os
 import sys
 import unittest
 
+# 📘 ─── À QUOI SERT CE FICHIER ───
+# 📘 Rôle : protège la détection/exclusion des franchises et grandes enseignes
+# 📘   (services/franchises.py) : vrais positifs, insensibilité casse/accents/tirets, et
+# 📘   SURTOUT l'absence de faux positifs (ne jamais exclure un indépendant), la liste perso
+# 📘   de l'utilisateur, le filtrage d'une liste et la normalisation des noms.
+# 📘 Appelé par : pytest / `python -m unittest` (pas inclus dans run_tests.py).
+# 📘 Appelle : services/franchises.py uniquement (tests 100 % hors réseau, sans mock).
+# 📘 Concepts Python à retenir ici : dépaquetage de tuple `hit, brand = ...`, indexation
+# 📘   [0] d'un tuple, classe minimale définie DANS un test (objet factice).
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from services.franchises import is_franchise, filter_franchises, _normalize
@@ -18,6 +28,8 @@ from services.franchises import is_franchise, filter_franchises, _normalize
 class TestDetection(unittest.TestCase):
 
     def test_franchises_evidentes(self):
+        # 📘 is_franchise renvoie un TUPLE (trouvé?, marque) ; `hit, brand = ...` le « déballe »
+        # 📘   dans deux variables. Plus bas, `is_franchise(...)[0]` prend seulement le 1er.
         for nom in [
             "Fitness Park Saint-Denis",
             "LAFORET IMMOBILIER",
@@ -100,6 +112,8 @@ class TestListeUtilisateur(unittest.TestCase):
 class TestFiltrage(unittest.TestCase):
 
     def test_separe_gardes_et_exclus(self):
+        # 📘 Faux prospect minimal : filter_franchises n'a besoin que d'un attribut .name,
+        # 📘   inutile de construire un vrai Prospect complet (« duck typing »).
         class P:
             def __init__(self, name): self.name = name
         items = [P("Fitness Park"), P("Salle Muscu Péi"), P("Century 21 Nord"), P("Agence du Lagon")]

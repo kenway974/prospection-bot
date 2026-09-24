@@ -4,6 +4,17 @@ tests/test_service_profiles.py — Tests unitaires des ServiceProfiles et Target
 Vérifie que tous les profils de service et segments de cible sont valides.
 """
 
+# 📘 ─── À QUOI SERT CE FICHIER ───
+# 📘 Rôle : valide les deux catalogues utilisés par l'UI actuelle : service_profiles.py
+# 📘   (champs remplis, {name} dans l'accroche, SMS ≤ 160, catégories connues, catalogue
+# 📘   recentré dev, freelance au seuil 100) et target_segments.py (mots-clés, tailles et
+# 📘   secteurs valides, ids uniques, rayon/max positifs, SIZE_LABELS complet).
+# 📘 Appelé par : run_tests.py, pytest, `python -m unittest`.
+# 📘 Appelle : service_profiles.py, target_segments.py.
+# 📘 Concepts Python à retenir ici : tests de cohérence de données, set comprehension,
+# 📘   assertIn sur un dict (teste la présence d'une CLÉ).
+# 📘 Rappel : si tu ajoutes un service ou une cible, relance ce fichier en premier.
+
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -61,6 +72,7 @@ class TestServiceProfiles(unittest.TestCase):
 
     def test_categories_valides(self):
         """Chaque service doit appartenir à une catégorie connue."""
+        # 📘 `x in dict` teste si x est une CLÉ du dict (ici un code de catégorie).
         for s in SERVICE_PROFILES:
             self.assertIn(
                 s.category, SERVICE_CATEGORY_LABELS,

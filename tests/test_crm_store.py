@@ -15,6 +15,17 @@ import sys
 import tempfile
 import unittest
 
+# 📘 ─── À QUOI SERT CE FICHIER ───
+# 📘 Rôle : protège la base CRM SQLite (crm_store.py) : insertion/lecture, « upsert » qui
+# 📘   ne perd jamais statut/notes au re-scan, statuts, filtres, timeline d'événements,
+# 📘   campagnes, et migration depuis les anciens fichiers JSON (fidèle + idempotente).
+# 📘 Appelé par : pytest / `python -m unittest` (pas inclus dans run_tests.py).
+# 📘 Appelle : crm_store.py, services/google_maps.py (Prospect.to_dict), json, tempfile.
+# 📘 Concepts Python à retenir ici : base de test isolée (setUp/tearDown + dossier
+# 📘   temporaire), json.loads / json.dump, assertIsNotNone, méthode utilitaire `_write_legacy`.
+# 📘 Vocabulaire : UPSERT = « insère si absent, met à jour si présent ». IDEMPOTENT = relancer
+# 📘   l'opération une 2e fois ne change plus rien (pas de doublons).
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import crm_store
@@ -33,6 +44,10 @@ def make_prospect(place_id="p1", name="Agence X", email=None, score=80, website=
     return p
 
 
+# 📘 Même principe que dans test_crm_actions.py : chaque test a sa base SQLite jetable.
+# 💡 Cette classe _DbTestCase est dupliquée dans test_crm_actions.py : la placer dans un
+# 💡   module partagé (ex. tests/helpers.py, ou une « fixture » pytest dans conftest.py)
+# 💡   éviterait de maintenir deux copies.
 class _DbTestCase(unittest.TestCase):
     """Isole chaque test dans sa propre base temporaire."""
 
@@ -55,6 +70,7 @@ class TestProspects(_DbTestCase):
         p = crm_store.get_prospect("p1")
         self.assertEqual(p["name"], "Agence X")
         self.assertEqual(p["status"], crm_store.STATUS_NOUVEAU)
+        # 📘 En base, la liste est stockée comme TEXTE JSON : json.loads la re-transforme en list.
         self.assertEqual(json.loads(p["issue_keys"]), ["https"])
         self.assertEqual(p["target_sector"], "entreprises")
 
@@ -146,6 +162,8 @@ class TestCampaigns(_DbTestCase):
 
 class TestMigration(_DbTestCase):
 
+    # 📘 Méthode sans préfixe test_ → unittest ne la lance pas seule : c'est un utilitaire
+    # 📘   qui écrit sur disque de faux fichiers « ancien format » (prospects, history, contacts).
     def _write_legacy(self, out: str):
         os.makedirs(out, exist_ok=True)
         prospects_file = os.path.join(out, "prospects_20260101_000000.json")

@@ -5,14 +5,44 @@ Teste chaque check individuellement sans faire de vraies requêtes HTTP.
 Les réponses HTTP sont simulées avec unittest.mock.
 """
 
+# 📘 ─── À QUOI SERT CE FICHIER ───
+# 📘 Rôle : protège l'AUDIT DE SITE (services/analyzer.py) : chaque vérification (HTTPS,
+# 📘   viewport, title, tracking, formulaire, Wix, copyright ancien, réseaux sociaux, SEO),
+# 📘   l'extraction d'email, et le calcul du score global (100 = parfait) avec ses poids.
+# 📘 Appelé par : run_tests.py, pytest, `python -m unittest`.
+# 📘 Appelle : services/analyzer.py, services/google_maps.py (Prospect), services/cache.py,
+# 📘   BeautifulSoup (lecture de HTML).
+# 📘 Concepts Python à retenir ici : unittest.TestCase, méthodes test_*, assert*, setUp,
+# 📘   mock.patch (context manager `with`), MagicMock, f-string multi-lignes.
+#
+# 📘 ─── MINI-COURS : LES TESTS AUTOMATIQUES AVEC unittest ───
+# 📘 Un test = du code qui appelle TON code avec des entrées connues et vérifie le résultat.
+# 📘   On les relance après chaque modif : si un test casse, tu sais tout de suite quoi.
+# 📘 unittest (inclus dans Python) s'organise ainsi :
+# 📘   • une CLASSE qui hérite de unittest.TestCase (`class TestX(unittest.TestCase):`)
+# 📘     regroupe des tests liés ;
+# 📘   • chaque MÉTHODE dont le nom commence par `test_` est un test lancé automatiquement ;
+# 📘   • `self.assertEqual(a, b)`, `assertIn`, `assertTrue`, `assertIsNone`, `assertLess`...
+# 📘     sont des ASSERTIONS : si la condition est fausse, le test échoue avec un message clair ;
+# 📘   • `setUp(self)` s'exécute AVANT chaque test (préparer un état propre) ; `tearDown`
+# 📘     s'exécute APRÈS (nettoyer).
+# 📘 pytest (dans requirements-dev.txt) sait aussi exécuter ces tests unittest tels quels.
+
+# 📘 Ajoute le dossier parent (racine du projet) au chemin d'import, pour pouvoir écrire
+# 📘   `from services.analyzer import ...` même si on lance ce fichier depuis tests/.
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import unittest
+# 📘 MOCK = « doublure » : un faux objet qui remplace un vrai (réseau, fichier, API) pendant
+# 📘   un test. `patch("module.nom", ...)` remplace temporairement `nom` dans `module`, puis
+# 📘   remet l'original automatiquement. MagicMock = objet qui accepte n'importe quel attribut.
 from unittest.mock import patch, MagicMock
 from bs4 import BeautifulSoup
 
+# 📘 On importe aussi des fonctions « privées » (préfixe _) : en test, c'est permis pour
+# 📘   vérifier chaque brique séparément.
 from services.analyzer import (
     _check_https,
     _check_viewport,
@@ -40,6 +70,8 @@ from services.google_maps import Prospect
 # Helpers
 # ---------------------------------------------------------------------------
 
+# 📘 « Fabrique » de données de test : crée un Prospect réaliste en une ligne. Les
+# 📘   paramètres par défaut permettent de ne changer que ce qui compte pour chaque test.
 def make_prospect(website="https://example.com", name="Test SARL") -> Prospect:
     return Prospect(
         place_id="test_id",
@@ -61,12 +93,16 @@ def make_soup(html: str) -> BeautifulSoup:
 # Tests des checks individuels
 # ---------------------------------------------------------------------------
 
+# 📘 Schéma de tous les tests de checks ci-dessous (« Arrange / Act / Assert ») :
+# 📘   1) on prépare une liste vide `issues` ; 2) on appelle le check, qui AJOUTE dedans des
+# 📘   tuples (message, poids) s'il trouve un problème ; 3) on vérifie le contenu.
+# 📘   issues[0][0] = message du 1er problème, issues[0][1] = son poids.
 class TestCheckHttps(unittest.TestCase):
 
     def test_http_detecte(self):
         issues = []
         _check_https("http://example.com", issues)
-        self.assertEqual(len(issues), 1)
+        self.assertEqual(len(issues), 1)  # 📘 échoue si len(issues) != 1
         self.assertIn("HTTPS", issues[0][0])
         self.assertEqual(issues[0][1], CRITICAL_WEIGHT)
 
@@ -222,6 +258,8 @@ class TestCheckOutdatedSite(unittest.TestCase):
         self.assertEqual(issues[0][1], MAJOR_WEIGHT)
 
     def test_copyright_recents_ignore(self):
+        # 📘 On calcule l'année courante au lieu d'écrire "2026" : le test restera vrai
+        # 📘   l'an prochain (un test ne doit pas dépendre de la date où on le lance).
         from datetime import datetime
         current_year = datetime.now().year
         issues = []
@@ -294,6 +332,7 @@ class TestScrapeEmail(unittest.TestCase):
 
 class TestAnalyzeProspect(unittest.TestCase):
 
+    # 📘 setUp est appelé automatiquement avant CHAQUE test de cette classe.
     def setUp(self):
         # Isolation : le cache d'analyse (par URL) ne doit pas fuiter entre tests.
         from services import cache
@@ -308,6 +347,9 @@ class TestAnalyzeProspect(unittest.TestCase):
 
     def test_prospect_site_inaccessible(self):
         p = make_prospect(website="https://site-down-xyz-123.fr")
+        # 📘 Pendant le bloc `with`, services.analyzer._fetch (le téléchargement HTTP) est
+        # 📘   remplacé par une fausse fonction qui renvoie toujours (None, 0.0) = « site mort ».
+        # 📘   Aucun accès réseau réel : le test est rapide et reproductible.
         with patch("services.analyzer._fetch", return_value=(None, 0.0)):
             result = analyze_prospect(p)
         self.assertEqual(result.score, 5)
@@ -336,6 +378,8 @@ class TestAnalyzeProspect(unittest.TestCase):
         </body>
         </html>
         """
+        # 📘 Fausse réponse HTTP : on lui donne juste les attributs que l'analyzer lit
+        # 📘   (.text = le HTML, .ok = statut OK).
         mock_resp = MagicMock()
         mock_resp.text = html
         mock_resp.ok = True
@@ -455,6 +499,8 @@ class TestCheckSeoVisibility(unittest.TestCase):
         soup = make_soup("<html><body><h1>Accueil</h1><p>Bienvenue</p></body></html>")
         issues = []
         _check_seo_visibility(soup, issues)
+        # 📘 `for msg, _ in issues` DÉPAQUETTE chaque tuple (message, poids) ; `_` = « valeur
+        # 📘   ignorée ». any(...) → True si au moins un message contient « léger ».
         self.assertTrue(any("léger" in msg.lower() for msg, _ in issues))
 
     def test_pas_de_h1_detecte(self):
@@ -476,5 +522,7 @@ class TestCheckSeoVisibility(unittest.TestCase):
         self.assertEqual(issues, [])
 
 
+# 📘 Permet de lancer ce seul fichier : `python tests/test_analyzer.py`. unittest.main()
+# 📘   trouve toutes les classes TestCase du fichier et exécute leurs méthodes test_*.
 if __name__ == "__main__":
     unittest.main(verbosity=2)

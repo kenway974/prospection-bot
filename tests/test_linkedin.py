@@ -12,6 +12,16 @@ import tempfile
 import unittest
 from urllib.parse import unquote_plus
 
+# 📘 ─── À QUOI SERT CE FICHIER ───
+# 📘 Rôle : protège la prospection LinkedIn ASSISTÉE (services/linkedin.py + suivi dans
+# 📘   crm_store.py) : rendu des modèles de message sans « trous », longueurs max LinkedIn,
+# 📘   liens de recherche correctement encodés, modèles perso sauvegardés/réinitialisés,
+# 📘   et prochaine action programmée après une invitation ou un message.
+# 📘 Appelé par : pytest / `python -m unittest` (pas inclus dans run_tests.py).
+# 📘 Appelle : services/linkedin.py, crm_store.py, services/google_maps.py, urllib.parse.
+# 📘 Concepts Python à retenir ici : assertNotIn, assertLessEqual, `"x" * 301` (répétition
+# 📘   de chaîne pour fabriquer un texte d'une longueur donnée), unquote_plus (décodage d'URL).
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from services import linkedin as L
@@ -66,6 +76,8 @@ class TestLiens(unittest.TestCase):
 
     def test_recherche_dirigeant(self):
         url = L.people_search_url("ESN Alpha", dirigeant="Jean Dupont")
+        # 📘 Dans une URL, espaces et caractères spéciaux sont encodés (" " → "+", "&" → "%26").
+        # 📘   unquote_plus fait l'inverse, pour comparer avec du texte lisible.
         self.assertTrue(url.startswith("https://www.linkedin.com/search/results/people/"))
         self.assertIn("Jean Dupont ESN Alpha", unquote_plus(url))
 

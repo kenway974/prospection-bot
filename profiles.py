@@ -11,20 +11,41 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List
 
+# 📘 ─── À QUOI SERT CE FICHIER ───
+# 📘 Rôle : ANCIEN système de profils « tout-en-un » (service + cible + ville dans un seul
+# 📘   objet). ~38 profils prédéfinis, dont beaucoup hors dev web (coursier, animateur...).
+# 📘   Il a été remplacé dans l'UI par le couple service_profiles.py × target_segments.py.
+# 📘 Appelé par : profile_manager.py (PROFILES, Profile), app.py (import de PROFILES et
+# 📘   get_profile non utilisés ; la classe Profile sert au bouton « Sauvegarder ce profil »),
+# 📘   tests/test_profiles.py.
+# 📘 Appelle : rien du projet.
+# 📘 Concepts Python à retenir ici : @dataclass, List[str], field(default_factory=dict),
+# 📘   valeurs par défaut, type union `Profile | None`, next() + expression génératrice.
+# 💡 Fichier en grande partie mort : app.py ne lit plus PROFILES. Tu pourrais ne garder que la
+# 💡   classe Profile (utile à la sauvegarde) et archiver les 1 100 lignes de données, ou les
+# 💡   migrer en services/cibles si certains profils te servent encore. Moins de code = moins
+# 💡   de choses à comprendre et à maintenir.
 
+
+# 📘 Modèle d'un profil. `@dataclass` génère le constructeur à partir des champs.
+# 📘   Les champs SANS valeur par défaut (id → qualification_criteria) sont obligatoires,
+# 📘   et Python impose qu'ils soient déclarés AVANT ceux qui ont une valeur par défaut.
 @dataclass
 class Profile:
-    id: str
+    id: str                        # 📘 identifiant unique (les profils custom : "custom_...")
     emoji: str
     name: str
     description: str
-    keywords: List[str]
-    location: str
+    keywords: List[str]            # 📘 mots-clés de recherche (équivalent des cibles actuelles)
+    location: str                  # 📘 ville par défaut, ex. "Lyon, France"
     your_title: str
     your_offer: str                # Ce que tu proposes en 1 phrase
     email_hook: str                # Accroche personnalisée pour le mail
     sms_hook: str                  # Accroche courte pour le SMS (max 100 chars)
     qualification_criteria: List[str]   # Ce qu'on cherche chez le prospect
+    # 📘 qualification_criteria est purement descriptif : aucun code ne le lit pour décider.
+    # 📘 check_weight_overrides : même rôle que dans service_profiles.py (poids des checks de
+    # 📘   services/analyzer.py). field(default_factory=dict) = un dict neuf par profil.
     check_weight_overrides: dict = field(default_factory=dict)  # Poids spécifiques à ce profil
     radius: int = 10000
     max_results: int = 5
@@ -37,8 +58,12 @@ class Profile:
 
 
 
+# 📘 Le catalogue : une liste d'objets Profile, rangés par familles (web_digital, creatif,
+# 📘   conseil, sante, services_physiques, special, autre). Toutes les entrées suivent le
+# 📘   même modèle ; seules quelques-unes surchargent les poids ou le sens du score.
 PROFILES: List[Profile] = [
 
+    # 📘 Entrée minimale : pas de check_weight_overrides → poids par défaut de l'analyzer.
     Profile(
         id="web_tpe",
         emoji="💻",
@@ -1030,6 +1055,8 @@ PROFILES: List[Profile] = [
             "Pas de service de course dédié en place",
             "Besoins en envois de documents ou colis de valeur",
         ],
+        # 📘 Exemple de profil « inversé » : on met à 0 les checks web et on donne du poids à
+        # 📘   delivery_covered ; avec "desc", c'est un score HAUT qui signale une opportunité.
         score_direction="desc",
         score_threshold_default=70,
         check_weight_overrides={
@@ -1150,6 +1177,9 @@ PROFILES: List[Profile] = [
 ]
 
 
+# 📘 `Profile | None` = « un Profile ou None » (même sens que Optional[Profile]).
+# 📘   Cette écriture moderne est acceptée ici grâce à `from __future__ import annotations`.
+# 📘 next((... for ... if ...), None) : premier profil dont l'id correspond, sinon None.
 def get_profile(profile_id: str) -> Profile | None:
     return next((p for p in PROFILES if p.id == profile_id), None)
 

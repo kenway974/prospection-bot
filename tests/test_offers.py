@@ -5,6 +5,16 @@ Vérifie que le bot sélectionne UNE offre cohérente selon l'état web du prosp
 adapte le bénéfice au secteur, et n'affiche le prix que sur les offres d'appel.
 """
 
+# 📘 ─── À QUOI SERT CE FICHIER ───
+# 📘 Rôle : protège le moteur d'offres (offers.py) : chaque état du site mène à la bonne
+# 📘   offre (pas de site → création, Wix → migration, site vieux/4+ problèmes → refonte,
+# 📘   pas de formulaire → widget, sinon audit), prix affiché UNIQUEMENT sur le widget,
+# 📘   bénéfice adapté au secteur, et offre bien intégrée dans l'email généré.
+# 📘 Appelé par : pytest / `python -m unittest` (pas inclus dans run_tests.py).
+# 📘 Appelle : offers.py, target_segments.py, services/mailer.py, services/google_maps.py.
+# 📘 Concepts Python à retenir ici : un test par branche du `if` testé, test « garde-fou »
+# 📘   qui vérifie la cohérence entre deux fichiers de données.
+
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -95,6 +105,8 @@ class TestOfferSelection(unittest.TestCase):
 
     def test_tous_les_secteurs_ont_un_benefice(self):
         # Garde-fou : chaque secteur de target_segments doit avoir un bénéfice
+        # 📘 Parcourir un dict avec `for x in dict` parcourt ses CLÉS. Si tu ajoutes un
+        # 📘   secteur dans target_segments.py sans bénéfice dans offers.py, ce test casse.
         from target_segments import TARGET_SECTOR_LABELS
         for sector in TARGET_SECTOR_LABELS:
             self.assertIn(sector, SECTOR_BENEFITS, f"Bénéfice manquant pour {sector}")

@@ -14,18 +14,35 @@ import tempfile
 import unittest
 from datetime import date, datetime, timedelta
 
+# 📘 ─── À QUOI SERT CE FICHIER ───
+# 📘 Rôle : protège le suivi commercial du CRM local (crm_store.py) : calcul des jours
+# 📘   ouvrés, « prochaine action » et son échéance, écran « Ma journée » (actions dues,
+# 📘   tri, compteurs), enregistrement d'une réponse, et migration d'une vieille base SQLite.
+# 📘 Appelé par : pytest / `python -m unittest` (pas inclus dans run_tests.py).
+# 📘 Appelle : crm_store.py, services/google_maps.py (Prospect), sqlite3, tempfile.
+# 📘 Concepts Python à retenir ici : setUp/tearDown, classe de base de test partagée
+# 📘   (héritage), tempfile.TemporaryDirectory, assertRaises, try/finally, datetime.date.
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import crm_store as cs
+import crm_store as cs  # 📘 `as cs` = alias court pour écrire cs.xxx au lieu de crm_store.xxx
 from services.google_maps import Prospect
 
 
+# 📘 Fabrique de prospect : ici les arguments sont POSITIONNELS (dans l'ordre des champs de
+# 📘   la dataclass Prospect). La 2e ligne fait une affectation multiple a, b = 1, 2.
 def mk(pid="p1", name="ESN Alpha"):
     p = Prospect(pid, name, "1 rue X", "0612345678", "https://x.fr", 4.5, 40, "ESN")
     p.email, p.score, p.issues, p.issue_keys = "c@x.fr", 80, [], []
     return p
 
 
+# 📘 Classe de base (le `_` indique qu'elle n'est pas un test en soi) : les classes qui en
+# 📘   HÉRITENT (`class TestActions(_DbTestCase)`) récupèrent son setUp/tearDown.
+# 📘 setUp : crée un dossier temporaire et redirige cs.DB_FILE vers une base SQLite neuve
+# 📘   → chaque test part d'une base vide et ne touche JAMAIS ta vraie base de prospects.
+# 📘 tearDown : s'exécute après chaque test (même en échec) pour remettre le vrai chemin
+# 📘   et supprimer le dossier temporaire.
 class _DbTestCase(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -39,6 +56,7 @@ class _DbTestCase(unittest.TestCase):
         self._tmp.cleanup()
 
 
+# 📘 Tests à dates FIXES (date(2026, 9, 25)) : le résultat ne dépend pas du jour du test.
 class TestJoursOuvres(unittest.TestCase):
 
     def test_saute_le_weekend(self):
@@ -84,6 +102,7 @@ class TestActions(_DbTestCase):
         self.assertEqual(due, cs.add_business_days(None, 3))
 
     def test_action_inconnue_rejetee(self):
+        # 📘 assertRaises : le test RÉUSSIT seulement si le bloc lève bien une ValueError.
         with self.assertRaises(ValueError):
             cs.set_next_action("p1", "faire_un_cafe")
 
@@ -177,6 +196,10 @@ class TestMigrationColonnes(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         orig = cs.DB_FILE
         cs.DB_FILE = os.path.join(tmp.name, "crm.db")
+        # 📘 try/finally : le bloc `finally` s'exécute TOUJOURS, même si une assertion échoue
+        # 📘   → on restaure le vrai chemin de base quoi qu'il arrive (même rôle que tearDown).
+        # 📘 Le test fabrique à la main (SQL brut) une base « ancienne version », puis vérifie
+        # 📘   que init_db() ajoute les colonnes manquantes sans perdre les données.
         try:
             import sqlite3
             os.makedirs(os.path.dirname(cs.DB_FILE), exist_ok=True)

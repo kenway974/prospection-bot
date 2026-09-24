@@ -5,6 +5,17 @@ Vérifie que tous les profils prédéfinis sont valides
 et que la sauvegarde/chargement des profils custom fonctionne.
 """
 
+# 📘 ─── À QUOI SERT CE FICHIER ───
+# 📘 Rôle : protège l'ancien catalogue profiles.py (chaque profil complet : id, nom,
+# 📘   mots-clés, accroches, SMS ≤ 160 caractères, {name} présent, ids uniques...) et la
+# 📘   sauvegarde des profils custom de profile_manager.py (créer, mettre à jour, supprimer,
+# 📘   fichier absent, un custom remplace un prédéfini de même id).
+# 📘 Appelé par : run_tests.py, pytest, `python -m unittest`.
+# 📘 Appelle : profiles.py, profile_manager.py, tempfile, unittest.mock.patch.
+# 📘 Concepts Python à retenir ici : tests de VALIDATION DE DONNÉES (boucle sur tout un
+# 📘   catalogue), patch d'une constante de module, NamedTemporaryFile, os.unlink.
+# 📘 Note : `json` est importé mais pas utilisé dans ce fichier.
+
 import sys
 import os
 import json
@@ -21,6 +32,8 @@ from profile_manager import save_custom_profile, load_custom_profiles, delete_cu
 # Tests des profils prédéfinis
 # ---------------------------------------------------------------------------
 
+# 📘 Ces tests parcourent TOUT le catalogue : ajouter un profil mal rempli (SMS trop long,
+# 📘   {name} oublié...) les fait échouer immédiatement. C'est la « validation » des données.
 class TestProfilesPredefinis(unittest.TestCase):
 
     def test_tous_les_profils_ont_un_id(self):
@@ -59,6 +72,7 @@ class TestProfilesPredefinis(unittest.TestCase):
         """Le hook email doit contenir {name} pour la personnalisation."""
         for p in PROFILES:
             if p.id != "custom":
+                # 📘 Dans une f-string, `{{` et `}}` affichent des accolades littérales.
                 self.assertIn(
                     "{name}", p.email_hook,
                     f"email_hook sans {{name}} pour {p.name}"
@@ -121,9 +135,15 @@ class TestProfileManager(unittest.TestCase):
 
     def test_sauvegarde_et_chargement(self):
         """Un profil sauvegardé doit être rechargeable identiquement."""
+        # 📘 Crée un fichier temporaire (vide) et garde juste son chemin ; delete=False pour
+        # 📘   qu'il survive à la fermeture. On le supprime à la main avec os.unlink à la fin.
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as f:
             tmp_path = f.name
 
+        # 📘 patch peut aussi remplacer une simple CONSTANTE : pendant le bloc, profile_manager
+        # 📘   écrit dans le fichier temporaire au lieu du vrai profiles_custom.json.
+        # 💡 Si une assertion échoue, os.unlink n'est pas atteint et le fichier traîne :
+        # 💡   self.addCleanup(os.unlink, tmp_path) juste après sa création le garantit.
         with patch("profile_manager.CUSTOM_PROFILES_FILE", tmp_path):
             profile = self._make_test_profile()
             save_custom_profile(profile)

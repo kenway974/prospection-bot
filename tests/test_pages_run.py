@@ -16,14 +16,28 @@ import sys
 import tempfile
 import unittest
 
+# 📘 ─── À QUOI SERT CE FICHIER ───
+# 📘 Rôle : « smoke test » de l'interface : exécute VRAIMENT app.py pour chacune des 6 pages
+# 📘   et vérifie qu'aucune ne lève d'exception, avec une base CRM pré-remplie.
+# 📘 Appelé par : pytest / `python -m unittest` (pas inclus dans run_tests.py).
+# 📘 Appelle : app.py (exécuté par AppTest), crm_store.py, services/google_maps.py.
+# 📘 Concepts Python à retenir ici : AppTest de Streamlit, @unittest.skipUnless,
+# 📘   setUpClass/tearDownClass + @classmethod, subTest, re.subn, os.chdir, fichiers temporaires.
+# 📘 APPTEST (streamlit.testing.v1) : outil officiel qui lance un script Streamlit SANS
+# 📘   navigateur, puis expose ce qui a été affiché (at.markdown, at.button...) et les
+# 📘   erreurs survenues (at.exception). Idéal pour vérifier « la page ne plante pas ».
+
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ROOT)
 
+# 📘 Noms des fonctions de page définies dans app.py (cf. st.Page(...) dans la navigation).
 PAGES = [
     "page_ma_journee", "page_pipeline", "page_relances",
     "page_prospection", "page_statistiques", "page_reglages",
 ]
 
+# 📘 Import « optionnel » : si streamlit n'est pas installé, on retient HAS_ST = False et
+# 📘   les tests seront SAUTÉS plutôt que de faire planter tout le fichier.
 try:
     from streamlit.testing.v1 import AppTest
     HAS_ST = True
@@ -31,6 +45,8 @@ except ImportError:
     HAS_ST = False
 
 
+# 📘 Remplit une base SQLite de démo (2 prospects, actions en retard, dirigeant, statuts
+# 📘   d'email) pour que les pages affichent leurs vrais blocs et pas un écran vide.
 def _seed_db(db_path: str) -> None:
     import crm_store as cs
     from services.google_maps import Prospect
@@ -52,9 +68,15 @@ def _seed_db(db_path: str) -> None:
         cs.DB_FILE = orig
 
 
+# 📘 Décorateur de classe : saute TOUS les tests de la classe si HAS_ST est faux.
 @unittest.skipUnless(HAS_ST, "streamlit non installé")
 class TestChaquePageSExecute(unittest.TestCase):
 
+    # 📘 setUpClass (avec @classmethod, reçoit la CLASSE `cls` et non une instance `self`)
+    # 📘   s'exécute UNE seule fois avant tous les tests de la classe — contrairement à
+    # 📘   setUp qui tourne avant chacun. Utile pour une préparation coûteuse.
+    # 📘 Ici : lit le code source d'app.py, crée un dossier temporaire et s'y place
+    # 📘   (os.chdir) pour que le chemin relatif output/crm.db pointe vers la base de démo.
     @classmethod
     def setUpClass(cls):
         cls.src = open(os.path.join(ROOT, "app.py"), encoding="utf-8").read()
@@ -71,6 +93,14 @@ class TestChaquePageSExecute(unittest.TestCase):
 
     def _run_page(self, page_fn: str):
         # Rend la page ciblée « par défaut » pour l'ouvrir directement
+        # 📘 Astuce : on fabrique une COPIE modifiée d'app.py où la page voulue devient la page
+        # 📘   par défaut. re.subn(motif, remplacement, texte) remplace via une expression
+        # 📘   régulière et renvoie (nouveau_texte, nombre_de_remplacements).
+        # 📘 Pour page_ma_journee, le titre contient "(...)" : le motif [^)]* s'arrête à cette
+        # 📘   parenthèse, mais la page reste affichée car c'est la 1re de la navigation.
+        # 💡 Cette modification du code source par regex est fragile (dépend du formatage
+        # 💡   d'app.py). Mettre chaque page dans son propre module (pages/xxx.py) permettrait
+        # 💡   de tester une page directement, sans réécrire le code source d'app.py.
         s = self.src.replace('url_path="ma-journee", default=True)', 'url_path="ma-journee")')
         s, n = re.subn(r"(st\.Page\(" + page_fn + r",[^)]*?)\)", r"\1, default=True)", s, count=1)
         self.assertEqual(n, 1, f"page {page_fn} introuvable dans la navigation")
@@ -86,6 +116,9 @@ class TestChaquePageSExecute(unittest.TestCase):
 
     def test_toutes_les_pages(self):
         for page in PAGES:
+            # 📘 subTest : chaque tour de boucle devient un « sous-test » indépendant. Si une
+            # 📘   page plante, les suivantes sont quand même testées et le rapport indique
+            # 📘   laquelle (page=...) a échoué.
             with self.subTest(page=page):
                 at = self._run_page(page)
                 errors = [str(e.value)[:500] for e in at.exception]

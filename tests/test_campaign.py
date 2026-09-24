@@ -19,8 +19,23 @@ import argparse
 from datetime import datetime
 from typing import List
 
+# 📘 ─── À QUOI SERT CE FICHIER ───
+# 📘 Rôle : PAS un test unittest (aucune classe TestCase, aucune assertion) mais un script
+# 📘   d'INTÉGRATION : il lance de vraies recherches Google Places + audits sur quelques
+# 📘   villes et affiche des métriques (taux d'emails trouvés, score moyen, top problèmes).
+# 📘   Il protège contre les régressions « en conditions réelles » en te laissant juger.
+# 📘 Appelé par : run_tests.py (--campaign / --all) ou directement en ligne de commande.
+# 📘 Appelle : config.py (Config), services/google_maps.py (search_prospects),
+# 📘   services/analyzer.py (analyze_prospect), services/mailer.py (enrich_with_email).
+# 📘 Concepts Python à retenir ici : dotenv, liste de dicts, set pour dédoublonner,
+# 📘   time.perf_counter, collections.Counter, sorted(key=lambda), formatage f"{x:<30}".
+# 📘 Note : le docstring cite une option --villes qui n'existe pas (seules --max et
+# 📘   --campagne sont déclarées plus bas). La clé "profil" n'est qu'une étiquette de rapport.
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+# 📘 load_dotenv() lit le fichier .env et place ses lignes CLÉ=valeur dans les variables
+# 📘   d'environnement (os.getenv peut ensuite les lire). Exécuté dès l'import du fichier.
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -85,16 +100,21 @@ def run_campagne(campagne: dict, max_results: int = 3) -> dict:
       - duree_secondes
       - erreurs
     """
-    start = time.perf_counter()
+    start = time.perf_counter()  # 📘 chronomètre haute précision (en secondes)
     erreurs = []
-    all_prospects: List[Prospect] = []
-    seen = set()
+    all_prospects: List[Prospect] = []  # 📘 annotation de variable : « liste de Prospect »
+    seen = set()  # 📘 place_id déjà vus → évite les doublons entre mots-clés
 
     # Config temporaire pour cette campagne
     cfg = Config()
     cfg.search_location = campagne["ville"]
     cfg.max_results_per_keyword = max_results
 
+    # 📘 « Monkey-patching » : on remplace à chaud la variable globale `config` des modules
+    # 📘   google_maps et analyzer par notre config de campagne. Ça marche car ces modules
+    # 📘   lisent `config` au moment de l'appel. Le changement n'est jamais annulé ensuite.
+    # 💡 Passer la ville et le max en paramètres de search_prospects() (au lieu d'une config
+    # 💡   globale modifiée à chaud) rendrait ce code plus sûr et plus facile à tester.
     import services.google_maps as gm
     import services.analyzer as an
     gm.config = cfg
@@ -151,6 +171,8 @@ def run_campagne(campagne: dict, max_results: int = 3) -> dict:
     for p in all_prospects:
         for issue in p.issues:
             all_issues.append(issue.split("→")[0].strip())
+    # 📘 Counter compte les occurrences de chaque élément ; .most_common(5) donne les 5
+    # 📘   plus fréquents sous forme de tuples (élément, nombre).
     from collections import Counter
     top_issues = [
         {"issue": issue, "count": count}
@@ -187,6 +209,8 @@ def run_campagne(campagne: dict, max_results: int = 3) -> dict:
                 "email": p.email,
                 "issues_count": len(p.issues),
             }
+            # 📘 sorted(..., key=lambda x: x.score) trie par score croissant (lambda = petite
+            # 📘   fonction anonyme) ; [:3] garde les 3 premiers = les 3 sites les plus faibles.
             for p in sorted(all_prospects, key=lambda x: x.score)[:3]
         ],
     }
@@ -225,6 +249,8 @@ def print_rapport(resultats: List[dict]) -> None:
     print(f"  Durée totale             : {round(total_duree, 1)}s")
 
     print("\n  Par campagne :")
+    # 📘 Dans une f-string, `:<30` aligne à gauche sur 30 caractères, `:>6` à droite sur 6 :
+    # 📘   ça dessine un tableau en colonnes dans le terminal. max(x, 1) évite la division par 0.
     print(f"  {'Campagne':<30} {'Total':>6} {'Sans site':>10} {'Emails':>8} {'Mobiles':>8} {'Score moy':>10}")
     print("  " + "-" * 74)
     for r in resultats:

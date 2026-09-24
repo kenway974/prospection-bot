@@ -7,22 +7,47 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 
+# 📘 ─── À QUOI SERT CE FICHIER ───
+# 📘 Rôle : catalogue des CIBLES que tu prospectes (restaurants, artisans, cabinets...).
+# 📘   Chaque cible apporte surtout la liste de MOTS-CLÉS tapés dans Google Maps / sources.
+# 📘 Appelé par : app.py (sélecteurs « Votre cible », pré-remplissage des mots-clés et de la
+# 📘   ville), tests/test_service_profiles.py.
+# 📘 Appelle : rien du projet (bibliothèque standard uniquement).
+# 📘 Concepts Python à retenir ici : @dataclass, Optional (valeur ou None), dict de libellés,
+# 📘   liste d'objets, next() + expression génératrice.
+# 📘 Ce fichier est surtout des DONNÉES : la structure est expliquée une fois ci-dessous,
+# 📘   les entrées de TARGET_SEGMENTS suivent toutes le même modèle.
+# 📘 Service (service_profiles.py) × Cible (ce fichier) : l'UI combine les deux, d'où
+# 📘   params["profile_id"] = "<service_id>_x_<target_id>" dans app.py.
 
+
+# 📘 Modèle d'une cible. Rôle de chaque champ et comment app.py le consomme :
 @dataclass
 class TargetSegment:
-    id: str
-    emoji: str
-    name: str
-    sector: str
-    keywords: List[str]
+    id: str                   # 📘 identifiant unique (clé du selectbox « Cible »)
+    emoji: str                # 📘 affiché devant le nom dans le menu
+    name: str                 # 📘 libellé affiché
+    sector: str               # 📘 clé de TARGET_SECTOR_LABELS : sert à filtrer par secteur
+    keywords: List[str]       # 📘 pré-remplit la zone « Mots-clés cibles » (1 par ligne)
     target_size: str          # "tpe", "pme", "all"
-    description: str
+    description: str          # 📘 affichée en italique sous le menu
+    # 📘 Les champs ci-dessous ont une valeur par défaut, donc facultatifs à la création.
+    # 📘 radius / max_results : non lus par app.py actuellement (l'UI a ses propres sliders).
     radius: int = 10000
     max_results: int = 5
+    # 📘 Optional[int] = None : « un entier, ou rien ». Si renseigné, remplace le seuil par
+    # 📘   défaut du service dans app.py : `target.score_threshold_override or service...`.
+    # 📘   (`a or b` renvoie a s'il est « vrai », sinon b ; attention, 0 compte comme faux.)
     score_threshold_override: Optional[int] = None
+    # 📘 Ville proposée par défaut ; vide → app.py prend SEARCH_LOCATION ou "Lyon, France".
     location_default: str = ""
 
 
+# 💡 Aucune cible ne renseigne aujourd'hui radius, max_results, score_threshold_override ni
+# 💡   location_default : soit les brancher dans l'UI (ex. valeur initiale des sliders),
+# 💡   soit les supprimer pour éviter des champs « morts » qui induisent en erreur.
+
+# 📘 Code de secteur → libellé : alimente le bouton radio « Secteur » de app.py.
 TARGET_SECTOR_LABELS: Dict[str, str] = {
     "food":           "🍽️ Restauration & Food",
     "commerce":       "🛍️ Commerce & Retail",
@@ -35,6 +60,9 @@ TARGET_SECTOR_LABELS: Dict[str, str] = {
     "liberales":      "⚖️ Professions libérales",
 }
 
+# 📘 Code de taille → libellé affiché à côté de chaque cible (« · TPE / Artisans »).
+# 📘   app.py fait SIZE_LABELS[target.target_size] : une taille absente du dict ferait
+# 📘   planter l'affichage (KeyError), d'où le test test_target_size_valide.
 SIZE_LABELS: Dict[str, str] = {
     "tpe": "TPE / Artisans",
     "pme": "PME / Entreprises",
@@ -42,12 +70,20 @@ SIZE_LABELS: Dict[str, str] = {
 }
 
 
+# 📘 Le catalogue : une liste d'objets TargetSegment, groupés par secteur (les blocs
+# 📘   « # ---- » ne sont que des commentaires de rangement, Python les ignore).
+# 📘 app.py : garde ceux dont .sector == secteur choisi, puis construit un dict {id: cible}
+# 📘   pour retrouver l'objet complet à partir de l'id sélectionné.
+# 💡 Comme pour les services, ces données iraient bien dans un fichier YAML/JSON ou une table
+# 💡   SQLite éditable depuis l'UI : tu pourrais ajouter une cible sans modifier le code.
 TARGET_SEGMENTS: List[TargetSegment] = [
 
     # -----------------------------------------------------------------------
     # Restauration & Food
     # -----------------------------------------------------------------------
 
+    # 📘 Exemple type : seuls les champs obligatoires sont donnés, les autres prennent
+    # 📘   leur valeur par défaut. keywords=[...] est une liste de textes sur plusieurs lignes.
     TargetSegment(
         id="restaurants",
         emoji="🍽️",
@@ -536,6 +572,8 @@ TARGET_SEGMENTS: List[TargetSegment] = [
 ]
 
 
+# 📘 Même principe que get_service() : premier élément dont l'id correspond, sinon None.
+# 📘   Importées par app.py mais utilisées seulement par les tests à ce jour.
 def get_target(target_id: str) -> Optional[TargetSegment]:
     return next((t for t in TARGET_SEGMENTS if t.id == target_id), None)
 

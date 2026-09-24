@@ -12,12 +12,25 @@ import sys
 import unittest
 from unittest.mock import patch
 
+# 📘 ─── À QUOI SERT CE FICHIER ───
+# 📘 Rôle : protège la recherche du DIRIGEANT via l'API Sirène (services/dirigeants.py) :
+# 📘   choix du bon dirigeant (président > gérant, holdings ignorées), mise en forme du nom,
+# 📘   similarité de noms d'entreprise (pour ne pas écrire « Bonjour Jean » au mauvais Jean),
+# 📘   enrichissement des prospects, conservation en base CRM, salutation des emails.
+# 📘 Appelé par : pytest / `python -m unittest` (pas inclus dans run_tests.py).
+# 📘 Appelle : services/dirigeants.py, services/google_maps.py, crm_store.py,
+# 📘   services/mailer.py (build_dynamic_email, EmailStyle).
+# 📘 Concepts Python à retenir ici : patch.object, side_effect, assert_called_once_with /
+# 📘   assert_not_called, assertGreaterEqual/assertLess avec message, **kw + setattr.
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from services import dirigeants as d
 from services.google_maps import Prospect
 
 
+# 📘 Petites fabriques qui imitent le JSON renvoyé par l'API Sirène : entry = une entreprise,
+# 📘   pp = « personne physique » (un humain), pm = « personne morale » (une société).
 def entry(name, dirigeants, siren="123456789"):
     return {"siren": siren, "nom_raison_sociale": name, "nom_complet": name, "dirigeants": dirigeants}
 
@@ -75,6 +88,8 @@ class TestSimilarite(unittest.TestCase):
         for court, long_ in [("Garage", "GARAGE DUPONT"), ("Boulangerie", "BOULANGERIE HOARAU"),
                              ("Payet", "PAYET TRANSPORTS"),
                              ("Studio Web", "STUDIO WEB REUNION CONSEIL")]:
+            # 📘 3e argument d'une assertion = message affiché si elle échoue (utile dans
+            # 📘   une boucle pour savoir QUEL cas a cassé ; subTest serait une alternative).
             self.assertLess(d.name_similarity(court, long_), d.MATCH_THRESHOLD, f"{court} ≈ {long_}")
 
     def test_variante_proche_acceptee(self):
@@ -93,10 +108,15 @@ class TestSimilarite(unittest.TestCase):
 class TestRecherche(unittest.TestCase):
 
     def setUp(self):
+        # 📘 Modifie une variable du module pour supprimer la pause anti-quota entre appels.
+        # 📘   Elle n'est pas remise à sa valeur d'origine après le test (pas de tearDown).
         d._MIN_INTERVAL_S = 0  # pas d'attente en test
 
     def test_correspondance_sure_acceptee(self):
         api = [entry("GARAGE PAYET SARL", [pp("PAYET", "Louis", "Gérant")], siren="111")]
+        # 📘 patch.object(module, "nom") = comme patch("chemin.nom") mais en passant l'objet
+        # 📘   directement. `as m` donne accès au faux : on peut ensuite vérifier COMMENT il a
+        # 📘   été appelé (ici : une seule fois, avec le nom et le code postal extrait).
         with patch.object(d, "_search", return_value=api) as m:
             info = d.find_dirigeant("Garage Payet", "3 rue X, 97410 Saint-Pierre")
         m.assert_called_once_with("Garage Payet", "97410")
@@ -128,6 +148,8 @@ class TestEnrichissement(unittest.TestCase):
     def setUp(self):
         d._MIN_INTERVAL_S = 0
 
+    # 📘 `**kw` récupère tous les arguments nommés en trop dans un dict ; setattr(obj, "x", v)
+    # 📘   équivaut à obj.x = v quand le nom de l'attribut est dans une variable.
     def _p(self, name, **kw):
         p = Prospect("id_" + name, name, "1 rue X, 97400 Saint-Denis", None, None, None, 0, "kw")
         for k, v in kw.items():
@@ -137,6 +159,8 @@ class TestEnrichissement(unittest.TestCase):
     def test_enrichit_et_compte(self):
         api = {"Garage Payet": {"siren": "1", "dirigeant": "Louis Payet", "qualite": "Gérant", "score": 1}}
         prospects = [self._p("Garage Payet"), self._p("Inconnu SARL")]
+        # 📘 side_effect=fonction : le faux appelle cette fonction à chaque appel et renvoie
+        # 📘   son résultat → réponse différente selon le nom (return_value, lui, est fixe).
         with patch.object(d, "find_dirigeant", side_effect=lambda n, a="": api.get(n)):
             n = d.enrich_prospects(prospects)
         self.assertEqual(n, 1)

@@ -12,6 +12,16 @@ import sys
 import tempfile
 import unittest
 
+# 📘 ─── À QUOI SERT CE FICHIER ───
+# 📘 Rôle : test de SÉCURITÉ de la file d'emails programmés (services/scheduler.py) : le
+# 📘   mot de passe Gmail et la clé Notion ne doivent JAMAIS être écrits dans
+# 📘   pending_emails.json (gardés en mémoire vive seulement), les anciens fichiers sont
+# 📘   purgés, et un email sans identifiants reste en file au lieu d'être perdu.
+# 📘 Appelé par : pytest / `python -m unittest` (pas inclus dans run_tests.py).
+# 📘 Appelle : services/scheduler.py, json, tempfile.
+# 📘 Concepts Python à retenir ici : test « négatif » (assertNotIn d'un secret factice),
+# 📘   redirection d'une constante de module vers un fichier temporaire, os.environ.pop.
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from services import scheduler
@@ -19,6 +29,8 @@ from services import scheduler
 
 class TestSchedulerSecurity(unittest.TestCase):
 
+    # 📘 setUp/tearDown : fichier de file isolé + mémoire des identifiants vidée avant ET
+    # 📘   après chaque test, pour qu'aucun test n'hérite des secrets d'un autre.
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self._orig_queue = scheduler._QUEUE_FILE
@@ -40,6 +52,8 @@ class TestSchedulerSecurity(unittest.TestCase):
             gmail_address="moi@gmail.com", gmail_password="MDP-SECRET",
             send_at=9e9, notion_page_id="pg1", notion_api_key="CLE-NOTION",
         )
+        # 📘 On relit le fichier BRUT (texte) et on vérifie que les valeurs secrètes
+        # 📘   reconnaissables ("MDP-SECRET"...) n'y figurent nulle part.
         disk = self._disk()
         self.assertNotIn("MDP-SECRET", disk)
         self.assertNotIn("CLE-NOTION", disk)
@@ -90,6 +104,8 @@ class TestSchedulerSecurity(unittest.TestCase):
             gmail_address="moi@gmail.com", gmail_password="mdp", send_at=1.0,
         )
         scheduler._runtime_creds.clear()  # simule un redémarrage
+        # 📘 dict.pop(clé, None) retire la clé si elle existe, sans erreur sinon. Ici, cela
+        # 📘   efface définitivement GMAIL_APP_PASSWORD pour le reste de la session de tests.
         os.environ.pop("GMAIL_APP_PASSWORD", None)
 
         stats = scheduler.process_due()

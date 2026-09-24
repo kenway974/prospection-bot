@@ -12,11 +12,23 @@ import sys
 import unittest
 from unittest.mock import patch
 
+# 📘 ─── À QUOI SERT CE FICHIER ───
+# 📘 Rôle : protège la vérification des emails avant envoi (services/email_check.py) :
+# 📘   syntaxe, noreply, adresses factices/jetables, fautes de frappe (gmial → gmail),
+# 📘   contrôle DNS du serveur mail (MX) simulé, cache par domaine, règles d'envoi.
+# 📘 Appelé par : pytest / `python -m unittest` (pas inclus dans run_tests.py).
+# 📘 Appelle : services/email_check.py, services/google_maps.py (Prospect), dnspython.
+# 📘 Concepts Python à retenir ici : boucle de cas dans un test, side_effect=Exception
+# 📘   (simuler une erreur), mock.call_count, assertFalse/assertTrue.
+# 📘 DNS / MX : l'annuaire d'Internet ; l'enregistrement MX dit quel serveur reçoit les
+# 📘   mails d'un domaine. Pas de MX = l'email risque de rebondir.
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from services import email_check as ec
 from services.google_maps import Prospect
 
+# 📘 Réponse DNS « tout va bien » réutilisée par plusieurs tests (tuple statut, raison).
 MX_OK = (ec.STATUS_VALIDE, "serveur mail déclaré")
 
 
@@ -24,6 +36,10 @@ class TestSansReseau(unittest.TestCase):
     """Contrôles qui ne nécessitent aucun appel DNS."""
 
     def test_syntaxe(self):
+        # 📘 Un test, plusieurs cas : repr(bad) en message permet de voir quelle adresse a
+        # 📘   fait échouer (ex. '' vs '   '). use_dns=False → aucun appel réseau.
+        # 💡 `with self.subTest(addr=bad):` dans la boucle ferait continuer le test après un
+        # 💡   échec et listerait TOUS les cas cassés d'un coup (cf. test_pages_run.py).
         for bad in ["", "   ", "pasunemail", "a@", "@x.fr", "a@@x.fr", "a b@x.fr", "a@x", "a@x.f"]:
             self.assertEqual(ec.check_email(bad, use_dns=False).status, ec.STATUS_INVALIDE, repr(bad))
 
@@ -80,6 +96,8 @@ class TestDNS(unittest.TestCase):
         """Un aléa réseau ne doit jamais faire classer une adresse « invalide »."""
         import dns.exception
         ec._dns_cache.clear()
+        # 📘 side_effect=une exception : quand le faux est appelé, il LÈVE cette erreur.
+        # 📘   Idéal pour simuler une panne (ici un timeout DNS) sans couper le réseau.
         with patch("dns.resolver.resolve", side_effect=dns.exception.Timeout()):
             r = ec.check_email("jean@esn-tout-a-fait-valide.fr")
         self.assertEqual(r.status, ec.STATUS_RISQUE)
@@ -103,6 +121,8 @@ class TestDNS(unittest.TestCase):
         with patch("dns.resolver.resolve") as m:
             ec.check_email("a@meme-domaine.fr")
             ec.check_email("b@meme-domaine.fr")
+        # 📘 call_count = nombre de fois où le faux a été appelé : 1 seul appel DNS pour
+        # 📘   2 adresses du même domaine → le cache fonctionne.
         self.assertEqual(m.call_count, 1)
 
     def test_pas_de_dns_si_deja_invalide(self):

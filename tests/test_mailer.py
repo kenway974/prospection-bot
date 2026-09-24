@@ -5,6 +5,15 @@ Vérifie que les emails générés sont cohérents avec le diagnostic du prospec
 Aucune requête HTTP — tout est simulé.
 """
 
+# 📘 ─── À QUOI SERT CE FICHIER ───
+# 📘 Rôle : protège la RÉDACTION des emails (services/mailer.py) : objet (singulier/pluriel),
+# 📘   accroche selon le diagnostic, bloc « problèmes » (3 max), email complet cohérent,
+# 📘   séquence de 4 relances distinctes, mode candidature freelance, ligne de réassurance.
+# 📘 Appelé par : run_tests.py, pytest, `python -m unittest`.
+# 📘 Appelle : services/mailer.py, services/google_maps.py (Prospect).
+# 📘 Concepts Python à retenir ici : os.environ (variables d'environnement), del,
+# 📘   assertNotEqual, len(set(liste)) pour compter les éléments distincts.
+
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -30,6 +39,8 @@ def make_prospect(name="Boulangerie Test", website="https://example.com",
         user_ratings_total=80,
         keyword="boulangerie",
     )
+    # 📘 `issues=None` en paramètre puis `issues or []` : on évite une liste mutable comme
+    # 📘   valeur par défaut (elle serait partagée entre tous les appels — piège classique).
     p.issues = issues or []
     p.score = score
     return p
@@ -102,6 +113,11 @@ class TestBuildHook(unittest.TestCase):
 
     def test_hook_custom_via_env(self):
         """Si EMAIL_HOOK est défini dans l'env, il doit être utilisé en priorité."""
+        # 📘 os.environ se manipule comme un dict : on pose la variable, puis `del` l'efface.
+        # 📘   Attention : si une assertion échoue, le `del` n'est jamais atteint et la
+        # 📘   variable « fuit » vers les tests suivants.
+        # 💡 `with patch.dict(os.environ, {"EMAIL_HOOK": "..."}):` restaure l'environnement
+        # 💡   automatiquement, même en cas d'échec.
         os.environ["EMAIL_HOOK"] = "Bonjour, j'ai une offre pour {name}."
         p = make_prospect(issues=["Site sans HTTPS"])
         hook = _build_hook(p)
@@ -210,6 +226,7 @@ class TestFollowupSequence(unittest.TestCase):
         p = make_prospect()
         mails = [draft_followup_email(p, step=s) for s in range(1, 5)]
         # Les 4 relances ont des objets/contenus différents
+        # 📘 set(mails) supprime les doublons : s'il reste 4 éléments, les 4 textes diffèrent.
         self.assertEqual(len(set(mails)), 4)
         # La dernière est une rupture
         self.assertIn("dernier message", mails[3].lower())
