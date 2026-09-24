@@ -3,21 +3,82 @@ Interface Streamlit — Prospection B2B automatisée.
 Lance avec : streamlit run app.py
 """
 
+# 📘 ═══ SECTION : IMPORTS ═══
+# 📘 `import x` charge un module (un fichier .py ou une librairie) ; `from x import y` ne prend
+# 📘 qu'un nom précis dedans ; `as z` le renomme. Python ne charge un module qu'UNE fois par
+# 📘 process : aux reruns suivants (voir plus bas), les imports réutilisent la version en mémoire.
 import json
 import os
+# 📘 queue + threading : outils pour faire tourner la campagne EN PARALLÈLE de l'interface
+# 📘 (voir « Démarrage du thread » dans la page Nouvelle campagne).
 import queue
 import threading
 import time
+# 💡 Imports inutilisés (signalés par pyflakes) : ThreadPoolExecutor, partial, Optional ici,
+# 💡 PROFILES / get_profile / get_service / list_services / get_target / list_targets plus bas,
+# 💡 et uuid dans la sauvegarde de profil. Supprime-les : moins de bruit à la lecture.
+# 💡 Outil : `pip install pyflakes` puis `pyflakes app.py` (ou `ruff check app.py`).
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from functools import partial
 from typing import Optional
 
+# 📘 `st` = raccourci conventionnel pour Streamlit : toute l'interface passe par st.quelquechose().
 import streamlit as st
 
+# 📘 ─── À QUOI SERT CE FICHIER ───
+# 📘 Rôle : c'est TOUTE l'interface web de l'outil (écrans, formulaires, boutons), écrite avec
+# 📘   Streamlit, une librairie qui transforme un script Python en site web, sans HTML/JS.
+# 📘 Appelé par : la commande `streamlit run app.py` (en local ou sur Railway). Aucun autre
+# 📘   fichier n'importe app.py : c'est le point d'entrée.
+# 📘 Appelle : pipeline.run_prospection (le moteur d'une campagne), crm_store (base SQLite des
+# 📘   prospects), settings_manager (output/settings.json), history_manager (historique JSON),
+# 📘   services/* (scheduler, reply_tracker, linkedin, mailer, cache, franchises…), et les
+# 📘   catalogues service_profiles / target_segments / profiles / profile_manager.
+# 📘
+# 📘 LE concept à comprendre : le « rerun » de Streamlit.
+# 📘   À CHAQUE interaction (clic, saisie validée, changement de page), Streamlit ré-exécute CE
+# 📘   FICHIER ENTIER, de la 1re à la dernière ligne. Les variables Python ordinaires repartent
+# 📘   donc de zéro à chaque fois. Ce qui doit survivre d'un rerun au suivant est rangé dans
+# 📘   st.session_state (un dictionnaire propre à chaque onglet de navigateur).
+# 📘   Un widget (st.button, st.text_input…) fait 2 choses : il s'AFFICHE et il RENVOIE sa
+# 📘   valeur actuelle. st.button renvoie True uniquement pendant le rerun déclenché par le clic.
+# 📘   st.rerun() force un rerun immédiat (pour réafficher après une écriture en base).
+# 📘
+# 📘 Concepts Python à retenir ici : import, fonctions (def), dictionnaires {clé: valeur},
+# 📘   listes en compréhension [x for x in ...], f-strings f"...{var}...", lambda,
+# 📘   try/except, `with` (blocs de mise en page), threads + queue (travail en parallèle).
+# 📘 Concepts Streamlit : rerun, st.session_state, widgets avec key= / on_change= (callbacks),
+# 📘   st.rerun(), st.navigation + st.Page. NB : st.cache_data / st.cache_resource (garder un
+# 📘   résultat calculé entre reruns) ne sont PAS utilisés dans ce fichier (voir 💡 Export).
+# 📘
+# 📘 Plan du fichier (cherche « SECTION : » dans ton éditeur pour sauter de l'une à l'autre) :
+# 📘    1. Imports
+# 📘    2. Config de la page + CSS
+# 📘    3. Mémoire de session (st.session_state) + rechargement des derniers résultats
+# 📘    4. Démarrage des services de fond (scheduler, base CRM, settings.json)
+# 📘    5. Configuration : _cfg / _persist_cfg (clés API, signature, secrets)
+# 📘    6. Barre latérale (état des connexions)
+# 📘    7. Catalogues (services, cibles) + panneau LinkedIn partagé
+# 📘    8. Pont vers le moteur (pipeline.run_prospection)
+# 📘    9. PAGE « Ma journée »
+# 📘   10. PAGE « Nouvelle campagne » (formulaire → lancement → logs live → résultats → export)
+# 📘   11. PAGE « Pipeline »
+# 📘   12. PAGE « Relances »
+# 📘   13. PAGE « Statistiques »
+# 📘   14. PAGE « Réglages »
+# 📘   15. Navigation (st.navigation) : choisit LA page à exécuter
+# 📘
+# 📘 Ordre d'exécution à chaque rerun : tout le code « au niveau 0 » (non indenté) tourne de
+# 📘   haut en bas (config, état, services, réglages, sidebar) ; les `def page_...` ne font que
+# 📘   DÉFINIR des fonctions ; puis tout en bas, _nav.run() appelle UNE seule de ces pages.
+
+# 📘 ═══ SECTION : CONFIG DE LA PAGE + CSS ═══
 # ---------------------------------------------------------------------------
 # Config page (doit être le 1er appel Streamlit)
 # ---------------------------------------------------------------------------
+# 📘 set_page_config règle le titre de l'onglet, l'icône, la largeur. Streamlit exige que ce
+# 📘 soit le tout premier appel st.* du script.
 st.set_page_config(
     page_title="Prospection B2B",
     page_icon="🎯",
@@ -28,6 +89,9 @@ st.set_page_config(
 # ---------------------------------------------------------------------------
 # CSS custom
 # ---------------------------------------------------------------------------
+# 📘 st.markdown affiche du texte Markdown. Avec unsafe_allow_html=True on peut y glisser du
+# 📘 HTML brut : ici une balise <style> qui injecte du CSS pour relooker boutons, cartes, logs.
+# 📘 Les classes (.metric-card, .log-box, .issue-chip…) sont réutilisées plus bas dans du HTML.
 st.markdown("""
 <style>
     .main { background-color: #0f1117; }
@@ -103,9 +167,17 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+# 📘 ═══ SECTION : MÉMOIRE DE SESSION (st.session_state) ═══
 # ---------------------------------------------------------------------------
 # Session state init
 # ---------------------------------------------------------------------------
+# 📘 st.session_state = dictionnaire qui SURVIT aux reruns (un par onglet / visiteur).
+# 📘 _init_state pose des valeurs par défaut sans écraser celles déjà là (`if k not in ...`) :
+# 📘 comme ce code tourne à chaque rerun, sans ce test on remettrait tout à zéro à chaque clic.
+# 📘   running   : une campagne tourne-t-elle ?    logs      : lignes de log déjà reçues
+# 📘   prospects : résultats à afficher            log_queue : boîte aux lettres thread → UI
+# 📘   run_done  : la dernière campagne est terminée
+# 📘 Le préfixe « _ » (_init_state) est une convention : « usage interne à ce fichier ».
 def _init_state():
     defaults = {
         "running": False,
@@ -121,6 +193,9 @@ def _init_state():
 _init_state()
 
 
+# 📘 Au 1er chargement d'une session, on relit le fichier output/prospects_*.json le plus
+# 📘 récent (écrit par pipeline.py à chaque campagne) pour réafficher les derniers résultats.
+# 📘 Le drapeau "_restored" en session garantit qu'on ne le fait qu'une fois.
 def _restore_last_results():
     """
     Recharge les résultats du dernier run depuis le disque au chargement de la page.
@@ -133,8 +208,12 @@ def _restore_last_results():
             or st.session_state.get("_restored")):
         return
     st.session_state["_restored"] = True
+    # 📘 try/except : si une instruction du bloc try échoue, Python saute dans except.
+    # 📘 `except Exception: pass` = on ignore l'erreur en silence (rien à recharger, tant pis).
     try:
         import glob
+        # 📘 glob liste les fichiers qui correspondent au motif. Le nom contient la date
+        # 📘 (AAAAMMJJ_HHMMSS) : trier par ordre alphabétique = trier par date ; [-1] = le plus récent.
         files = sorted(glob.glob(os.path.join("output", "prospects_*.json")))
         if not files:
             return
@@ -142,6 +221,8 @@ def _restore_last_results():
         with open(latest, "r", encoding="utf-8") as f:
             data = json.load(f)
         from services.google_maps import Prospect as _P
+        # 📘 Liste en compréhension : [f(d) for d in data] = « applique f à chaque élément ».
+        # 📘 Prospect.from_dict reconstruit un objet Prospect à partir du dict lu dans le JSON.
         st.session_state.prospects = [_P.from_dict(d) for d in data]
         st.session_state["_restored_from"] = os.path.basename(latest)
     except Exception:
@@ -149,11 +230,17 @@ def _restore_last_results():
 
 _restore_last_results()
 
+# 📘 ═══ SECTION : DÉMARRAGE DES SERVICES DE FOND (scheduler, CRM, settings) ═══
+# 📘 Ce code est au niveau 0 → il tourne à CHAQUE rerun. Les fonctions appelées sont donc
+# 📘 « idempotentes » : les rappeler ne refait rien si c'est déjà fait (un seul thread d'envoi
+# 📘 différé par process, schéma SQLite créé / anciens JSON migrés une seule fois).
 # Démarrage du thread d'envoi différé (idempotent — ne démarre qu'une fois par process)
 from services import scheduler as _scheduler
 _scheduler.ensure_running()
 
 # Base CRM (SQLite) : création du schéma + migration des anciens JSON (idempotent)
+# 📘 crm_store = la base SQLite des prospects (statuts, prochaines actions, événements…).
+# 📘 C'est elle que lisent/écrivent Ma journée, Pipeline et une partie de Réglages.
 import crm_store
 try:
     _crm_migration = crm_store.ensure_ready()
@@ -164,14 +251,19 @@ except Exception as _crm_init_exc:  # la base ne doit jamais empêcher l'app de 
 # Démarrage du suivi de réponses IMAP (démarré plus tard après lecture des credentials)
 
 # Chargement des paramètres sauvegardés (fallback sur env vars, puis "")
+# 📘 settings_manager lit/écrit output/settings.json. _saved est relu à chaque rerun :
+# 📘 c'est un dict du genre {"google_api_key": "...", "your_name": "...", ...}.
 from settings_manager import load_settings as _load_settings, save_settings as _save_settings
 _saved = _load_settings()
 
+# 📘 `key: str` et `-> str` sont des annotations de type : de la doc pour humains et outils,
+# 📘 Python ne les vérifie pas. `a or b or c` renvoie la 1re valeur « vraie » (non vide).
 def _get(key: str, env_var: str = "", default: str = "") -> str:
     """Priorité : settings.json > variable d'env > valeur par défaut."""
     return _saved.get(key) or os.getenv(env_var, "") or default
 
 
+# 📘 ═══ SECTION : CONFIGURATION (_cfg, _persist_cfg, secrets) ═══
 # ---------------------------------------------------------------------------
 # Sidebar — Configuration
 # ---------------------------------------------------------------------------
@@ -181,9 +273,16 @@ def _get(key: str, env_var: str = "", default: str = "") -> str:
 # Les champs de saisie sont dans la page ⚙️ Réglages ; la barre latérale ne
 # sert plus qu'à naviguer. Chaque champ est enregistré dès qu'il change.
 # ---------------------------------------------------------------------------
+# 📘 Un set {…} = collection sans doublon, idéale pour tester « est-ce dedans ? ».
+# 📘 Seul gmail_password est protégé ainsi. ⚠️ Les AUTRES clés (Google, Notion, HubSpot,
+# 📘 Brevo, France Travail) sont, elles, écrites en clair dans output/settings.json.
 _SECRET_KEYS = {"gmail_password"}   # jamais écrit sur disque
 
 
+# 📘 _cfg(key) = LA fonction pour lire un réglage. Ordre de priorité :
+# 📘   1. st.session_state["cfg_<key>"] (ce que tu as saisi dans Réglages pendant la session)
+# 📘   2. pour un secret : la variable d'environnement uniquement (jamais le disque)
+# 📘   3. sinon _get : settings.json > variable d'environnement > default
 def _cfg(key: str, env_var: str = "", default=""):
     val = st.session_state.get(f"cfg_{key}")
     if val is not None:
@@ -193,16 +292,26 @@ def _cfg(key: str, env_var: str = "", default=""):
     return _get(key, env_var, default)
 
 
+# 📘 _persist_cfg est un « callback » : une fonction que Streamlit appelle TOUT SEUL quand un
+# 📘 widget change (on_change=_persist_cfg, args=(key,) dans page_reglages / page_prospection).
+# 📘 Le callback s'exécute AVANT le rerun : quand le script repasse, la valeur est à jour.
+# 📘 Convention de clés : "w_<key>" = valeur du widget ; "cfg_<key>" = copie gardée en
+# 📘 session (lue par _cfg) ; et sur disque sauf pour les secrets.
 def _persist_cfg(key: str) -> None:
     """Callback des champs de réglage : garde la valeur en session + sur disque."""
     val = st.session_state.get(f"w_{key}")
     st.session_state[f"cfg_{key}"] = val
     if key not in _SECRET_KEYS:
+        # 📘 Une liste (ex. les sources cochées) est stockée sous forme de texte "a,b,c".
         _save_settings({key: ",".join(val) if isinstance(val, list) else val})
 
 
+# 📘 Les réglages sont lus ici dans des variables « globales » du module : toutes les pages
+# 📘 (définies plus bas) s'en servent directement. Elles sont recalculées à chaque rerun.
 from services.sources import SOURCE_LABELS as _SRC_LABELS
 _src_raw = _cfg("source_types") or "google_maps"
+# 📘 On accepte une liste OU un texte "a,b" ; on ne garde que les sources connues ;
+# 📘 `[...] or ["google_maps"]` = si la liste est vide, valeur de repli.
 source_types = [
     s for s in (_src_raw if isinstance(_src_raw, list) else str(_src_raw).split(","))
     if s in _SRC_LABELS
@@ -234,11 +343,16 @@ your_title   = _cfg("your_title", "YOUR_TITLE")
 your_email   = _cfg("your_email", "YOUR_EMAIL")
 your_website = _cfg("your_website", "YOUR_WEBSITE")
 
+# 📘 Le suivi des réponses (lecture IMAP de ta boîte Gmail) tourne dans un thread de fond,
+# 📘 démarré une seule fois (ensure_running est idempotent) dès que les identifiants existent.
 # Démarrage auto du suivi des réponses Gmail si les identifiants sont connus
 if gmail_address and gmail_password:
     from services import reply_tracker as _rt
     _rt.ensure_running(gmail_address, gmail_password)
 
+# 📘 ═══ SECTION : BARRE LATÉRALE ═══
+# 📘 `with st.sidebar:` = tout ce qui est appelé dans ce bloc indenté s'affiche dans la barre
+# 📘 latérale. `with` ouvre un « contexte » qui se referme à la fin de l'indentation.
 # Barre latérale : le menu (ajouté par st.navigation) + l'état des connexions
 with st.sidebar:
     _conn = [
@@ -247,11 +361,15 @@ with st.sidebar:
         ("CRM", crm_type != "aucun" and bool(crm_key)),
         ("SMS", bool(brevo_key)),
     ]
+    # 📘 Expression ternaire : A if condition else B → 🟢 si connecté, ⚪ sinon.
     st.caption("**Connexions** · " + " · ".join(f"{'🟢' if ok else '⚪'} {n}" for n, ok in _conn))
     if not google_key:
         st.caption("👉 Configure tes clés dans **⚙️ Réglages**.")
 
 
+# 📘 ═══ SECTION : CATALOGUES (services, cibles) + PANNEAU LINKEDIN PARTAGÉ ═══
+# 📘 SERVICE_PROFILES / TARGET_SEGMENTS = listes écrites en dur dans le code : les services
+# 📘 que tu vends et les cibles possibles. Le formulaire « Nouvelle campagne » les croise.
 # ---------------------------------------------------------------------------
 # Titre principal
 # ---------------------------------------------------------------------------
@@ -266,6 +384,10 @@ from target_segments import (
 )
 
 
+# 📘 Fonction réutilisée par 2 pages (Ma journée et Pipeline) : c'est un « composant ».
+# 📘 key_prefix sert à donner des key= UNIQUES aux widgets : Streamlit plante si deux widgets
+# 📘 ont la même key. Ce panneau étant affiché une fois par prospect, on préfixe avec la page
+# 📘 + place_id (l'identifiant unique du prospect). `-> None` : ne renvoie rien, affiche.
 def _linkedin_panel(row: dict, key_prefix: str) -> None:
     """
     Panneau LinkedIn ASSISTÉ pour un prospect : lien vers le bon profil,
@@ -291,6 +413,8 @@ def _linkedin_panel(row: dict, key_prefix: str) -> None:
 
     # 2) Le message
     st.markdown("**2. Copier le message**")
+    # 📘 format_func=lambda k: ... : une lambda est une mini-fonction anonyme d'une ligne.
+    # 📘 Le widget renvoie la valeur brute ("invitation") mais affiche le texte de la lambda.
     _kind = st.radio(
         "Type", ["invitation", "message"], horizontal=True, key=f"{key_prefix}_likind",
         format_func=lambda k: "Note d'invitation" if k == "invitation" else "1er message (après acceptation)",
@@ -302,17 +426,22 @@ def _linkedin_panel(row: dict, key_prefix: str) -> None:
         format_func=lambda a: "🧑‍💻 Candidature freelance" if a == "freelance" else "🌐 Proposition de service",
     )
     _note_key, _msg_key = _li.default_templates_for(_angle == "freelance")
+    # 📘 Lecture crm_store : les modèles LinkedIn personnalisés (page Réglages), sinon les défauts.
     _tpl = _li.get_template(_note_key if _kind == "invitation" else _msg_key, crm_store.get_linkedin_templates())
     _text = _li.render(
         _tpl, dirigeant=dirigeant, entreprise=company,
         mon_nom=your_name, mon_titre=your_title, mon_site=your_website,
     )
+    # 📘 La key contient _kind et _angle : changer de type/angle crée un NOUVEAU widget, donc
+    # 📘 le texte est régénéré au lieu de garder l'ancienne saisie.
     _edited = st.text_area(
         "Message", value=_text, height=110 if _kind == "invitation" else 200,
         key=f"{key_prefix}_litext_{_kind}_{_angle}", label_visibility="collapsed",
     )
     if _kind == "invitation":
         _lvl, _msg = _li.note_verdict(_edited)
+        # 📘 Astuce : on choisit la fonction d'affichage (success/warning/error) dans un dict,
+        # 📘 puis on l'appelle directement avec (_msg).
         {"ok": st.success, "warn": st.warning, "error": st.error}[_lvl](_msg)
         st.caption("Compte gratuit : ~5 notes personnalisées par mois. Garde-les pour tes meilleurs prospects.")
     st.code(_edited, language=None)   # icône « copier » en haut à droite du bloc
@@ -321,6 +450,9 @@ def _linkedin_panel(row: dict, key_prefix: str) -> None:
     # 3) Marquer comme envoyé
     st.markdown("**3. Une fois envoyé sur LinkedIn**")
     _label = "✅ Invitation envoyée" if _kind == "invitation" else "✅ Message envoyé"
+    # 📘 Écriture crm_store : mark_linkedin_sent ajoute un événement, marque le prospect
+    # 📘 « contacté » et programme la suite (vérifier l'acceptation / relancer). st.rerun()
+    # 📘 relance le script aussitôt pour que l'écran reflète la base à jour.
     if st.button(_label, key=f"{key_prefix}_lisent_{_kind}", type="primary"):
         _due = crm_store.mark_linkedin_sent(pid, _kind)
         st.toast(f"Suivi programmé pour le {_due} ✅")
@@ -330,6 +462,11 @@ def _linkedin_panel(row: dict, key_prefix: str) -> None:
 
 
 
+# 📘 ═══ SECTION : PONT VERS LE MOTEUR (pipeline.run_prospection) ═══
+# 📘 Toute la logique d'une campagne (recherche, analyse, emails, CRM, envois) vit dans
+# 📘 pipeline.py, qui n'importe PAS Streamlit. app.py lui passe un dict `params`, une queue
+# 📘 de logs et une liste vide à remplir (voir « Démarrage du thread » plus bas).
+# 📘 `# noqa: E402` demande au linter d'ignorer « import qui n'est pas en haut du fichier ».
 # ---------------------------------------------------------------------------
 # Orchestration de campagne → pipeline.py (aucune dépendance à Streamlit)
 # ---------------------------------------------------------------------------
@@ -346,16 +483,26 @@ from pipeline import run_prospection  # noqa: E402
 
 
 
+# 📘 (Les lignes vides et le commentaire « Relances » isolé juste au-dessus sont des restes
+# 📘 d'un ancien découpage : aucun effet.)
+# 📘 Chaque page = une simple fonction Python (def page_xxx():). Elle n'est PAS exécutée ici :
+# 📘 `def` ne fait que la définir. C'est st.navigation (tout en bas) qui appellera la bonne.
 # ===========================================================================
 # PAGES — navigation officielle Streamlit (st.Page + st.navigation)
 # https://docs.streamlit.io/develop/concepts/multipage-apps/page-and-navigation
 # ===========================================================================
 
+# 📘 ═══ SECTION : PAGE « MA JOURNÉE » ═══
+# 📘 Lit dans crm_store : actions_summary (compteurs), due_actions (actions dues aujourd'hui
+# 📘   ou en retard), ACTION_LABELS, get_delay (+ get_linkedin_templates via le panneau).
+# 📘 Écrit dans crm_store : clear_next_action, mark_responded, set_next_action, set_status
+# 📘   (+ mark_linkedin_sent via le panneau LinkedIn).
 def page_ma_journee():
     st.title("☀️ Ma journée")
     st.caption("Tes actions du jour : relances, rappels, maquettes à envoyer, messages LinkedIn.")
 
     _sum = crm_store.actions_summary()
+    # 📘 st.columns(3) renvoie 3 colonnes côte à côte, « déballées » dans _m1, _m2, _m3.
     _m1, _m2, _m3 = st.columns(3)
     _m1.metric("🔴 En retard", _sum["en_retard"])
     _m2.metric("🟠 Aujourd'hui", _sum["aujourdhui"])
@@ -374,7 +521,10 @@ def page_ma_journee():
 
     for _d in _due:
         _pid = _d["place_id"]
+        # 📘 Les dates sont stockées en texte "AAAA-MM-JJ" : dans ce format, comparer les textes
+        # 📘 avec < revient à comparer les dates.
         _late = _d["due_date"] < _today_str
+        # 📘 st.container(border=True) = une « carte » encadrée qui regroupe les widgets du prospect.
         with st.container(border=True):
             _h1, _h2 = st.columns([3, 1])
             with _h1:
@@ -403,6 +553,9 @@ def page_ma_journee():
                     st.markdown("🟠 **aujourd'hui**")
 
             # Actions rapides : un clic après un appel ou une réponse
+            # 📘 Motif Streamlit classique : `if st.button(...):` → le bloc ne s'exécute QUE pendant le
+            # 📘 rerun qui suit le clic. On écrit en base puis st.rerun() pour réafficher la liste à jour
+            # 📘 (le prospect traité disparaît). Les key= contiennent _pid pour être uniques.
             _b1, _b2, _b3, _b4 = st.columns(4)
             if _b1.button("✅ Fait", key=f"done_{_pid}", use_container_width=True):
                 crm_store.clear_next_action(_pid, done_note=crm_store.ACTION_LABELS.get(_d["next_action"], ""))
@@ -420,6 +573,8 @@ def page_ma_journee():
                 st.rerun()
 
             # Programmer une suite précise (issue d'appel)
+            # 📘 st.expander = bloc repliable. Les widgets dedans gardent leur valeur entre reruns grâce
+            # 📘 à leur key= ; seul le clic sur « Programmer » écrit en base.
             with st.expander("➡️ Programmer la suite", expanded=False):
                 _c1, _c2, _c3 = st.columns([2, 1, 1])
                 _next = _c1.selectbox(
@@ -439,10 +594,24 @@ def page_ma_journee():
             with st.expander("💬 LinkedIn", expanded=_d["next_action"] == crm_store.ACTION_LINKEDIN):
                 _linkedin_panel(_d, key_prefix=f"mj_{_pid}")
 
+# 📘 ═══ SECTION : PAGE « NOUVELLE CAMPAGNE » ═══
+# 📘 La plus grosse page (~800 lignes). Déroulé : formulaire (sources, service, cible,
+# 📘 critères) → bouton Lancer → thread qui exécute pipeline.run_prospection → logs en direct
+# 📘 (un rerun par seconde) → résultats + export → sauvegarde de profil.
+# 📘 Lit : settings.json (_get, _cfg), catalogues, crm_store.get_user_franchises.
+# 📘 Écrit : settings.json (au lancement, et les sources via callback), st.session_state,
+# 📘   un profil perso (profile_manager). Indirectement, via pipeline.py dans le thread :
+# 📘   crm_store.add_campaign / upsert_prospects / mark_contacted, output/prospects_*.json,
+# 📘   l'historique JSON (history_manager.save_run).
 def page_prospection():
     st.title("🔍 Nouvelle campagne")
 
     st.markdown("### 📡 Sources")
+    # 📘 Widget avec key= + on_change= : sa valeur vit dans st.session_state["w_source_types"], et
+    # 📘 à chaque modification Streamlit appelle _persist_cfg("source_types"). args=(...,) est un
+    # 📘 tuple d'arguments (la virgule est obligatoire pour un tuple d'un seul élément).
+    # 📘 source_types, utilisé juste en dessous, a été calculé en haut du fichier dans CE rerun ;
+    # 📘 comme le callback passe avant le rerun, il est déjà à jour.
     st.multiselect(
         "Sources", options=list(_SRC_LABELS.keys()), default=source_types,
         format_func=lambda x: _SRC_LABELS[x], key="w_source_types",
@@ -457,6 +626,8 @@ def page_prospection():
         _missing.append("les identifiants France Travail")
     if _missing:
         st.warning(f"⚙️ Il manque {', '.join(_missing)} — à renseigner dans **Réglages**.")
+    # 📘 Compréhension sur des paires (id, nom) « déballées » : on garde le nom si la source est
+    # 📘 cochée.
     _free = [n for s_, n in (("sirene", "Sirène"), ("pages_jaunes", "Pages Jaunes")) if s_ in source_types]
     if _free:
         st.caption(f"✅ {' et '.join(_free)} : gratuit, aucune clé requise.")
@@ -468,6 +639,8 @@ def page_prospection():
 
     # Sélecteur catégorie de service (radio horizontal)
     _svc_cats = list(SERVICE_CATEGORY_LABELS.keys())
+    # 📘 Valeur présélectionnée = dernier choix enregistré dans settings.json (sauvé au lancement).
+    # 📘 liste.index(x) donne la position de x ; on retombe sur 0 si x est inconnu.
     _saved_svc_cat = _get("service_category", _svc_cats[0])
     _svc_cat_idx = _svc_cats.index(_saved_svc_cat) if _saved_svc_cat in _svc_cats else 0
     selected_svc_cat = st.radio(
@@ -483,6 +656,7 @@ def page_prospection():
     # Sélecteur service (filtré par catégorie)
     _svcs_in_cat = [s for s in SERVICE_PROFILES if s.category == selected_svc_cat]
     _svc_ids = [s.id for s in _svcs_in_cat]
+    # 📘 Dict en compréhension {id: objet} : accès direct à un service par son id.
     _svc_by_id = {s.id: s for s in SERVICE_PROFILES}
     _saved_svc = _get("service_id", _svc_ids[0] if _svc_ids else "web_refonte")
     _svc_idx = _svc_ids.index(_saved_svc) if _saved_svc in _svc_ids else 0
@@ -552,8 +726,10 @@ def page_prospection():
             height=150,
             placeholder="restaurant\nboulangerie\ncoiffeur",
         )
+        # 📘 splitlines() coupe par ligne, strip() enlève les espaces ; on ignore les lignes vides.
         keywords = [k.strip() for k in keywords_raw.splitlines() if k.strip()]
 
+        # 📘 Import local (dans la fonction) : fait seulement quand cette page s'affiche.
         from services.mailer import EmailStyle, EMAIL_STYLE_LABELS, build_dynamic_email
         from services.google_maps import Prospect as _PreviewProspect
 
@@ -598,6 +774,8 @@ def page_prospection():
             )
 
             # Prévisualisation avec un faux prospect
+            # 📘 Aperçu en direct : à chaque changement de style, le rerun régénère l'email d'exemple
+            # 📘 avec un faux prospect (build_dynamic_email vient de services/mailer.py).
             _preview_style = EmailStyle(
                 intonation=_email_intonation,
                 length=_email_length,
@@ -665,6 +843,8 @@ def page_prospection():
             min_value=1.0, max_value=5.0, value=3.0, step=0.5,
             help="Les établissements en dessous de cette note sont ignorés (probablement en difficulté)",
         )
+        # 📘 Le sens du score dépend du service : "desc" = score élevé = bonne opportunité ;
+        # 📘 sinon, score bas = site plein de défauts = bon prospect pour toi.
         _score_dir = selected_service.score_direction
         _score_default = (selected_target.score_threshold_override or selected_service.score_threshold_default)
         if selected_svc_cat == "freelance":
@@ -698,6 +878,9 @@ def page_prospection():
             value=10000,
             format_func=lambda x: f"{x//1000} km",
         )
+        # 📘 Les widgets sans key= (toggle, slider…) gardent leur valeur entre reruns tant que tu
+        # 📘 restes sur la page (Streamlit les reconnaît à leur libellé/paramètres), mais ne sont
+        # 📘 sauvegardés nulle part : ils reviennent à leur défaut au prochain chargement.
         send_emails = st.toggle("📧 Envoyer les emails auto", value=False)
         send_risky_emails = False
         if send_emails:
@@ -715,6 +898,9 @@ def page_prospection():
                 horizontal=True, label_visibility="collapsed",
             )
             if _email_mode == "⏰ Programmé":
+                # 📘 Import avec alias : date/timedelta/time renommés pour ne pas écraser
+                # 📘 le module `time`
+                # 📘 importé en haut du fichier (utilisé par time.sleep plus bas).
                 from datetime import date as _dt_date, timedelta as _dt_td, time as _dt_time
                 _sched_date = st.date_input("Date d'envoi", value=_dt_date.today() + _dt_td(days=1), min_value=_dt_date.today())
                 _sched_time = st.time_input("Heure d'envoi", value=_dt_time(9, 0))
@@ -754,6 +940,8 @@ def page_prospection():
             "Exporte tes contacts depuis **LinkedIn Sales Navigator** (Accounts/Leads → Export) "
             "ou **Mes connexions** (Paramètres → Confidentialité → Obtenir une copie de tes données)."
         )
+        # 📘 st.file_uploader renvoie un objet fichier (ou None). .read() donne des octets (bytes),
+        # 📘 .decode("utf-8-sig") les convertit en texte (-sig retire le BOM ajouté par Excel).
         _uploaded_csv = st.file_uploader(
             "Déposer le fichier CSV LinkedIn",
             type=["csv"],
@@ -774,6 +962,8 @@ def page_prospection():
     # ---------------------------------------------------------------------------
     col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
     with col_btn2:
+        # 📘 Le bouton est grisé (disabled) si une campagne tourne déjà ou s'il manque une clé.
+        # 📘 Mêmes contrôles qu'en haut de page (« Il manque… ») et que juste en dessous.
         _launch_disabled = st.session_state.running
         if not source_types:
             _launch_disabled = True
@@ -785,9 +975,13 @@ def page_prospection():
             _launch_disabled = True
         if "linkedin_csv" in source_types and not linkedin_content:
             _launch_disabled = True
+        # 📘 Mots-clés obligatoires sauf si la seule source est le CSV LinkedIn. Lecture exacte : si
+        # 📘 la liste est vide, `not keywords` suffit déjà à griser ; la ville (location) n'est donc
+        # 📘 en pratique jamais contrôlée.
         if not keywords and not ("linkedin_csv" in source_types and len(source_types) == 1):
             _launch_disabled = _launch_disabled or not keywords or not location
 
+        # 📘 `launch` vaut True uniquement pendant le rerun déclenché par le clic.
         launch = st.button("🚀 Lancer la prospection", disabled=_launch_disabled)
 
     if ("google_maps" in source_types or "google_search" in source_types) and not google_key:
@@ -802,6 +996,13 @@ def page_prospection():
     # ---------------------------------------------------------------------------
     # Démarrage du thread
     # ---------------------------------------------------------------------------
+    # 📘 ─── Le clic sur « Lancer » (rerun n°1) ───
+    # 📘 1. On remet l'état de session à zéro et on crée une NOUVELLE queue.Queue : une file
+    # 📘    « thread-safe » (plusieurs threads peuvent y déposer/retirer sans se marcher dessus).
+    # 📘 2. On sauvegarde les choix dans settings.json (défauts du prochain lancement).
+    # 📘 3. On construit `params` (un gros dict) et une liste vide `result_container`.
+    # 📘 4. On démarre un thread qui exécute run_prospection(params, queue, result_container).
+    # 📘 5. Le script continue SANS attendre : la section « logs » juste après prend le relais.
     if launch and not st.session_state.running:
         st.session_state.running = True
         st.session_state.run_done = False
@@ -811,6 +1012,8 @@ def page_prospection():
         st.session_state.pop("_restored_from", None)  # nouveau run → on n'affiche plus le bandeau « rechargés »
 
         # Persistance des paramètres (rechargés comme defaults au prochain démarrage)
+        # 📘 ⚠️ Écrit aussi les clés API (Google, Notion, HubSpot, Brevo, France Travail) en clair ;
+        # 📘 save_settings ignore seulement les valeurs None. gmail_password n'y figure pas.
         _save_settings({
             "google_api_key":    google_key,
             "source_types":      ",".join(source_types),
@@ -838,6 +1041,8 @@ def page_prospection():
             "email_cta":         _email_cta,
         })
 
+        # 📘 Liste vide passée au thread : pipeline.py la remplit (.extend) avec les Prospect retenus.
+        # 📘 Une liste est « mutable » : le thread et l'interface manipulent le MÊME objet en mémoire.
         result_container = []
 
         params = {
@@ -874,6 +1079,7 @@ def page_prospection():
             "score_direction": selected_service.score_direction,
             "min_rating": min_rating,
             "contact_score_threshold": score_threshold,
+            # 📘 Nombre d'analyses de sites en parallèle (variable d'env ANALYSIS_WORKERS, 5 par défaut).
             "analysis_workers": int(os.getenv("ANALYSIS_WORKERS", "5")),
             "send_emails": send_emails,
             "send_risky_emails": send_risky_emails,
@@ -885,6 +1091,7 @@ def page_prospection():
             "find_dirigeants": find_dirigeants,
             "user_franchises": crm_store.get_user_franchises(),
             "email_send_mode": _email_mode,
+            # 📘 .isoformat() → "2026-09-25" ; strftime("%H:%M") → "09:00" : du texte simple.
             "sched_date": _sched_date.isoformat() if _sched_date else None,
             "sched_time": _sched_time.strftime("%H:%M") if _sched_time else None,
             "source_types":      source_types,
@@ -895,26 +1102,47 @@ def page_prospection():
             "linkedin_content":  linkedin_content,
         }
 
+        # 📘 threading.Thread : fait tourner une fonction EN PARALLÈLE du script Streamlit ; sans lui,
+        # 📘 l'interface resterait figée pendant toute la campagne (plusieurs minutes).
+        # 📘   target = la fonction à lancer ; args = ses arguments (un tuple) ;
+        # 📘   daemon=True = le thread ne retient pas l'arrêt du programme (il meurt avec lui).
         thread = threading.Thread(
             target=run_prospection,
             args=(params, st.session_state.log_queue, result_container),
             daemon=True,
         )
         thread.start()
+        # 📘 On range le thread et la liste résultat en session pour les retrouver aux reruns
+        # 📘 suivants (les variables locales `thread` et `result_container`, elles, disparaissent).
         st.session_state._thread = thread
         st.session_state._results = result_container
 
     # ---------------------------------------------------------------------------
     # Affichage live des logs
     # ---------------------------------------------------------------------------
+    # 📘 ─── Suivi en direct (reruns n°2, 3, 4…) ───
+    # 📘 Tant que running est vrai : on vide la queue dans st.session_state.logs, on affiche les
+    # 📘 100 dernières lignes, on attend 1 s (time.sleep) puis st.rerun() → tout le script repart
+    # 📘 d'en haut, revient ici, et recommence. C'est du « polling » (aller voir régulièrement
+    # 📘 s'il y a du nouveau). Pendant ce temps le thread continue son travail sans interruption.
+    # 💡 Côté FastAPI/React, ce trio thread + queue + polling deviendrait : POST /campaigns (lance
+    # 💡 la tâche, renvoie un id) → GET /campaigns/{id}/events en SSE ou WebSocket (le serveur
+    # 💡 POUSSE les logs, plus de sleep/rerun) → GET /campaigns/{id}/results. Et une vraie file de
+    # 💡 tâches (RQ, Celery, arq…) plutôt qu'un thread : aujourd'hui un redémarrage du process tue
+    # 💡 la campagne, et pipeline.py écrit dans os.environ (partagé par tout le process) → deux
+    # 💡 campagnes lancées en même temps depuis deux onglets se marcheraient dessus.
     if st.session_state.running or st.session_state.run_done:
         st.markdown("### 📡 Logs en temps réel")
+        # 📘 st.empty() réserve un emplacement qu'on remplit ensuite (placeholder.markdown(...)).
         log_placeholder = st.empty()
         status_placeholder = st.empty()
 
         # Vide la queue dans la liste de logs (drain robuste via queue.Empty)
         q = st.session_state.log_queue
         done = False
+        # 📘 get_nowait() prend un message sans attendre ; si la file est vide il lève queue.Empty,
+        # 📘 qu'on attrape pour sortir de la boucle (`while True` + `break`).
+        # 📘 "__DONE__" = message spécial que pipeline.py envoie toujours en dernier (bloc finally).
         while True:
             try:
                 msg = q.get_nowait()
@@ -931,6 +1159,9 @@ def page_prospection():
         if not done and _thr is not None and not _thr.is_alive():
             done = True
 
+        # 📘 Fin de campagne : running → False, run_done → True, et on copie la liste remplie par le
+        # 📘 thread dans st.session_state.prospects (lue par la section Résultats ci-dessous).
+        # 📘 hasattr(obj, "nom") teste si l'attribut existe.
         if done:
             st.session_state.running = False
             st.session_state.run_done = True
@@ -938,11 +1169,17 @@ def page_prospection():
                 st.session_state.prospects = list(st.session_state._results)
 
         # Affiche les logs
+        # 💡 Sécurité : ces logs contiennent des noms d'entreprises venus d'internet et sont insérés
+        # 💡 tels quels dans du HTML (unsafe_allow_html) → risque d'injection HTML. Échappe chaque
+        # 💡 ligne avec html.escape(). Rappel : settings.json garde les clés API en clair (seul
+        # 💡 gmail_password est exclu) — ne jamais le committer ni l'exposer.
         log_html = "<div class='log-box'>" + "<br>".join(
             st.session_state.logs[-100:]
         ) + "</div>"
         log_placeholder.markdown(log_html, unsafe_allow_html=True)
 
+        # 📘 time.sleep(1) bloque ce rerun 1 s, puis st.rerun() arrête le script ICI et le relance
+        # 📘 depuis le début : pendant une campagne, rien en dessous (Résultats…) n'est affiché.
         if st.session_state.running:
             status_placeholder.info("⏳ Prospection en cours…")
             time.sleep(1)
@@ -954,6 +1191,9 @@ def page_prospection():
     # ---------------------------------------------------------------------------
     # Résultats
     # ---------------------------------------------------------------------------
+    # 📘 ─── Résultats ───
+    # 📘 Affichés dès que st.session_state.prospects n'est pas vide : après une campagne, après
+    # 📘 _restore_last_results (au chargement) ou après « Charger cette campagne » (Statistiques).
     if st.session_state.prospects:
         prospects = st.session_state.prospects
         st.markdown("---")
@@ -966,16 +1206,25 @@ def page_prospection():
             )
 
         # Métriques
+        # 📘 sum(1 for p in ... if cond) = compte les éléments qui vérifient cond.
         no_site     = sum(1 for p in prospects if not p.has_website())
         critical    = sum(1 for p in prospects if p.score < 40)
         avg_score   = int(sum(p.score for p in prospects) / len(prospects))
         emails_ok   = sum(1 for p in prospects if p.email)
+        # 💡 Logique métier dans l'UI : le test « mobile = commence par 06/07 » est recopié 4 fois
+        # 💡 dans ce fichier (métriques, filtre, badges). À ranger dans une méthode Prospect.is_mobile().
+        # 💡 Idem pour les exports CSV/Excel (→ services/export.py), la génération des relances + MAJ
+        # 💡 Notion (page Relances), la suppression des fichiers d'historique (Réglages) et les
+        # 💡 contrôles « il manque une clé » écrits 3 fois dans page_prospection (→ une fonction).
+        # 💡 Une API FastAPI pourrait ensuite réutiliser exactement ces mêmes fonctions.
         mobiles_ok  = sum(1 for p in prospects if p.phone and (
             p.phone.replace(" ", "").startswith("06") or
             p.phone.replace(" ", "").startswith("07")
         ))
 
         m1, m2, m3, m4, m5, m6 = st.columns(6)
+        # 📘 Boucle sur une liste de tuples (colonne, valeur, libellé, couleur) déballés dans 4
+        # 📘 variables ; chaque tour dessine une carte HTML (classes CSS définies en haut).
         for col, value, label, color in [
             (m1, len(prospects),  "Total prospects",    "#667eea"),
             (m2, no_site,         "Sans site 🔴",        "#f38ba8"),
@@ -1004,6 +1253,9 @@ def page_prospection():
             sort_opt = st.selectbox("Trier par :", ["Opportunité (score ↑)", "Nom (A→Z)", "Note Google (↓)"])
 
         # Application des filtres
+        # 📘 Filtre et tri se font en mémoire, en Python, à chaque rerun (quand tu changes un choix).
+        # 📘 sorted(..., key=lambda p: p.name) trie selon la valeur renvoyée par la lambda.
+        # 📘 « Opportunité » ne retrie pas : on garde l'ordre déjà calculé par pipeline.py.
         filtered = prospects
         if filter_opt == "Sans site uniquement":
             filtered = [p for p in prospects if not p.has_website()]
@@ -1033,6 +1285,8 @@ def page_prospection():
                 phone_type = "📱" if (num.startswith("06") or num.startswith("07")) else "☎️"
 
             header = f"{score_emoji} **{p.name}** — Score {p.score}/100 — {email_badge} {phone_type}"
+            # 📘 Un expander par prospect. getattr(p, "dirigeant", "") lit l'attribut s'il existe, sinon
+            # 📘 renvoie "" (utile pour d'anciens fichiers JSON sans ce champ).
             with st.expander(header):
                 c1, c2 = st.columns([1, 1])
                 with c1:
@@ -1090,6 +1344,13 @@ def page_prospection():
         st.markdown("---")
         st.markdown("### 💾 Export")
 
+        # 📘 st.download_button : bouton qui fait télécharger au navigateur des données préparées en
+        # 📘 mémoire. io.StringIO / io.BytesIO = de faux fichiers en RAM (texte / octets) dans lesquels
+        # 📘 csv et openpyxl « écrivent » sans rien créer sur le disque.
+        # 💡 Pas de st.cache_data dans ce fichier : ces 3 exports (JSON, CSV, Excel) sont reconstruits
+        # 💡 à CHAQUE rerun tant que des résultats sont affichés (idem load_history en Statistiques).
+        # 💡 Mets la construction dans une fonction décorée @st.cache_data, avec un argument simple
+        # 💡 (nom du fichier de campagne), ou génère le fichier seulement au clic.
         import csv, io
         col_e1, col_e2, col_e3 = st.columns(3)
 
@@ -1136,6 +1397,8 @@ def page_prospection():
             )
 
         with col_e3:
+            # 📘 openpyxl est optionnel : s'il n'est pas installé, l'import lève ImportError et on
+            # 📘 affiche un bouton grisé à la place.
             try:
                 import openpyxl
                 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
@@ -1156,6 +1419,8 @@ def page_prospection():
                     top=Side(style="thin"), bottom=Side(style="thin"),
                 )
 
+                # 📘 enumerate(..., 1) numérote à partir de 1 (Excel compte les colonnes depuis 1) ;
+                # 📘 zip associe chaque en-tête à sa largeur.
                 for ci, (h, w) in enumerate(zip(headers, col_widths), 1):
                     cell = ws.cell(row=1, column=ci, value=h)
                     cell.fill = header_fill
@@ -1204,12 +1469,16 @@ def page_prospection():
     # Sauvegarde profil custom
     # ---------------------------------------------------------------------------
     st.markdown("---")
+    # 📘 Enregistre un profil perso via profile_manager.save_custom_profile. ⚠️ Rien dans ce
+    # 📘 fichier n'affiche ni ne recharge ces profils (PROFILES / get_profile sont importés mais
+    # 📘 inutilisés) : le message « Il apparaîtra dans la liste » ne correspond à aucun écran.
     with st.expander("💾 Sauvegarder ce profil pour une prochaine fois"):
         save_name = st.text_input("Nom du profil", placeholder="Ex: Mon profil Lyon Dev Web")
         if st.button("💾 Sauvegarder") and save_name:
             from profile_manager import save_custom_profile
             from profiles import Profile
             import re, uuid
+            # 📘 `re` = expressions régulières : [^a-z0-9] remplace tout caractère non alphanumérique.
             custom_id = "custom_" + re.sub(r"[^a-z0-9]", "_", save_name.lower())[:20]
             new_profile = Profile(
                 id=custom_id,
@@ -1229,6 +1498,11 @@ def page_prospection():
             save_custom_profile(new_profile)
             st.success(f"✅ Profil « {save_name} » sauvegardé ! Il apparaîtra dans la liste au prochain lancement.")
 
+# 📘 ═══ SECTION : PAGE « PIPELINE » ═══
+# 📘 Le mini-CRM : tous les prospects de la base SQLite, filtrables, avec statut et notes.
+# 📘 Lit dans crm_store : status_counts, STATUS_ORDER / STATUS_LABELS, list_prospects
+# 📘   (filtres statut / email / recherche), get_events (historique), get_linkedin_templates.
+# 📘 Écrit dans crm_store : set_status, set_notes (+ mark_linkedin_sent via le panneau).
 def page_pipeline():
     # ---------------------------------------------------------------------------
     # 📋 Pipeline CRM — tous les prospects suivis, par statut
@@ -1279,6 +1553,7 @@ def page_pipeline():
         with _f3:
             _filter_search = st.text_input("Rechercher", placeholder="Nom, email, site…", key="pipe_search")
 
+        # 📘 Le filtrage se fait en SQL dans crm_store (WHERE … LIKE …), pas en Python.
         _rows = crm_store.list_prospects(
             status=None if _filter_status == "(tous)" else _filter_status,
             has_email={"(tous)": None, "avec": True, "sans": False}[_filter_email],
@@ -1313,6 +1588,11 @@ def page_pipeline():
 
                 _a1, _a2 = st.columns([2, 3])
                 with _a1:
+                    # 📘 Motif « comparer puis écrire » : le selectbox renvoie la valeur choisie ;
+                    # 📘 si elle diffère
+                    # 📘 du statut en base, c'est que tu viens de la changer → on écrit puis
+                    # 📘 on relance le script.
+                    # 📘 (Autre façon de faire : on_change=, comme dans Réglages.)
                     _new_status = st.selectbox(
                         "Statut", options=crm_store.STATUS_ORDER,
                         index=crm_store.STATUS_ORDER.index(_row["status"])
@@ -1329,6 +1609,9 @@ def page_pipeline():
                         placeholder="Note (rappeler en janvier, budget serré…)",
                         key=f"nt_{_pid}", label_visibility="collapsed",
                     )
+                    # 📘 Un text_input déclenche un rerun quand tu valides (Entrée ou clic
+                    # 📘 ailleurs) : c'est là
+                    # 📘 que la différence est détectée et la note enregistrée.
                     if _new_notes != (_row.get("notes") or ""):
                         crm_store.set_notes(_pid, _new_notes)
                         st.toast("Note enregistrée ✅")
@@ -1342,6 +1625,16 @@ def page_pipeline():
                         for _e in _events:
                             st.caption(f"{_e['at'][:16].replace('T', ' ')} — **{_e['kind']}** {_e['detail']}")
 
+# 📘 ═══ SECTION : PAGE « RELANCES » ═══
+# 📘 3 blocs : emails programmés (services/scheduler), suivi des réponses IMAP
+# 📘 (services/reply_tracker), séquence de relances des contacts sans réponse.
+# 📘 ⚠️ Cette page n'utilise PAS crm_store : elle lit/écrit l'historique JSON via
+# 📘 history_manager (_load_contacted_data, get_due_followups, mark_followup_sent,
+# 📘 mark_as_responded, get_notion_page_id) et met à jour Notion si c'est ton CRM.
+# 💡 Deux sources de vérité : Ma journée / Pipeline lisent la base SQLite (crm_store) alors que
+# 💡 Relances et Statistiques lisent output/contacted_place_ids.json (history_manager).
+# 💡 « ✅ Répondu » ici n'écrit que dans le JSON ; « 💬 A répondu » (Ma journée) n'écrit que
+# 💡 dans SQLite. À terme : tout passer par crm_store (et une seule API /prospects).
 def page_relances():
     st.title("🔄 Relances")
     st.caption("Séquences de relance, emails programmés et suivi des réponses.")
@@ -1353,6 +1646,8 @@ def page_relances():
         from services import scheduler as _sched_ui
         # Garde les identifiants en RAM pour que l'envoi différé fonctionne
         # (ils ne sont jamais écrits sur disque).
+        # 📘 On confie le mot de passe Gmail (en RAM seulement) au scheduler, pour que son thread
+        # 📘 d'envoi différé puisse envoyer même quand tu n'es pas sur cette page.
         if gmail_address and gmail_password:
             _sched_ui.remember_credentials(gmail_address, gmail_password)
         _stats = _sched_ui.get_stats()
@@ -1379,6 +1674,8 @@ def page_relances():
                     "Renseigne-le dans ⚙️ Réglages, **ou mieux** : ajoute `GMAIL_APP_PASSWORD` "
                     "dans les variables Railway pour que les envois programmés survivent aux redémarrages."
                 )
+            # 📘 `cond and st.button(...)` : si cond est faux, Python n'évalue pas la suite
+            # 📘 (court-circuit) → le bouton n'est même pas affiché.
             if _stats["pending"] > 0 and st.button("📤 Envoyer maintenant les emails dus", use_container_width=True):
                 _r = _sched_ui.process_due()
                 if _r["sent"]:
@@ -1434,6 +1731,10 @@ def page_relances():
             )
 
             # Bouton pour générer la PROCHAINE relance de la séquence pour chaque contact
+            # 📘 Le clic génère pour chaque contact le brouillon de sa relance suivante, AVANCE son étape
+            # 📘 (mark_followup_sent) et, si Notion est ton CRM, met à jour le statut Notion. Les
+            # 📘 brouillons sont rangés en session pour rester affichés après st.rerun().
+            # 📘 Rien n'est envoyé : ce sont des textes à copier ou télécharger.
             if st.button("📝 Générer les prochaines relances", key="gen_followup"):
                 from services.google_maps import Prospect as P
                 from services.mailer import draft_followup_email
@@ -1471,6 +1772,8 @@ def page_relances():
                     st.markdown(f"**{name}**")
                     st.code(draft, language=None)
                 import io
+                # 📘 Malgré son nom, zip_content est un simple texte (.txt) : tous les
+                # 📘 brouillons à la suite.
                 zip_content = "\n\n" + ("=" * 60 + "\n\n").join(
                     f"{name}\n{draft}" for name, draft, _ in st.session_state["followup_drafts"]
                 )
@@ -1502,6 +1805,12 @@ def page_relances():
                                 NotionExporter(crm_key, crm_extra.get("database_id", "")).update_status(_np, "répondu")
                         st.rerun()
 
+# 📘 ═══ SECTION : PAGE « STATISTIQUES » ═══
+# 📘 Lit : history_manager.load_history (une entrée par campagne, écrite par pipeline.py),
+# 📘   _load_contacted_data (contacts + réponses), get_ab_stats (test A/B), les fichiers
+# 📘   output/prospects_*.json (bouton « Charger ») et st.session_state.prospects.
+# 📘 N'écrit rien sur disque ni dans crm_store : « Charger » remplit seulement
+# 📘   st.session_state.prospects, affichés ensuite dans la page Nouvelle campagne.
 def page_statistiques():
     st.title("📊 Statistiques")
     st.caption("Tes campagnes passées et leurs résultats.")
@@ -1510,6 +1819,8 @@ def page_statistiques():
     # ---------------------------------------------------------------------------
     st.markdown("---")
     with st.expander("📊 Dashboard — Statistiques globales"):
+        # 📘 Importer une fonction « _privée » d'un autre module fonctionne, mais contourne la
+        # 📘 convention du « _ » (signe qu'il manque une fonction publique dans history_manager).
         from history_manager import load_history as _lh, _load_contacted_data as _lcd2
         _hist = _lh()
         _cdata2 = _lcd2()
@@ -1540,6 +1851,9 @@ def page_statistiques():
 
             # Graphique : prospects + emails par campagne (10 dernières)
             try:
+                # 📘 pandas : librairie de tableaux de données (DataFrame).
+                # 📘 st.bar_chart trace un DataFrame
+                # 📘 directement ; set_index choisit la colonne utilisée comme axe horizontal.
                 import pandas as _pd
 
                 _runs_data = [{
@@ -1648,6 +1962,7 @@ def page_statistiques():
                     # Bouton pour recharger tous les prospects de cette campagne dans l'UI
                     _fichier = run.get("fichier", "")
                     if _fichier and os.path.exists(_fichier):
+                        # 📘 key=f"load_camp_{_i}" : l'index de boucle rend chaque bouton unique.
                         if st.button("📂 Charger cette campagne", key=f"load_camp_{_i}", use_container_width=True):
                             try:
                                 with open(_fichier, "r", encoding="utf-8") as _cf:
@@ -1665,10 +1980,20 @@ def page_statistiques():
                         st.caption("⚠️ Fichier de résultats introuvable (effacé lors d'un redéploiement).")
                 st.divider()
 
+# 📘 ═══ SECTION : PAGE « RÉGLAGES » ═══
+# 📘 Réglages de connexion et signature : lus via _cfg, enregistrés via _persist_cfg
+# 📘   (session + settings.json ; gmail_password en session seulement).
+# 📘 crm_store : get_delay / set_delay, get_linkedin_templates / set_linkedin_template /
+# 📘   reset_linkedin_template, get_user_franchises / set_user_franchises.
+# 📘 Autres : history_manager.load_contacted_ids + suppression des fichiers JSON d'historique,
+# 📘   services/cache (count, clear_all : cache disque des analyses, rien à voir avec st.cache).
 def page_reglages():
     st.title("⚙️ Réglages")
     st.caption("Chaque champ est enregistré automatiquement dès que tu le modifies.")
 
+    # 📘 Fonction définie DANS une fonction : un raccourci local pour créer un champ de réglage
+    # 📘 « auto-enregistré ». value=_cfg(...) pré-remplit ; key="w_<key>" + on_change=_persist_cfg
+    # 📘 enregistrent dès que tu valides la saisie. type="password" masque les secrets (●●●).
     def _field(label, key, env="", secret=False, placeholder="", help_=None):
         return st.text_input(
             label, value=_cfg(key, env), key=f"w_{key}", type="password" if secret else "default",
@@ -1715,6 +2040,8 @@ def page_reglages():
     with st.container(border=True):
         st.markdown("**🗂️ CRM** — synchronisation des prospects")
         _crm_opts = ["aucun", "notion", "hubspot"]
+        # 📘 Changer de CRM appelle _persist_cfg → rerun → crm_type (calculé en haut du fichier) a
+        # 📘 changé, donc les champs Notion ou HubSpot ci-dessous apparaissent.
         st.selectbox(
             "CRM", options=_crm_opts, index=_crm_opts.index(crm_type) if crm_type in _crm_opts else 0,
             format_func=lambda c: {"aucun": "Aucun", "notion": "Notion", "hubspot": "HubSpot"}[c],
@@ -1770,6 +2097,8 @@ def page_reglages():
         )
         for _a in (crm_store.ACTION_RELANCER, crm_store.ACTION_MAQUETTE,
                    crm_store.ACTION_RAPPELER, crm_store.ACTION_PROPALE):
+            # 📘 Même motif « comparer puis écrire » que dans Pipeline : on n'écrit en base que si la
+            # 📘 valeur saisie diffère de celle stockée.
             _v = st.number_input(
                 crm_store.ACTION_LABELS[_a], min_value=0, max_value=60,
                 value=crm_store.get_delay(_a), key=f"delay_{_a}",
@@ -1809,6 +2138,8 @@ def page_reglages():
             if _s2.button("↩️ Par défaut", key=f"litpl_reset_{_k}", use_container_width=True,
                           disabled=_k not in _custom):
                 crm_store.reset_linkedin_template(_k)
+                # 📘 On retire la valeur du widget de la session pour qu'au rerun le text_area reparte du
+                # 📘 modèle par défaut (sinon Streamlit réafficherait l'ancien texte saisi).
                 st.session_state.pop(f"litpl_{_k}", None)
                 st.rerun()
             st.markdown("")
@@ -1848,6 +2179,9 @@ def page_reglages():
             if st.button("🗑️ Réinitialiser l'historique", type="secondary"):
                 # On supprime le fichier principal ET la sauvegarde, sinon _load_contacted_data
                 # restaure aussitôt les données depuis le backup → reset sans effet.
+                # 📘 N'efface que les fichiers JSON d'history_manager ; la base SQLite
+                # 📘 crm_store (statuts,
+                # 📘 événements) n'est pas touchée.
                 removed = 0
                 for _fname in ("contacted_place_ids.json", "contacted_place_ids.bak.json"):
                     _path = os.path.join("output", _fname)
@@ -1908,12 +2242,28 @@ def page_reglages():
         st.caption("Astuce : teste ta config sur mail-tester.com avant une campagne — un score < 8/10 = risque spam.")
 
 
+# 📘 ═══ SECTION : NAVIGATION (st.navigation + st.Page) ═══
+# 📘 Badge du menu : nombre d'actions en retard + du jour (lu dans crm_store). try/except :
+# 📘 si la base est indisponible, le menu s'affiche quand même (badge à 0).
 try:
     _sum_nav = crm_store.actions_summary()
     _due_now = _sum_nav["en_retard"] + _sum_nav["aujourdhui"]
 except Exception:
     _due_now = 0
 
+# 📘 st.Page(fonction, title=, icon=, url_path=) déclare une page ; le dict les regroupe par
+# 📘 rubrique dans la barre latérale ; default=True = page ouverte à l'arrivée ; url_path
+# 📘 donne l'adresse (ex. http://localhost:8501/pipeline).
+# 📘 st.navigation renvoie la page choisie (d'après l'URL ou le clic) ; _nav.run() exécute SA
+# 📘 fonction, et seulement elle. Tout le code de niveau 0 au-dessus a déjà tourné.
+# 💡 Taille : ~1900 lignes dans un seul fichier. Découpage simple : un dossier pages/ avec un
+# 💡 module par page (pages/ma_journee.py, pages/campagne.py…), un config.py pour _cfg /
+# 💡 _persist_cfg, un ui/components.py pour _linkedin_panel. app.py ne garderait que
+# 💡 set_page_config, l'initialisation et ce bloc st.navigation (~60 lignes).
+# 💡 Passage React + FastAPI : chaque st.Page devient une route React (React Router), chaque
+# 💡 lecture/écriture crm_store une route API (GET /actions/due, PATCH /prospects/{id}…),
+# 💡 st.session_state → état côté React (useState / React Query), settings → GET/PUT
+# 💡 /settings avec les secrets gardés côté serveur (variables d'env), jamais dans le front.
 _nav = st.navigation({
     "Au quotidien": [
         st.Page(page_ma_journee, title=f"Ma journée ({_due_now})" if _due_now else "Ma journée",
