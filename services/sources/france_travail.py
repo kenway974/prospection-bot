@@ -7,24 +7,45 @@ Endpoint : https://api.francetravail.io/partenaire/offresdemploi/v2/offres/searc
 
 from __future__ import annotations
 
+# 📘 Tuple, Dict… : types du module typing, pour annoter (type hints). Tuple n'est pas utilisé ici.
 import time
 from typing import Dict, List, Optional, Tuple
 
 import requests
 
+# 📘 ⚠️ `config` est figé à l'import (démarrage de l'appli) : pipeline.py ne le remplace pas ici.
+# 📘   Sans conséquence pour la config : seul config.request_timeout (fixe, 10 s) est lu, et les
+# 📘   identifiants arrivent en ARGUMENTS (client_id/client_secret passés par pipeline.py : bonne
+# 📘   pratique). `logger` non remplacé → ces logs vont dans la console, pas dans l'UI.
 from config import config, logger
 from services.google_maps import Prospect
 
 
+# 📘 ─── À QUOI SERT CE FICHIER ───
+# 📘 Rôle : trouver des entreprises QUI RECRUTENT via l'API officielle des offres d'emploi France
+# 📘   Travail ; une entreprise qui embauche a souvent un budget → bon signal commercial.
+# 📘 Appelé par : pipeline.py (search_france_travail, source "france_travail"), via __init__.py.
+# 📘 Appelle : entreprise.francetravail.fr (jeton OAuth2) puis api.francetravail.io (recherche).
+# 📘 Concepts Python à retenir ici : OAuth2 "client_credentials", cache global dans un dict,
+# 📘   requests.post(data=...), en-tête Authorization Bearer, dédoublonnage avec un dict.
+# 📘 OAuth2 client_credentials : on échange (client_id, client_secret) contre un "jeton d'accès"
+# 📘 temporaire, qu'on joint ensuite à chaque requête. Le secret, lui, ne voyage qu'une fois.
 # ---------------------------------------------------------------------------
 # Cache du token OAuth2 (dict module-level)
 # ---------------------------------------------------------------------------
 
+# 📘 Cache au niveau du MODULE : ce dict vit tant que le processus tourne, donc le jeton est
+# 📘 réutilisé d'une recherche (et d'une campagne) à l'autre jusqu'à son expiration.
+# 📘 ⚠️ La clé du cache ne contient pas le client_id : si tu changes d'identifiants dans l'UI, le
+# 📘   jeton des ANCIENS identifiants reste utilisé jusqu'à expiration (≈ 1 h en pratique).
+# 💡 Indexer le cache par client_id (dict {client_id: (jeton, expiration)}) règle ce problème.
 _token_cache: Dict[str, object] = {
     "access_token": None,
     "expires_at": 0.0,
 }
 
+# 📘 Deux chaînes côte à côte entre parenthèses sont collées en une seule par Python.
+# 📘 "%2F" = "/" encodé pour une URL : realm=/partenaire.
 TOKEN_URL = (
     "https://entreprise.francetravail.fr/connexion/oauth2/access_token"
     "?realm=%2Fpartenaire"
@@ -37,10 +58,13 @@ def _get_token(client_id: str, client_secret: str) -> Optional[str]:
     Récupère un token OAuth2, en utilisant le cache si encore valide.
     Retry 3x avec backoff exponentiel.
     """
+    # 📘 time.time() = nombre de secondes depuis 1970 ("timestamp"), pratique pour comparer des dates.
     now = time.time()
     if _token_cache["access_token"] and now < float(_token_cache["expires_at"]):  # type: ignore[arg-type]
         return str(_token_cache["access_token"])
 
+    # 📘 requests.post(..., data=payload) envoie le dict comme un formulaire HTML (clé=valeur&...),
+    # 📘 ce que demande le serveur OAuth2 (Content-Type x-www-form-urlencoded).
     payload = {
         "grant_type": "client_credentials",
         "client_id": client_id,
@@ -57,6 +81,7 @@ def _get_token(client_id: str, client_secret: str) -> Optional[str]:
             token = data.get("access_token")
             expires_in = int(data.get("expires_in", 3600))
             _token_cache["access_token"] = token
+            # 📘 On retire 30 s de marge pour ne jamais envoyer un jeton qui expire pendant la requête.
             _token_cache["expires_at"] = now + expires_in - 30  # marge de 30s
             return token
         except requests.RequestException as exc:
@@ -78,12 +103,19 @@ def _search_offers(
     Recherche des offres d'emploi via l'API France Travail.
     Retry 3x avec backoff exponentiel.
     """
+    # 📘 "range": "0-39" : pagination façon France Travail, on demande les offres n°0 à 39 d'un coup
+    # 📘 (2× max_results car plusieurs offres viennent souvent de la même entreprise), 149 max ici.
     range_end = min(max_results * 2 - 1, 149)
     params = {
         "motsCles": keyword,
         "range": f"0-{range_end}",
+        # 📘 ⚠️ "distance": 30 est envoyé sans commune de référence et `location` n'est jamais transmis :
+        # 📘   la recherche porte sur TOUTE la France, pas sur ta ville (la docstring le reconnaît).
+        # 💡 L'API offres v2 accepte des filtres géographiques (departement, ou commune + distance) :
+        # 💡   réutiliser _get_dept de sirene.py pour en déduire le département de `location`.
         "distance": 30,
     }
+    # 📘 En-tête "Authorization: Bearer <jeton>" : c'est ainsi qu'on présente le jeton OAuth2.
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
@@ -96,6 +128,7 @@ def _search_offers(
             )
             resp.raise_for_status()
             data = resp.json()
+            # 📘 data.get("resultats", []) : la liste d'offres, ou liste vide si la clé est absente.
             return data.get("resultats", [])
         except requests.RequestException as exc:
             if attempt < 2:
@@ -134,6 +167,8 @@ def search_france_travail(
     """
     logger.info("💼 France Travail : '%s' à %s", keyword, location)
 
+    # 📘 Sortie anticipée ("early return") : on vérifie les prérequis en haut et on quitte tout de
+    # 📘 suite, ce qui évite d'imbriquer tout le reste dans des if.
     if not client_id or not client_secret:
         logger.warning(
             "France Travail : client_id ou client_secret manquant — source ignorée."
@@ -149,6 +184,8 @@ def search_france_travail(
         return []
 
     prospects: List[Prospect] = []
+    # 📘 Dict utilisé comme "déjà vu ?" ; un set() (seen = set(); seen.add(k)) ferait pareil, plus
+    # 📘 simplement. Dédoublonnage par nom en minuscules : 1 prospect par entreprise.
     seen_companies: Dict[str, bool] = {}
 
     for offer in offers:
@@ -170,12 +207,16 @@ def search_france_travail(
         lieu_travail = offer.get("lieuTravail") or {}
         contact = offer.get("contact") or {}
 
+        # 📘 Le contact d'une offre (tél., courriel) est souvent celui du recruteur, pas du dirigeant.
         address = lieu_travail.get("libelle", "")
         website = entreprise.get("url") or None
         phone = contact.get("telephone") or None
         email_val = contact.get("courriel") or None
 
         prospect = Prospect(
+            # 📘 place_id = "ft_" + id de l'OFFRE : si la même entreprise revient avec une autre offre
+            # 📘 plus tard, elle aura un autre place_id → _dedup de pipeline.py (qui compare les place_id)
+            # 📘 ne la reconnaîtra pas comme déjà contactée.
             place_id=f"ft_{offer_id}",
             name=company_name,
             address=address,
