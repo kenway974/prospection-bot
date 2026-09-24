@@ -12,18 +12,39 @@ Logique de construction :
 
 from __future__ import annotations
 
+# 📘 hashlib : calcule des "empreintes" (hash) de textes → sert au test A/B déterministe.
+# 📘 os : ici pour lire des variables d'environnement (os.getenv).
+# 📘 dataclasses : outil pour créer vite des classes qui ne font que "porter des données".
 import hashlib
 import os
 from dataclasses import dataclass, field
 from typing import Dict
+# 📘 config = réglages de l'app (ton nom, titre, site…) ; logger = journal des messages.
 from config import config, logger
 from services.google_maps import Prospect
 
 
+# 📘 ─── À QUOI SERT CE FICHIER ───
+# 📘 Rôle : RÉDIGER les cold emails (texte seulement, aucun envoi ici) : 1er email
+# 📘         personnalisé selon l'audit du site, variantes A/B, style réglable, et les
+# 📘         4 emails de relance. L'envoi est fait par services/gmail.py.
+# 📘 Appelé par : pipeline.py (draft_email, enrich_with_email, EmailStyle), main.py
+# 📘              (enrich_with_email, enrich_with_followup), app.py (build_dynamic_email,
+# 📘              draft_followup_email, MAX_FOLLOWUPS), history_manager.py
+# 📘              (get_template_variant) et plusieurs fichiers de tests/.
+# 📘 Appelle : config (ton identité), offers.py (select_offer, offre adaptée au prospect),
+# 📘           les données d'audit portées par l'objet Prospect (issues, issue_keys, cms…).
+# 📘 Concepts Python à retenir ici : @dataclass, dict imbriqués (dict de dict), templates
+# 📘   avec str.format, dict.get(clé, défaut), listes construites morceau par morceau puis
+# 📘   "\n".join, compréhensions de liste, any(), getattr, f-string, hash md5 pour l'A/B.
 # ---------------------------------------------------------------------------
 # Style configurable des emails dynamiques
 # ---------------------------------------------------------------------------
 
+# 📘 @dataclass est un "décorateur" : il génère automatiquement le constructeur __init__
+# 📘 (et d'autres méthodes) à partir des champs déclarés. EmailStyle() crée donc un objet
+# 📘 avec ces 4 valeurs par défaut, et EmailStyle(length="short") en change une seule.
+# 📘 `intonation: str = "professional"` = champ de type str avec sa valeur par défaut.
 @dataclass
 class EmailStyle:
     intonation: str = "professional"  # "formal" | "professional" | "direct" | "casual"
@@ -32,6 +53,8 @@ class EmailStyle:
     cta: str = "audit"               # "audit" | "call" | "meeting" | "reply"
 
 
+# 📘 Dict imbriqué : EMAIL_STYLE_LABELS["cta"]["call"] → la phrase d'appel à l'action.
+# 📘 Sert à la fois de libellés pour l'interface et de texte réellement inséré (cta).
 EMAIL_STYLE_LABELS = {
     "intonation": {
         "formal":       "Formel",
@@ -57,6 +80,9 @@ EMAIL_STYLE_LABELS = {
     },
 }
 
+# 📘 Grand "catalogue de textes" : pour chaque problème détecté par l'audit (clé), une
+# 📘 phrase par ton (intonation). Séparer les TEXTES de la LOGIQUE rend les deux plus
+# 📘 faciles à modifier. ISSUE_COPY["https"]["direct"] → la phrase HTTPS au ton direct.
 # Structure : issue_key → {intonation: sentence}
 # {name} sera remplacé par le nom du prospect, {cms} par le CMS détecté
 ISSUE_COPY = {
@@ -144,6 +170,7 @@ ISSUE_COPY = {
 # Copy créatif (catégorie "creatif") — angle : vos visuels ne reflètent pas votre qualité
 # ---------------------------------------------------------------------------
 
+# 📘 Même structure, mais formulée pour les métiers créatifs (photographes, designers…).
 CREATIVE_ISSUE_COPY = {
     "no_gallery": {
         "formal":       "Votre site ne présente pas de galerie de réalisations, ce qui limite significativement la perception de votre savoir-faire par vos visiteurs.",
@@ -187,6 +214,7 @@ CREATIVE_ISSUE_COPY = {
 # Copy conseil B2B (catégorie "conseil_b2b") — angle : impact business mesurable
 # ---------------------------------------------------------------------------
 
+# 📘 Même structure, formulée pour les cabinets de conseil / services B2B.
 CONSEIL_ISSUE_COPY = {
     "tracking": {
         "formal":       "L'absence d'outils de mesure sur votre site vous prive de toute donnée sur l'efficacité de vos actions commerciales et marketing.",
@@ -231,6 +259,8 @@ CONSEIL_ISSUE_COPY = {
 # Angle : je propose quelque chose qui manque à votre offre / organisation
 # ---------------------------------------------------------------------------
 
+# 📘 Ici la clé de 1er niveau est un "service_id" (le service que TU proposes) et non un
+# 📘 problème du site : le texte explique ce qui manque dans l'offre du prospect.
 NO_SERVICE_MENTION_COPY: Dict[str, Dict[str, str]] = {
     "coaching_sportif": {
         "formal":       "En consultant le site de {name}, je n'ai pas trouvé de programme de bien-être ou de coaching sportif à destination de vos équipes — un levier reconnu pour améliorer la productivité et réduire l'absentéisme.",
@@ -338,6 +368,7 @@ _SERVICE_INTRO = {
     "casual":       "Je voulais vous écrire directement parce que j'ai une idée qui pourrait vraiment intéresser {name} !",
 }
 
+# 📘 Phrases d'introduction et de conclusion, une par ton. {name} est rempli par .format().
 INTRO_TEMPLATES = {
     "formal": (
         "Je me permets de vous contacter suite à l'analyse de la présence en ligne de {name}. "
@@ -360,6 +391,8 @@ SIGN_OFF = {
 
 # Élément tangible de réassurance (framework : signal → enjeu → risque → RASSURE).
 # Placé avant le CTA pour lever le risque perçu d'un échange commercial.
+# 📘 POURQUOI métier : une phrase de réassurance réduit le "risque perçu" par le prospect
+# 📘 et augmente le taux de réponse d'un cold email.
 REASSURANCE = {
     "formal":       "Et pour être transparent : si j'estime ne pas pouvoir vous être utile, je vous le dirai clairement — sans discours commercial.",
     "professional": "Et rassurez-vous : si je vois que ça ne vous apporterait rien, je vous le dis franchement — pas de blabla commercial.",
@@ -372,6 +405,8 @@ REASSURANCE = {
 # Génération dynamique selon audit + style
 # ---------------------------------------------------------------------------
 
+# 📘 Un `set` (ensemble) entre accolades : collection sans doublons, très rapide pour
+# 📘 tester l'appartenance avec `in`.
 _NON_WEB_CATEGORIES = {"sante", "terrain", "special"}
 
 
@@ -426,6 +461,8 @@ _CANDIDACY_CTA = {
 }
 
 
+# 📘 Fonction "privée" (préfixe _) : construit l'email de candidature freelance.
+# 📘 Le résultat est un simple texte (str) multi-lignes.
 def _build_candidacy_email(
     prospect: Prospect,
     style: EmailStyle,
@@ -438,7 +475,11 @@ def _build_candidacy_email(
     intonation = style.intonation
     length = style.length
 
+    # 📘 .get(intonation, défaut) : si le ton demandé n'existe pas, on prend "professional".
+    # 📘 On enchaîne avec .format(name=...) pour remplir le trou {name} du modèle.
     hook = _CANDIDACY_HOOK.get(intonation, _CANDIDACY_HOOK["professional"]).format(name=prospect.name)
+    # 📘 Expression conditionnelle : ton texte d'offre perso s'il est rempli, sinon le texte
+    # 📘 par défaut du catalogue.
     value = your_offer.strip() if your_offer.strip() else _CANDIDACY_VALUE.get(intonation, _CANDIDACY_VALUE["professional"])
     if value and not value.endswith("."):
         value += "."
@@ -452,6 +493,9 @@ def _build_candidacy_email(
     if config.your_website:
         signature += f"\n{config.your_website}"
 
+    # 📘 On construit l'email comme une LISTE de morceaux ("" = ligne vide) : `parts += [...]`
+    # 📘 ajoute des éléments, puis "\n".join(parts) colle tout avec des retours à la ligne.
+    # 📘 En format "short", on saute la proposition de valeur et la réassurance.
     parts = [salutation, "", hook]
     if length != "short":
         parts += ["", value]
@@ -462,6 +506,8 @@ def _build_candidacy_email(
     return "\n".join(parts)
 
 
+# 📘 Fonction PUBLIQUE principale du style "dynamique" (choisi dans l'interface) :
+# 📘 elle combine l'audit du prospect + le style (EmailStyle) + ton profil de service.
 def build_dynamic_email(
     prospect: Prospect,
     style: EmailStyle,
@@ -481,6 +527,7 @@ def build_dynamic_email(
     cms = prospect.cms or "cet outil"
 
     # --- Salutation ---
+    # 📘 Table de correspondance (dict) plutôt qu'une série de if/elif : plus court et lisible.
     salutation_map = {
         "formal":     "Madame, Monsieur,",
         "neutral":    "Bonjour,",
@@ -489,11 +536,14 @@ def build_dynamic_email(
     salutation = salutation_map.get(style.salutation, "Bonjour,")
     # Style « Bonjour [Prénom] » : on utilise le vrai prénom du dirigeant s'il
     # a été identifié avec certitude (Sirène) ; sinon repli sur « Bonjour, ».
+    # 📘 getattr(prospect, "dirigeant", "") : lit l'attribut s'il existe, sinon "".
+    # 📘 `or ""` gère le cas où il vaut None. _dir.split()[0] = premier mot = prénom.
     _dir = (getattr(prospect, "dirigeant", "") or "").strip()
     if style.salutation == "first_name" and _dir:
         salutation = f"Bonjour {_dir.split()[0]},"
 
     # --- Cas spécial : candidature freelance (on ne vend pas un site) ---
+    # 📘 `return` sort immédiatement de la fonction : le reste n'est pas exécuté.
     if service_category == "freelance":
         return _build_candidacy_email(
             prospect, style, salutation, your_name, your_title, your_offer,
@@ -507,6 +557,8 @@ def build_dynamic_email(
     else:
         primary_copy = ISSUE_COPY
 
+    # 📘 issue_keys = codes des problèmes trouvés par l'audit (ex. "https", "viewport").
+    # 📘 n_issues : combien de problèmes on cite selon la longueur choisie (1, 2 ou 3).
     keys = list(prospect.issue_keys) if prospect.issue_keys else []
     n_issues = {"short": 1, "medium": 2, "long": 3}.get(length, 2)
     issue_paragraphs: list = []
@@ -523,6 +575,8 @@ def build_dynamic_email(
         if sentence:
             sentence = sentence.format(name=prospect.name, cms=cms)
             issue_paragraphs.append(sentence)
+        # 📘 Compréhension de liste : [k for k in keys if ...] = nouvelle liste filtrée
+        # 📘 (ici, sans "no_service_mention" pour ne pas le citer deux fois).
         keys = [k for k in keys if k != "no_service_mention"]
 
     # --- Priorité 2 : french_only spécial traduction (évite doublon avec no_service_mention) ---
@@ -535,6 +589,7 @@ def build_dynamic_email(
         keys = [k for k in keys if k not in ("french_only", "no_service_mention")]
 
     # --- Remplissage des autres slots ---
+    # 📘 `break` arrête la boucle dès qu'on a assez de paragraphes.
     for key in keys:
         if len(issue_paragraphs) >= n_issues:
             break
@@ -570,6 +625,8 @@ def build_dynamic_email(
     # --- Proposition de valeur + CTA ---
     # Pour le dev web : le bot formule UNE offre concrète adaptée à l'état du
     # site et au secteur (cf. offers.py). Sinon, value_prop + CTA génériques.
+    # 📘 Import local de offers.py : choisit UNE offre concrète (pitch + appel à l'action)
+    # 📘 selon l'état du site et le secteur. offer.pitch / offer.cta sont des attributs d'objet.
     if service_category == "web_digital":
         from offers import select_offer
         offer = select_offer(prospect, sector=target_sector)
@@ -586,6 +643,7 @@ def build_dynamic_email(
         signature += f"\n{your_title}"
 
     # --- Assemblage ---
+    # 📘 Assemblage final : .append(x) ajoute UN élément, .extend(liste) en ajoute plusieurs.
     parts = [salutation, ""]
     if intro:
         parts.append(intro)
@@ -603,6 +661,10 @@ def build_dynamic_email(
     parts.append("")
     parts.append(signature)
 
+    # 📘 Contrairement aux templates A/B plus bas, ce texte ne commence PAS par "OBJET :".
+    # 📘 À l'envoi, services/gmail.py utilisera donc un sujet par défaut générique.
+    # 💡 Générer aussi un sujet personnalisé ici (comme _build_subject) améliorerait le taux
+    # 💡 d'ouverture des emails "dynamiques".
     return "\n".join(parts)
 
 
@@ -610,6 +672,12 @@ def build_dynamic_email(
 # A/B test helpers
 # ---------------------------------------------------------------------------
 
+# 📘 md5(place_id) → grand nombre ; % 2 → 0 ou 1 → "A" ou "B". Le même prospect a
+# 📘 toujours la même variante (déterministe), et la répartition est ~50/50.
+# 📘 history_manager.py enregistre cette lettre pour comparer les taux de réponse A vs B.
+# 💡 Quand un style est fourni, draft_email n'utilise ni A ni B (build_dynamic_email),
+# 💡 mais la lettre A/B est quand même enregistrée : les stats A/B se mélangent. Stocker
+# 💡 le vrai template utilisé (ex. "dynamic") rendrait la comparaison fiable.
 def get_template_variant(place_id: str) -> str:
     """Assigne le variant A ou B de façon déterministe via le hash du place_id (50/50)."""
     return "A" if int(hashlib.md5(place_id.encode()).hexdigest(), 16) % 2 == 0 else "B"
@@ -619,6 +687,8 @@ def get_template_variant(place_id: str) -> str:
 # Helpers grammaticaux
 # ---------------------------------------------------------------------------
 
+# 📘 Petit utilitaire d'accord grammatical : "point" → "points" si n > 1.
+# 📘 `mot_pluriel: str = ""` permet de donner un pluriel irrégulier.
 def _pluriel(n: int, mot: str, mot_pluriel: str = "") -> str:
     if n <= 1:
         return mot
@@ -629,6 +699,8 @@ def _pluriel(n: int, mot: str, mot_pluriel: str = "") -> str:
 # Sujets dynamiques
 # ---------------------------------------------------------------------------
 
+# 📘 Le sujet ("OBJET") varie selon le nombre de problèmes : c'est lui qui décide si
+# 📘 l'email est ouvert, donc il doit être spécifique au prospect.
 def _build_subject(prospect: Prospect, n_issues: int) -> str:
     name = prospect.name
 
@@ -639,6 +711,7 @@ def _build_subject(prospect: Prospect, n_issues: int) -> str:
         return f"{name} — une idée pour aller encore plus loin"
 
     if n_issues == 1:
+        # 📘 Note : issue_short est calculé mais jamais utilisé dans le sujet renvoyé.
         issue_short = prospect.issues[0].split("→")[0].strip().lower()
         return f"{name} — un point à corriger sur votre site"
 
@@ -652,7 +725,10 @@ def _build_subject(prospect: Prospect, n_issues: int) -> str:
 # Accroche (1er paragraphe)
 # ---------------------------------------------------------------------------
 
+# 📘 L'accroche : on teste les cas du plus "urgent" (pas de site, site en panne) au plus
+# 📘 général ; le premier cas vrai gagne grâce aux `return` successifs.
 def _build_hook(prospect: Prospect) -> str:
+    # 📘 Variable d'environnement EMAIL_HOOK : une accroche perso qui remplace tout le reste.
     custom_hook = os.getenv("EMAIL_HOOK", "").strip()
     if custom_hook:
         return custom_hook.format(name=prospect.name)
@@ -664,6 +740,7 @@ def _build_hook(prospect: Prospect) -> str:
             f"et sans site, vous laissez cette opportunité à vos concurrents."
         )
 
+    # 📘 any(condition for i in liste) : True si AU MOINS un problème contient ce mot.
     if any("inaccessible" in i for i in prospect.issues):
         return (
             f"En visitant le site de {prospect.name} aujourd'hui, j'ai constaté qu'il était inaccessible. "
@@ -692,6 +769,7 @@ def _build_hook(prospect: Prospect) -> str:
         )
 
     cms = getattr(prospect, "cms", None)
+    # 📘 Un set de noms de "site builders" gratuits (Wix, Jimdo…).
     free_builders = {"Wix", "Jimdo", "Weebly", "Webnode"}
     if cms and cms in free_builders and any("gratuit" in i.lower() or "outil" in i.lower() or "builder" in i.lower() for i in prospect.issues):
         return (
@@ -715,6 +793,7 @@ def _build_hook(prospect: Prospect) -> str:
         )
 
     # Accroche générique si aucun cas précis
+    # 📘 Accroche générique si aucun cas précis ne correspond.
     n = len(prospect.issues)
     return (
         f"En analysant la présence en ligne de {prospect.name}, "
@@ -727,6 +806,8 @@ def _build_hook(prospect: Prospect) -> str:
 # Corps du mail — bloc problèmes
 # ---------------------------------------------------------------------------
 
+# 📘 Chaque problème est un texte du type "Problème → détail". .split("→") coupe en deux
+# 📘 morceaux : [0] = le problème, [1] = le détail.
 def _build_issues_block(prospect: Prospect) -> str:
     issues = prospect.issues
     n = len(issues)
@@ -742,6 +823,8 @@ def _build_issues_block(prospect: Prospect) -> str:
             block += f" — {detail}"
         return block
 
+    # 📘 issues[:3] = les 3 premiers éléments seulement (slicing) : un email court est lu,
+    # 📘 un email-fleuve ne l'est pas.
     top = issues[:3]
     label = f"Les {_pluriel(n, 'point principal', 'points principaux')} que j'ai notés :"
     lines = [label]
@@ -757,6 +840,7 @@ def _build_issues_block(prospect: Prospect) -> str:
 # CTA (appel à l'action)
 # ---------------------------------------------------------------------------
 
+# 📘 CTA = "Call To Action" : la phrase qui dit au prospect quoi faire ensuite.
 def _build_cta(prospect: Prospect) -> str:
     offer = os.getenv("YOUR_OFFER", "").strip()
     n = len(prospect.issues)
@@ -791,6 +875,7 @@ def _build_cta(prospect: Prospect) -> str:
 # Template B — ton court et direct, accroche chiffrée
 # ---------------------------------------------------------------------------
 
+# 📘 Template B : même rôle que A, mais plus court et plus direct (pour le test A/B).
 def _draft_email_b(prospect: Prospect) -> str:
     """Variante B : email plus court, ton direct, chiffres mis en avant."""
     n = len(prospect.issues)
@@ -835,12 +920,14 @@ def _draft_email_b(prospect: Prospect) -> str:
             "Dispo cette semaine ?",
         ]
 
+    # 📘 filter(None, liste) enlève les éléments vides/None (ex. titre non renseigné).
     signature_parts = [config.your_name, config.your_title]
     if config.your_email:
         signature_parts.append(config.your_email)
     signature = "\n".join(filter(None, signature_parts))
 
     body = "\n".join(body_lines)
+    # 📘 Format attendu par services/gmail.py : "OBJET : …", ligne vide, puis le corps.
     return f"OBJET : {subject}\n\n{body}\n\n{signature}".strip()
 
 
@@ -848,6 +935,7 @@ def _draft_email_b(prospect: Prospect) -> str:
 # Construction finale — dispatche vers A ou B
 # ---------------------------------------------------------------------------
 
+# 📘 Template A : accroche narrative + liste des problèmes + CTA.
 def _draft_email_a(prospect: Prospect) -> str:
     """Template A (original) — accroche narrative, argumentée."""
     n_issues = len(prospect.issues)
@@ -879,6 +967,8 @@ def _draft_email_a(prospect: Prospect) -> str:
     return "\n".join(parts).strip()
 
 
+# 📘 Point d'entrée : `style: "EmailStyle | None" = None` → paramètre optionnel.
+# 📘 Avec un style → email dynamique ; sans style → template A ou B selon le hash.
 def draft_email(
     prospect: Prospect,
     style: "EmailStyle | None" = None,
@@ -903,6 +993,8 @@ def draft_email(
     return _draft_email_b(prospect) if variant == "B" else _draft_email_a(prospect)
 
 
+# 📘 "enrich" = enrichir : on remplit l'attribut email_draft de l'objet et on le renvoie.
+# 📘 L'objet est modifié "sur place" (le même objet est partagé avec l'appelant).
 def enrich_with_email(prospect: Prospect) -> Prospect:
     prospect.email_draft = draft_email(prospect)
     variant = get_template_variant(prospect.place_id)
@@ -915,6 +1007,8 @@ def enrich_with_email(prospect: Prospect) -> Prospect:
 # ---------------------------------------------------------------------------
 
 # Nombre maximal de relances dans la séquence (après le 1er contact).
+# 📘 POURQUOI métier : une bonne part des réponses arrive sur les relances ; au-delà de
+# 📘 4, on devient insistant (risque de signalement comme spam).
 MAX_FOLLOWUPS = 4
 
 
@@ -938,6 +1032,7 @@ def draft_followup_email(prospect: Prospect, step: int = 1) -> str:
       3. Autre point de douleur — on relance l'intérêt sous un autre angle
       4. Rupture — dernier message, on referme proprement la porte (mais ouverte)
     """
+    # 📘 max(1, min(step, 4)) "borne" la valeur entre 1 et 4, même si on passe 0 ou 10.
     step = max(1, min(step, MAX_FOLLOWUPS))
     name = prospect.name
     signature = _followup_signature()
@@ -999,10 +1094,14 @@ def draft_followup_email(prospect: Prospect, step: int = 1) -> str:
             "Je vous souhaite une belle continuation.",
         ]
 
+    # 📘 Concaténation de listes avec + puis join : même format "OBJET : …" que les templates A/B.
     parts = [f"OBJET : {subject}", ""] + body + ["", "Bonne journée,", "", signature]
     return "\n".join(parts).strip()
 
 
+# 💡 Les relances répondent au 1er email mais partent comme un NOUVEAU mail (nouveau sujet).
+# 💡 Les envoyer "dans le même fil" (en-têtes In-Reply-To/References + sujet "Re: …")
+# 💡 augmente nettement le taux de lecture.
 def enrich_with_followup(prospect: Prospect, step: int = 1) -> Prospect:
     """Remplace le brouillon existant par l'email de relance n°`step`."""
     prospect.email_draft = draft_followup_email(prospect, step=step)
