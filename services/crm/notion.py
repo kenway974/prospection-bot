@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+# 📘 re = expressions régulières (motifs de recherche dans du texte), utilisées plus bas pour
+# 📘 extraire un identifiant de 32 caractères hexadécimaux.
 import re
 from typing import Dict, List, Optional, Tuple
 
@@ -11,6 +13,15 @@ from config import config, logger
 from services.google_maps import Prospect
 from services.crm.base import CRMExporter
 
+# 📘 ─── À QUOI SERT CE FICHIER ───
+# 📘 Rôle : crée une fiche (page) Notion par prospect dans une base Notion, sans doublon, et
+# 📘   sait mettre à jour son statut. Une des "stratégies" du pattern Strategy de services/crm.
+# 📘 Appelé par : services/crm/__init__.py (get_exporter), pipeline.py (verify_access, export,
+# 📘   update_status après envoi), app.py (relances), services/scheduler.py, services/notion_sync.py.
+# 📘 Appelle : l'API Notion (api.notion.com/v1) via requests ; config (timeout), logger.
+# 📘 Concepts Python à retenir ici : regex (re.search), héritage, @staticmethod, tuple de retour
+# 📘   (ok, message), déballage de liste avec `*`, codes HTTP (200/401/404), try/except.
+# 📘 Constantes de module : version de l'API Notion demandée et adresse de base des appels.
 NOTION_API_VERSION = "2022-06-28"
 NOTION_BASE_URL    = "https://api.notion.com/v1"
 
@@ -26,16 +37,22 @@ def clean_database_id(raw: str) -> str:
       - https://notion.so/MonEspace/c2507703...?v=...
       - c2507703-1756-4717-aaf2-132a76c00e06
     """
+    # 📘 `(raw or "")` : si raw est None, on utilise "" pour que .strip() ne plante pas.
     raw = (raw or "").strip()
     if not raw:
         return ""
     # Retire la query string puis garde le dernier segment de chemin
     raw = raw.split("?")[0].rstrip("/").split("/")[-1]
     raw = raw.replace("-", "")
+    # 📘 r"[0-9a-fA-F]{32}" : motif = exactement 32 caractères hexadécimaux à la suite (le `r`
+    # 📘 devant la chaîne = "raw string", les \ n'y sont pas interprétés). match.group(0) = le texte
+    # 📘 trouvé. Si rien ne correspond, on renvoie raw tel quel.
     match = re.search(r"[0-9a-fA-F]{32}", raw)
     return match.group(0) if match else raw
 
 
+# 📘 Hérite de CRMExporter (contrat : crm_name + export). Ajoute verify_access et update_status,
+# 📘 propres à Notion (hors contrat, d'où les hasattr côté pipeline.py).
 class NotionExporter(CRMExporter):
 
     def __init__(self, api_key: str, database_id: str):
@@ -57,6 +74,9 @@ class NotionExporter(CRMExporter):
     # Vérification d'accès — appelée avant l'export pour un diagnostic clair
     # ------------------------------------------------------------------
 
+    # 📘 Renvoie un TUPLE (ok, message) : l'appelant fait `_ok, _msg = exporter.verify_access()`
+    # 📘 ("déballage" : chaque valeur va dans sa variable). 200 = OK, 401 = clé refusée,
+    # 📘 404 = base introuvable ou non partagée avec l'intégration.
     def verify_access(self) -> Tuple[bool, str]:
         """
         Vérifie que la clé API peut lire la base.
@@ -96,6 +116,9 @@ class NotionExporter(CRMExporter):
     # Helpers propriétés Notion
     # ------------------------------------------------------------------
 
+    # 📘 @staticmethod : méthode qui n'utilise pas `self` (pas besoin de l'objet), juste rangée dans
+    # 📘 la classe. Chacune fabrique le petit dict JSON qu'attend Notion pour un type de propriété.
+    # 📘 v[:2000] : Notion limite un bloc de texte à 2000 caractères.
     @staticmethod
     def _title(v: str)              -> dict: return {"title": [{"text": {"content": v[:2000]}}]}
     @staticmethod
@@ -108,6 +131,9 @@ class NotionExporter(CRMExporter):
     def _url_prop(v: str | None)    -> dict: return {"url": v} if v else {"url": None}
 
     def _already_exists(self, name: str, phone: str | None) -> bool:
+        # 📘 Anti-doublon : on cherche une fiche avec le même nom (propriété "Entreprise"), puis avec
+        # 📘 le même téléphone si on en a un. `*( [...] if phone else [] )` insère 0 ou 1 filtre dans
+        # 📘 la liste (l'étoile "déballe" la liste). Une erreur réseau compte comme "pas trouvé".
         url = f"{NOTION_BASE_URL}/databases/{self._database_id}/query"
         for filter_payload in [
             {"property": "Entreprise", "title": {"equals": name}},
@@ -138,15 +164,22 @@ class NotionExporter(CRMExporter):
             "",
             "Problèmes détectés :",
         ]
+        # 📘 enumerate(liste, 1) donne (numéro, élément) en commençant à 1 : "1. ...", "2. ...".
         for i, issue in enumerate(p.issues, 1):
             lines.append(f"  {i}. {issue}")
         return "\n".join(lines)
 
     def _push_one(self, p: Prospect) -> Optional[str]:
+        # 📘 Renvoie l'id de la page Notion créée (str), ou None si doublon/erreur (Optional[str]).
         if self._already_exists(p.name, p.phone):
             logger.debug("    ↩️  Notion — doublon ignoré : %s", p.name)
             return None
 
+        # 📘 Les clés ("Entreprise", "Tel standard", "Status"…) doivent correspondre EXACTEMENT aux
+        # 📘 noms des colonnes de ta base Notion, sinon Notion répond 400.
+        # 💡 Le site web est rangé dans la propriété nommée "LinkedIn" : à vérifier (erreur ou astuce
+        # 💡   liée à ta base ?). Rendre ces noms de propriétés configurables (un dict de mapping
+        # 💡   dans les réglages) éviterait de modifier le code quand la base Notion change.
         properties: dict = {
             "Entreprise":   self._title(p.name),
             "Tel standard": self._phone(p.phone),
@@ -183,6 +216,9 @@ class NotionExporter(CRMExporter):
     def export(self, prospects: List[Prospect]) -> int:
         logger.info("")
         logger.info("🔄 Synchronisation Notion (%d prospects)…", len(prospects))
+        # 📘 L'attribut _last_exported_ids n'est créé QUE lorsqu'export() est appelé ; pipeline.py le
+        # 📘 lit ensuite ({place_id: id de page Notion}) pour pouvoir mettre la fiche à "contacté"
+        # 📘 plus tard.
         self._last_exported_ids: Dict[str, str] = {}
         for p in prospects:
             page_id = self._push_one(p)
@@ -194,6 +230,7 @@ class NotionExporter(CRMExporter):
 
     def update_status(self, page_id: str, status: str) -> bool:
         """Met à jour le statut d'une fiche Notion (PATCH /pages/{id})."""
+        # 📘 PATCH = méthode HTTP pour modifier partiellement une ressource existante (ici une page).
         try:
             resp = requests.patch(
                 f"{NOTION_BASE_URL}/pages/{page_id}",

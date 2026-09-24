@@ -17,6 +17,11 @@ La migration depuis les anciens fichiers JSON est automatique et idempotente.
 
 from __future__ import annotations
 
+# 📘 sqlite3 : base de données SQL rangée dans UN simple fichier (output/crm.db), incluse dans
+# 📘 Python : pas de serveur à installer. threading.Lock : un "verrou" pour qu'un seul thread
+# 📘 écrive à la fois. contextmanager : outil pour fabriquer ses propres blocs `with`.
+# 📘 typing (Dict, List, Optional…) : annotations de type, purement indicatives pour le lecteur
+# 📘 et l'éditeur (Optional[int] = "un int OU None").
 import json
 import os
 import sqlite3
@@ -25,14 +30,39 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional
 
+# 📘 ─── À QUOI SERT CE FICHIER ───
+# 📘 Rôle : toute la persistance du CRM (prospects, campagnes, timeline, réglages) dans SQLite.
+# 📘   C'est un "Repository" (dépôt) : le SEUL endroit qui écrit du SQL. Le reste de l'app
+# 📘   appelle des fonctions métier (set_status, mark_contacted…) sans jamais voir de SQL.
+# 📘 Appelé par : app.py (écrans CRM, « Ma journée », Réglages ; ensure_ready au démarrage),
+# 📘   pipeline.py (exclusions, add_campaign, upsert_prospects, mark_contacted, relances),
+# 📘   tests/ (test_crm_store, test_crm_actions, test_linkedin, test_pages_run…).
+# 📘 Appelle : sqlite3 (bibliothèque standard) ; services.google_maps.Prospect (migration).
+# 📘 Concepts Python à retenir ici : connexion/curseur SQLite, requêtes paramétrées (?, :nom),
+# 📘   transactions (commit), context manager (with + @contextmanager), verrou (Lock),
+# 📘   migrations de schéma, constantes de module, dict.get, jours ouvrés avec datetime.
+# 📘
+# 📘 Cycle de vie d'un prospect (colonne `status`) :
+# 📘   nouveau → contacte → relance → interesse → rdv → client
+# 📘   (+ 2 sorties : pas_interesse, blacklist). Les changements automatiques :
+# 📘   upsert_prospects crée en "nouveau" ; mark_contacted passe nouveau→contacte ;
+# 📘   mark_responded passe à "interesse" (sauf si déjà rdv/client). Le reste (relance, rdv,
+# 📘   client, pas_interesse, blacklist…) est choisi à la main dans l'UI via set_status.
+# 📘 En parallèle, `next_action` + `due_date` = la prochaine tâche à faire (écran « Ma journée »).
 DB_FILE = os.path.join("output", "crm.db")
 
+# 📘 Verrou GLOBAL au module : chaque fonction qui ÉCRIT fait `with _lock` pour que deux threads
+# 📘 (UI + pipeline) n'écrivent pas en même temps dans le fichier SQLite. Les lectures ne le
+# 📘 prennent pas. Attention : un Lock ne protège qu'à l'intérieur d'UN processus Python.
 _lock = threading.Lock()
 
 # ---------------------------------------------------------------------------
 # Statuts du pipeline
 # ---------------------------------------------------------------------------
 
+# 📘 Constantes : des noms en MAJUSCULES (convention Python, rien ne les empêche de changer).
+# 📘 On écrit STATUS_CLIENT partout plutôt que "client" : une faute de frappe devient une
+# 📘 erreur visible (NameError) au lieu d'un bug silencieux.
 STATUS_NOUVEAU       = "nouveau"
 STATUS_CONTACTE      = "contacte"
 STATUS_RELANCE       = "relance"
@@ -49,6 +79,7 @@ STATUS_ORDER: List[str] = [
     STATUS_PAS_INTERESSE, STATUS_BLACKLIST,
 ]
 
+# 📘 Dict[str, str] : dictionnaire clé → valeur (ici code interne → libellé affiché dans l'UI).
 STATUS_LABELS: Dict[str, str] = {
     STATUS_NOUVEAU:       "🆕 Nouveau",
     STATUS_CONTACTE:      "📤 Contacté",
@@ -61,6 +92,7 @@ STATUS_LABELS: Dict[str, str] = {
 }
 
 # Statuts qui sortent le prospect du flux de prospection/relance
+# 📘 `{a, b, c}` sans ":" = un set (ensemble), pas un dict.
 CLOSED_STATUSES = {STATUS_CLIENT, STATUS_PAS_INTERESSE, STATUS_BLACKLIST}
 
 # ---------------------------------------------------------------------------
@@ -94,10 +126,15 @@ DEFAULT_DELAYS: Dict[str, int] = {
 }
 
 
+# 📘 isoformat → texte triable "2026-09-24T10:15:00" : c'est ainsi que les dates sont stockées
+# 📘 (colonnes TEXT). Comparer deux textes ISO revient à comparer les dates.
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+# 📘 Jours ouvrés : on avance jour par jour et on ne compte que lundi→vendredi
+# 📘 (date.weekday() : 0 = lundi … 6 = dimanche). Les jours fériés ne sont PAS exclus.
+# 📘 `start or date.today()` : si start est None (ou vide), on prend aujourd'hui.
 def add_business_days(start: Optional[date], n: int) -> str:
     """
     Ajoute n jours OUVRÉS (week-ends exclus) et retourne 'YYYY-MM-DD'.
@@ -118,6 +155,16 @@ def add_business_days(start: Optional[date], n: int) -> str:
 # Connexion & schéma
 # ---------------------------------------------------------------------------
 
+# 📘 _connect() est un context manager maison, grâce au décorateur @contextmanager :
+# 📘   `with _connect() as conn:` exécute le code AVANT le `yield` (ouvrir la connexion), donne
+# 📘   `conn` au bloc, puis exécute la suite APRÈS le bloc.
+# 📘 Connexion = le lien ouvert vers le fichier .db ; conn.execute(...) crée un curseur (objet
+# 📘   qui exécute une requête et parcourt ses résultats : .fetchone(), .fetchall()).
+# 📘 Transaction : les modifications restent "en brouillon" jusqu'à conn.commit(). Si le bloc
+# 📘   lève une erreur, commit() n'est pas atteint : tout le bloc est annulé (tout ou rien).
+# 📘   `finally` garantit que la connexion est fermée dans tous les cas.
+# 📘 row_factory = sqlite3.Row : chaque ligne se lit comme un dict (row["name"]).
+# 📘 timeout=15 : si la base est occupée par une autre écriture, on attend jusqu'à 15 s.
 @contextmanager
 def _connect():
     os.makedirs(os.path.dirname(DB_FILE) or ".", exist_ok=True)
@@ -130,6 +177,12 @@ def _connect():
         conn.close()
 
 
+# 📘 Schéma = la structure des tables, en SQL. `IF NOT EXISTS` rend la création rejouable sans
+# 📘 erreur. Tables : prospects (clé primaire place_id = identifiant unique), campaigns (une ligne
+# 📘 par run, id auto-incrémenté), events (timeline d'un prospect) et meta (réglages clé/valeur).
+# 📘 SQLite n'a pas de type liste : issues, keywords… sont stockés en texte JSON ('[]').
+# 💡 events.place_id n'a pas de FOREIGN KEY vers prospects(place_id) : rien n'empêche des
+# 💡   événements orphelins. Une contrainte (avec ON DELETE CASCADE) garantirait la cohérence.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS prospects (
     place_id            TEXT PRIMARY KEY,
@@ -204,6 +257,8 @@ CREATE TABLE IF NOT EXISTS meta (
 """
 
 
+# 📘 Migration "maison" : quand on ajoute une colonne au code, les bases déjà existantes ne l'ont
+# 📘 pas. init_db compare avec les colonnes réelles et fait un ALTER TABLE pour les manquantes.
 # Colonnes ajoutées après coup : migrées sur les bases déjà créées.
 _ADDED_COLUMNS = {
     "next_action": "TEXT DEFAULT ''",
@@ -227,6 +282,12 @@ CREATE INDEX IF NOT EXISTS idx_events_place ON events(place_id);
 """
 
 
+# 📘 `with _lock, _connect() as conn:` = deux context managers imbriqués sur une ligne :
+# 📘 on prend le verrou PUIS on ouvre la connexion ; on les libère dans l'ordre inverse.
+# 📘 PRAGMA table_info(prospects) : commande SQLite qui liste les colonnes d'une table.
+# 📘 {r["name"] for r in ...} = "set comprehension" : construit un ensemble en une ligne.
+# 📘 Le f-string dans ALTER TABLE est sûr ici car col/ddl viennent de notre constante, jamais
+# 📘 de l'utilisateur.
 def init_db() -> None:
     """Crée le schéma si besoin, ajoute les colonnes manquantes, puis les index."""
     with _lock, _connect() as conn:
@@ -245,6 +306,11 @@ def init_db() -> None:
 # Réglages persistants (délais configurables)
 # ---------------------------------------------------------------------------
 
+# 📘 Requête paramétrée : le `?` est remplacé par la valeur du tuple, de façon SÛRE (la base
+# 📘 échappe elle-même la valeur). Ne JAMAIS coller une valeur utilisateur dans le texte SQL
+# 📘 (f"... '{x}'") : c'est la porte ouverte à l'injection SQL.
+# 📘 `(f"delay_{action}",)` : la virgule finale fait un tuple à 1 élément (sinon juste des ()).
+# 📘 Table meta = petit stockage clé/valeur pour les réglages (délais, modèles, franchises…).
 def get_delay(action: str) -> int:
     """Délai en jours ouvrés pour une action (réglage utilisateur ou défaut)."""
     with _connect() as conn:
@@ -257,6 +323,7 @@ def get_delay(action: str) -> int:
     return DEFAULT_DELAYS.get(action, 1)
 
 
+# 📘 "INSERT OR REPLACE" (spécifique SQLite) : insère, ou remplace la ligne si la clé existe.
 def set_delay(action: str, days: int) -> None:
     with _lock, _connect() as conn:
         conn.execute(
@@ -269,6 +336,7 @@ def get_linkedin_templates() -> Dict[str, str]:
     """Modèles LinkedIn personnalisés par l'utilisateur ({clé: texte})."""
     with _connect() as conn:
         rows = conn.execute("SELECT key, value FROM meta WHERE key LIKE 'li_tpl_%'").fetchall()
+    # 📘 Dict comprehension + slicing : r["key"][len("li_tpl_"):] retire le préfixe "li_tpl_".
     return {r["key"][len("li_tpl_"):]: r["value"] for r in rows if (r["value"] or "").strip()}
 
 
@@ -289,6 +357,8 @@ def reset_linkedin_template(key: str) -> None:
 LINKEDIN_ACCEPT_CHECK_DAYS = 3
 
 
+# 📘 Fonction "métier" qui en combine d'autres : événement dans la timeline + contact + action.
+# 📘 `raise ValueError(...)` : on refuse une valeur invalide en levant une exception.
 def mark_linkedin_sent(place_id: str, kind: str, detail: str = "") -> str:
     """
     Trace un envoi LinkedIn fait À LA MAIN et programme la suite :
@@ -318,12 +388,14 @@ def get_user_franchises() -> List[str]:
     if not row:
         return []
     try:
+        # 📘 json.loads : texte JSON → objet Python (ici une liste). json.dumps fait l'inverse.
         return [s for s in json.loads(row["value"]) if s.strip()]
     except (json.JSONDecodeError, TypeError):
         return []
 
 
 def set_user_franchises(names: Iterable[str]) -> None:
+    # 📘 sorted(..., key=str.lower) : trie sans tenir compte des majuscules.
     clean = sorted({n.strip() for n in names if n and n.strip()}, key=str.lower)
     with _lock, _connect() as conn:
         conn.execute(
@@ -336,6 +408,9 @@ def set_user_franchises(names: Iterable[str]) -> None:
 # Prospects
 # ---------------------------------------------------------------------------
 
+# 📘 Conversion objet Prospect → dict de colonnes. getattr(p, "siren", "") lit l'attribut s'il
+# 📘 existe, sinon renvoie "" (protège contre d'anciens objets qui n'ont pas ce champ).
+# 📘 `x or ""` : si x est None ou vide, on met "" à la place.
 def _prospect_to_row(p, campaign_id: Optional[int], sector: str, service_id: str) -> dict:
     return {
         "place_id": p.place_id,
@@ -364,6 +439,9 @@ def _prospect_to_row(p, campaign_id: Optional[int], sector: str, service_id: str
     }
 
 
+# 📘 "Upsert" = UPDATE si le prospect existe déjà, INSERT sinon.
+# 💡 Une requête SELECT puis une autre par prospect (2 allers-retours) : SQLite ≥ 3.24 et
+# 💡   Postgres savent faire `INSERT ... ON CONFLICT(place_id) DO UPDATE SET ...` en une fois.
 def upsert_prospects(prospects: Iterable, campaign_id: Optional[int] = None,
                      sector: str = "", service_id: str = "") -> int:
     """
@@ -377,10 +455,16 @@ def upsert_prospects(prospects: Iterable, campaign_id: Optional[int] = None,
     with _lock, _connect() as conn:
         for p in prospects:
             row = _prospect_to_row(p, campaign_id, sector, service_id)
+            # 📘 Tout le lot est traité dans UNE seule transaction (un seul commit à la fin du with).
             existing = conn.execute(
                 "SELECT place_id FROM prospects WHERE place_id = ?", (row["place_id"],)
             ).fetchone()
             if existing:
+                # 📘 Paramètres NOMMÉS (:name, :email…) remplis depuis un dict : plus lisible que des
+                # 📘 `?`. COALESCE(a, b) = a s'il n'est pas NULL, sinon b. NULLIF(x, '') = NULL si x
+                # 📘 est vide. Donc COALESCE(NULLIF(:siren, ''), siren) = "garde l'ancien siren si le
+                # 📘 nouveau est vide". Le statut, les notes et les dates de contact ne sont PAS dans
+                # 📘 ce UPDATE : on ne les écrase jamais (c'est la mémoire du travail commercial).
                 conn.execute(
                     """UPDATE prospects SET
                          name=:name, address=:address, phone=:phone, website=:website,
@@ -397,6 +481,8 @@ def upsert_prospects(prospects: Iterable, campaign_id: Optional[int] = None,
                          email_status_reason=COALESCE(NULLIF(:email_status_reason, ''), email_status_reason),
                          updated_at=:updated_at
                        WHERE place_id=:place_id""",
+                    # 📘 {**row, "updated_at": now} : copie du dict row avec une clé en
+                    # 📘 plus (déballage `**`).
                     {**row, "updated_at": now},
                 )
             else:
@@ -425,6 +511,9 @@ def get_prospect(place_id: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
+# 📘 Construction dynamique du WHERE : on empile des morceaux SQL fixes dans `clauses` et les
+# 📘 valeurs dans `params`, puis on les relie par AND. Les valeurs restent des `?` → sûr.
+# 📘 LIKE '%texte%' = "contient texte". (*params, limit) : tuple avec les params puis limit.
 def list_prospects(status: Optional[str] = None, sector: Optional[str] = None,
                    has_email: Optional[bool] = None, search: str = "",
                    limit: int = 500) -> List[dict]:
@@ -452,6 +541,7 @@ def list_prospects(status: Optional[str] = None, sector: Optional[str] = None,
     return [dict(r) for r in rows]
 
 
+# 📘 Chaque changement métier écrit AUSSI une ligne dans `events` : c'est la timeline du prospect.
 def set_status(place_id: str, status: str, note: str = "") -> None:
     """Change le statut d'un prospect et trace l'événement."""
     if status not in STATUS_LABELS:
@@ -493,6 +583,8 @@ def get_events(place_id: str, limit: int = 50) -> List[dict]:
     return [dict(r) for r in rows]
 
 
+# 📘 CASE WHEN ... THEN ... ELSE ... END = un "if" en SQL : seul un prospect "nouveau" passe à
+# 📘 "contacte" ; un statut plus avancé est conservé. La 1re date de contact n'est posée qu'une fois.
 def mark_contacted(place_ids: Iterable[str], channel: str = "email") -> None:
     """Marque des prospects comme contactés (statut + dates + événement)."""
     now = _now()
@@ -513,6 +605,8 @@ def mark_contacted(place_ids: Iterable[str], channel: str = "email") -> None:
             )
 
 
+# 📘 Priorité de l'échéance : date saisie > delay_days fourni > délai réglé pour cette action.
+# 📘 Si le délai vaut 0, l'échéance est aujourd'hui.
 def set_next_action(place_id: str, action: str, delay_days: Optional[int] = None,
                     due_date: Optional[str] = None, note: str = "") -> str:
     """
@@ -556,6 +650,10 @@ def clear_next_action(place_id: str, done_note: str = "") -> None:
             )
 
 
+# 📘 Données de l'écran « Ma journée ». Les dates ISO "AAAA-MM-JJ" se comparent comme du texte.
+# 💡 Les statuts "clos" sont réécrits en dur dans le SQL ici et plus bas, alors que
+# 💡   CLOSED_STATUSES existe : générer la liste depuis la constante (ou un Enum) évite qu'un
+# 💡   futur statut soit oublié à un endroit.
 def due_actions(on_date: Optional[str] = None, include_future: bool = False) -> List[dict]:
     """
     Les actions à faire : échéance passée ou aujourd'hui, prospect non clos.
@@ -575,6 +673,9 @@ def due_actions(on_date: Optional[str] = None, include_future: bool = False) -> 
     return [dict(r) for r in rows]
 
 
+# 📘 Réponse du prospect : relance automatique annulée (next_action/due_date vidés), statut
+# 📘 "interesse", puis éventuellement une nouvelle action. set_next_action est appelé APRÈS le
+# 📘 bloc `with _lock` : _lock n'est pas ré-entrant, le reprendre dedans bloquerait le thread.
 def mark_responded(place_id: str, how: str = "email", note: str = "",
                    next_action: Optional[str] = None,
                    delay_days: Optional[int] = None,
@@ -605,6 +706,7 @@ def mark_responded(place_id: str, how: str = "email", note: str = "",
         set_next_action(place_id, next_action, delay_days=delay_days, due_date=due_date, note=note)
 
 
+# 📘 Le calcul se fait en Python (sum sur les lignes) plutôt qu'en SQL : simple car peu de lignes.
 def actions_summary() -> Dict[str, int]:
     """{en_retard, aujourdhui, a_venir} pour le badge de « Ma journée »."""
     today = datetime.now().strftime("%Y-%m-%d")
@@ -619,6 +721,7 @@ def actions_summary() -> Dict[str, int]:
     return {"en_retard": late, "aujourdhui": now_, "a_venir": len(rows) - late - now_}
 
 
+# 📘 Utilisé par pipeline.py (ÉTAPE 2) pour ne pas re-prospecter ces entreprises.
 def contacted_place_ids() -> set:
     """place_id déjà contactés OU sortis du flux (client, pas intéressé, blacklist)."""
     with _connect() as conn:
@@ -630,6 +733,7 @@ def contacted_place_ids() -> set:
     return {r["place_id"] for r in rows}
 
 
+# 📘 GROUP BY status + COUNT(*) : SQL compte les prospects par statut en une requête.
 def status_counts() -> Dict[str, int]:
     """{statut: nombre} pour le tableau de bord du pipeline."""
     with _connect() as conn:
@@ -644,6 +748,8 @@ def status_counts() -> Dict[str, int]:
 # Campagnes
 # ---------------------------------------------------------------------------
 
+# 📘 `**kw` récupère tous les arguments nommés dans un dict ; kw.get("x", défaut) lit sans planter.
+# 📘 cur.lastrowid = l'id auto-incrémenté que SQLite vient d'attribuer à la nouvelle campagne.
 def add_campaign(**kw) -> int:
     """Enregistre une campagne et retourne son id."""
     data = {
@@ -697,6 +803,9 @@ def list_campaigns(limit: int = 50) -> List[dict]:
 # Migration depuis les anciens fichiers JSON (idempotente)
 # ---------------------------------------------------------------------------
 
+# 📘 Migration de DONNÉES (et plus seulement de schéma) : reprise des anciens fichiers JSON.
+# 📘 "Idempotente" = on peut la relancer sans risque : le drapeau json_migrated dans meta fait
+# 📘 qu'elle ne s'exécute réellement qu'une fois.
 def _meta_get(conn, key: str) -> Optional[str]:
     row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
     return row["value"] if row else None
@@ -722,6 +831,8 @@ def migrate_from_json(output_dir: str = "output") -> Dict[str, int]:
                 history = json.load(f)
         except Exception:
             history = []
+        # 📘 reversed(history) : history.json est du plus récent au plus ancien ; on insère à
+        # 📘 l'endroit.
         for run in reversed(history):  # du plus ancien au plus récent
             cid = add_campaign(
                 date=run.get("date"),
@@ -767,6 +878,8 @@ def migrate_from_json(output_dir: str = "output") -> Dict[str, int]:
         now = _now()
         with _lock, _connect() as conn:
             for pid, info in contacted.items():
+                # 📘 On déduit le statut CRM des anciens champs : a répondu → interesse ; au moins
+                # 📘 une relance → relance ; sinon → contacte.
                 step = info.get("followup_step")
                 if step is None:
                     step = 1 if info.get("followup_sent") else 0
@@ -811,6 +924,12 @@ def migrate_from_json(output_dir: str = "output") -> Dict[str, int]:
     return result
 
 
+# 📘 Point d'entrée appelé par app.py au démarrage : schéma + migrations.
+# 💡 Pour FastAPI/multi-utilisateur : passer à Postgres via SQLAlchemy (ou SQLModel) et gérer le
+# 💡   schéma avec Alembic (migrations versionnées, au lieu de _ADDED_COLUMNS). Ajouter une
+# 💡   colonne user_id à chaque table (clé prospects = (user_id, place_id)) et filtrer TOUTES les
+# 💡   requêtes dessus. Le _lock deviendrait inutile : Postgres gère la concurrence entre
+# 💡   plusieurs processus/serveurs, ce que ce verrou en mémoire ne sait pas faire.
 def ensure_ready() -> Dict[str, int]:
     """À appeler au démarrage de l'app : crée le schéma puis migre si nécessaire."""
     init_db()

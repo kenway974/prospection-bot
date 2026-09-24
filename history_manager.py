@@ -28,19 +28,37 @@ Fonctions exposées :
 
 from __future__ import annotations
 
+# 📘 datetime / timedelta : une date+heure, et une DURÉE qu'on peut ajouter ou soustraire
+# 📘 (datetime.now() - timedelta(days=5) = il y a 5 jours).
 import json
 import os
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Dict, List, Optional
 
+# 📘 TYPE_CHECKING vaut False quand le programme tourne, True seulement pour les outils
+# 📘 d'analyse (mypy, l'éditeur). On importe Prospect uniquement pour les annotations de type,
+# 📘 sans le charger vraiment (évite un import lourd ou circulaire).
 if TYPE_CHECKING:
     from services.google_maps import Prospect
 
+# 📘 ─── À QUOI SERT CE FICHIER ───
+# 📘 Rôle : mémoire "historique" en fichiers JSON : stats de chaque run (history.json) et
+# 📘   prospects déjà contactés + état de leur séquence de relances (contacted_place_ids.json).
+# 📘 Appelé par : pipeline.py (load_contacted_ids, mark_as_contacted, save_run), main.py (CLI),
+# 📘   app.py (onglets Historique, relances, stats A/B), services/reply_tracker.py
+# 📘   (_load_contacted_data, mark_as_responded).
+# 📘 Appelle : json, os, shutil (copie de sauvegarde), services.mailer.get_template_variant.
+# 📘 Concepts Python à retenir ici : lire/écrire du JSON avec `with open`, try/except,
+# 📘   dict.get(clé, défaut), set, datetime/timedelta, migration de format de données.
+# 📘 Chemins relatifs : "output/..." est résolu par rapport au dossier depuis lequel on lance
+# 📘 l'app (le "répertoire courant"), pas par rapport à ce fichier.
 HISTORY_FILE          = os.path.join("output", "history.json")
 CONTACTED_FILE        = os.path.join("output", "contacted_place_ids.json")
 CONTACTED_BACKUP_FILE = os.path.join("output", "contacted_place_ids.bak.json")
 
 
+# 📘 Fonctions préfixées par `_` = "internes" par convention (pas faites pour être appelées
+# 📘 d'ailleurs ; Python ne l'interdit pas : reply_tracker et app.py le font quand même).
 def _ensure_output() -> None:
     os.makedirs("output", exist_ok=True)
 
@@ -53,6 +71,9 @@ def _ensure_output() -> None:
 MAX_FOLLOWUPS = 4
 
 
+# 📘 Migration de FORMAT : l'ancienne version stockait une simple liste de place_id ; on la
+# 📘 convertit en dict {place_id: infos}. isinstance(x, list) teste le type d'un objet.
+# 📘 `{pid: {...} for pid in data}` = dict comprehension : construit un dict en une ligne.
 def _migrate(data) -> dict:
     """Migre depuis l'ancien format (liste de place_id strings)."""
     if isinstance(data, list):
@@ -73,6 +94,8 @@ def _migrate(data) -> dict:
 
 def _followup_step(info: dict) -> int:
     """Étape de relance courante, avec compat de l'ancien champ booléen."""
+    # 📘 Rétro-compatibilité : les vieilles entrées n'ont qu'un booléen followup_sent. On le
+    # 📘 traduit en nombre d'étapes. `except (TypeError, ValueError)` attrape plusieurs erreurs.
     if "followup_step" in info:
         try:
             return int(info["followup_step"])
@@ -87,6 +110,8 @@ def _load_contacted_data() -> dict:
     Charge le dict complet des prospects contactés.
     Si le fichier principal est manquant ou corrompu, restaure depuis la sauvegarde.
     """
+    # 📘 On essaie le fichier principal, puis la sauvegarde .bak : si le premier est absent ou
+    # 📘 corrompu (json.load lève une exception), `continue` passe au suivant.
     _ensure_output()
     for filepath in [CONTACTED_FILE, CONTACTED_BACKUP_FILE]:
         if not os.path.exists(filepath):
@@ -100,6 +125,11 @@ def _load_contacted_data() -> dict:
     return {}
 
 
+# 📘 Rotation de sauvegarde : avant d'écraser le fichier, on copie la version actuelle en .bak.
+# 📘 json.dump(..., ensure_ascii=False, indent=2) : garde les accents et indente (lisible).
+# 💡 Lecture → modification → réécriture complète du fichier SANS verrou : si deux threads
+# 💡   (pipeline + suivi des réponses) écrivent en même temps, le dernier écrase l'autre et des
+# 💡   données sont perdues. Un verrou (comme crm_store._lock) ou une vraie base règle ça.
 def _save_contacted_data(data: dict) -> None:
     _ensure_output()
     import shutil
@@ -119,12 +149,15 @@ def _save_contacted_data(data: dict) -> None:
 
 def load_contacted_ids() -> set:
     """Retourne le set des place_id déjà traités."""
+    # 📘 .keys() donne les clés du dict (les place_id) ; set(...) en fait un ensemble.
     return set(_load_contacted_data().keys())
 
 
 def get_ab_stats() -> Dict[str, Dict[str, int]]:
     """Retourne les stats A/B : {variant: {total, responded}} pour chaque template."""
     data = _load_contacted_data()
+    # 📘 Stats A/B : chaque prospect a reçu la variante de template "A" ou "B" ; on compte les
+    # 📘 envois et les réponses par variante pour voir laquelle marche le mieux.
     stats: Dict[str, Dict[str, int]] = {"A": {"total": 0, "responded": 0}, "B": {"total": 0, "responded": 0}}
     for info in data.values():
         variant = info.get("email_template", "A")
@@ -141,10 +174,12 @@ def mark_as_contacted(prospects: List[Prospect], notion_page_ids: Dict[str, str]
     Enregistre les prospects contactés avec leur date de premier contact.
     Les prospects déjà présents ne sont pas écrasés (on garde la date initiale).
     """
+    # 📘 Import dans la fonction : évite de charger services.mailer tant qu'on n'en a pas besoin.
     from services.mailer import get_template_variant
     data = _load_contacted_data()
     today = datetime.now().strftime("%Y-%m-%d")
     for p in prospects:
+        # 📘 `if p.place_id not in data` : un prospect déjà connu garde sa date de 1er contact.
         if p.place_id not in data:
             entry = {
                 "name": p.name,
@@ -164,6 +199,8 @@ def mark_as_contacted(prospects: List[Prospect], notion_page_ids: Dict[str, str]
 
 def get_notion_page_id(place_id: str) -> Optional[str]:
     """Retourne le page_id Notion stocké pour un prospect, ou None."""
+    # 📘 .get(place_id, {}).get("notion_page_id") : .get enchaînés, si la 1re clé manque on repart
+    # 📘 d'un dict vide au lieu de planter ; renvoie None si rien n'est trouvé.
     return _load_contacted_data().get(place_id, {}).get("notion_page_id")
 
 
@@ -177,6 +214,8 @@ def get_due_followups(delay_days: int = 5) -> List[dict]:
     Chaque entrée contient le place_id, toutes les infos, et `followup_step`
     (nombre de relances déjà envoyées) pour savoir quelle relance générer ensuite.
     """
+    # 📘 cutoff = date limite : tout dernier contact antérieur (ou égal) à "maintenant - delay_days"
+    # 📘 est dû. Ici ce sont des jours CALENDAIRES (crm_store, lui, compte en jours ouvrés).
     data = _load_contacted_data()
     cutoff = datetime.now() - timedelta(days=delay_days)
     due = []
@@ -195,6 +234,7 @@ def get_due_followups(delay_days: int = 5) -> List[dict]:
         except ValueError:
             continue
         if last_date <= cutoff:
+            # 📘 {"place_id": place_id, **info} : nouveau dict = place_id + toutes les clés de info.
             entry = {"place_id": place_id, **info}
             entry["followup_step"] = step  # normalise (compat ancien format)
             due.append(entry)
@@ -224,6 +264,7 @@ def mark_followup_sent(place_id: str) -> None:
 # API publique — historique des runs
 # ---------------------------------------------------------------------------
 
+# 📘 Historique des runs : liste de dicts, le plus récent en premier (insert(0, ...)).
 def load_history() -> List[dict]:
     """
     Charge l'historique depuis output/history.json.
@@ -275,6 +316,10 @@ def save_run(
         "target_sector": target_sector,
         "fichier": output_file,
     })
+    # 📘 history[:50] : on ne garde que les 50 runs les plus récents.
+    # 💡 Ce fichier fait doublon avec crm_store (qui stocke déjà campagnes, dates de contact,
+    # 💡   followup_step, responded). Basculer ces fonctions sur crm_store puis supprimer les JSON
+    # 💡   donnerait UNE seule source de vérité — indispensable avant le multi-utilisateur.
     history = history[:50]
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
