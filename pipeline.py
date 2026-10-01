@@ -155,6 +155,11 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                 "seront ignorés (réinitialisable dans « Historique des contacts »)."
             )
         sources = params.get("source_types", [params.get("source_type", "google_maps")])
+        if criteria.uses_maps_only_filters() and any(s != "google_maps" for s in sources):
+            log_q.put(
+                "[--] ℹ️  Critères note / avis / site / téléphone / fermés appliqués à Google Maps "
+                "uniquement : les autres sources ne fournissent pas ces informations de façon fiable."
+            )
 
         all_qualified: list = []
         seen: set = set()
@@ -214,10 +219,9 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                 )
             return qualified
 
-        def _dedup(candidates: list, label: str = "") -> list:
-            """Retire les déjà contactés, les doublons, les franchises et ce qui ne passe pas les critères."""
+        def _dedup(candidates: list) -> list:
+            """Retire les déjà contactés, les doublons et les franchises."""
             out = []
-            excluded: dict = {}
             for p in candidates:
                 if p.place_id in seen or p.place_id in already_contacted:
                     continue
@@ -226,12 +230,8 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                     if _hit:
                         _franchise_hits.append((p.name, _brand))
                         continue
-                if count_reason(excluded, prospect_exclusion_reason(p, criteria)):
-                    continue
                 seen.add(p.place_id)
                 out.append(p)
-            if excluded:
-                log_q.put(f"[--] 🎯 {label + ' : ' if label else ''}exclus par les critères : {format_exclusions(excluded)}")
             return out
 
         # ── LinkedIn CSV : traitement hors boucle mots-clés ──────────────────
@@ -242,7 +242,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                     log_q.put("[--] ❌ Aucun fichier CSV LinkedIn fourni.")
             else:
                 raw_li = parse_linkedin_csv(csv_content, "LinkedIn")
-                li_ok = _dedup(raw_li, "LinkedIn")
+                li_ok = _dedup(raw_li)
                 log_q.put(f"[--] 📎 {len(li_ok)} contact(s) LinkedIn à analyser…")
                 all_qualified.extend(_analyse_and_filter(li_ok, "LinkedIn"))
 
@@ -297,35 +297,36 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                             seen.add(pid)
                             raw_to_build.append(raw)
 
-                        if not raw_to_build:
-                            log_q.put(f"[--] ⚠️  [Google Maps] tous déjà contactés ou vus pour '{kw_label}'.")
-                            continue
-
-                        # ── Phase 2 : Place Details en parallèle ──
-                        with ThreadPoolExecutor(max_workers=min(workers, len(raw_to_build))) as ex:
-                            built_list = list(ex.map(partial(build_prospect, keyword=kw, location=loc), raw_to_build))
-                        _maps_detail_calls += len(raw_to_build)
-
+                        # ── Phase 2 : Place Details en parallèle (seulement s'il reste des candidats) ──
                         skip_api = 0
-                        for p in built_list:
-                            if p is None:
-                                skip_api += 1
-                            elif count_reason(skip_criteria, prospect_exclusion_reason(p, criteria)):
-                                continue
-                            else:
-                                candidates.append(p)
+                        if raw_to_build:
+                            with ThreadPoolExecutor(max_workers=min(workers, len(raw_to_build))) as ex:
+                                built_list = list(ex.map(partial(build_prospect, keyword=kw, location=loc), raw_to_build))
+                            _maps_detail_calls += len(raw_to_build)
+                            for p in built_list:
+                                if p is None:
+                                    skip_api += 1
+                                elif count_reason(skip_criteria, prospect_exclusion_reason(p, criteria)):
+                                    continue
+                                else:
+                                    candidates.append(p)
 
+                        # Bilan des exclusions — affiché même si tout a été écarté
                         if skip_franchise:
                             _noms = ", ".join(f"{n} ({b})" for n, b in skip_franchise[:5])
                             _reste = f" +{len(skip_franchise) - 5}" if len(skip_franchise) > 5 else ""
                             log_q.put(
                                 f"[--] 🏢 {len(skip_franchise)} franchise(s) écartée(s) pour '{kw_label}' : {_noms}{_reste}"
                             )
-
                         if skip_criteria:
                             log_q.put(
                                 f"[--] 🎯 [Google Maps] exclus par les critères pour '{kw_label}' : "
                                 f"{format_exclusions(skip_criteria)}"
+                            )
+                        if not raw_to_build and (skip_contacted or skip_seen):
+                            log_q.put(
+                                f"[--] ⏭️  [Google Maps] '{kw_label}' : {skip_contacted} déjà contacté(s), "
+                                f"{skip_seen} déjà vu(s) pour un autre mot-clé ou une autre ville."
                             )
                         if skip_api:
                             log_q.put(f"[--] ⚠️  [Google Maps] {skip_api} erreur(s) API pour '{kw_label}'.")
@@ -353,7 +354,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
 
                         for _p in raw:
                             _p.location = _p.location or loc
-                        deduped = _dedup(raw, src_label)
+                        deduped = _dedup(raw)
                         if not deduped:
                             log_q.put(f"[--] ⚠️  0 résultat {src_label} pour '{kw_label}'.")
                         else:
@@ -387,7 +388,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                 f"{len(all_prospects)} cibles retenues (mode candidature, aucun filtre de score)."
             )
             if _funnel_raw > 0 and _funnel_candidates == 0:
-                log_q.put("[--] 💡 Tous les bruts ont été éliminés en amont (déjà contactés, doublons entre mots-clés, ou erreurs API).")
+                log_q.put("[--] 💡 Tous les bruts ont été éliminés en amont (déjà contactés, doublons, franchises, critères de sélection ou erreurs API — voir le détail ci-dessus).")
         else:
             log_q.put(
                 f"[--] 🧮 Funnel : {_funnel_raw} bruts récupérés → "
@@ -395,7 +396,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                 f"{len(all_prospects)} qualifiés (seuil score {threshold})."
             )
             if _funnel_raw > 0 and _funnel_candidates == 0:
-                log_q.put("[--] 💡 Tous les bruts ont été éliminés en amont (déjà contactés, doublons entre mots-clés, ou erreurs API).")
+                log_q.put("[--] 💡 Tous les bruts ont été éliminés en amont (déjà contactés, doublons, franchises, critères de sélection ou erreurs API — voir le détail ci-dessus).")
             elif _funnel_candidates > 0 and len(all_prospects) <= 2:
                 log_q.put("[--] 💡 Assez de candidats mais peu qualifiés : monte « Score max à contacter » (les sites sont trop bons pour le seuil actuel).")
         log_q.put(f"[--] 📋 {len(all_prospects)} {'cible(s) retenue(s)' if candidacy_mode else 'prospect(s) qualifiés'} au total.")

@@ -242,13 +242,18 @@ def build_prospect(raw: dict, keyword: str, location: str = "") -> Optional[Pros
 
 
 def search_prospects(
-    keyword: str, location: Optional[str] = None, keep_raw: Optional[Callable[[dict], bool]] = None,
+    keyword: str,
+    location: Optional[str] = None,
+    keep_raw: Optional[Callable[[dict], bool]] = None,
+    keep_prospect: Optional[Callable[[Prospect], bool]] = None,
 ) -> List[Prospect]:
     """
     Compatibilité main.py — recherche N prospects confirmés pour un mot-clé.
     Utilise fetch_raw_candidates + build_prospect en interne.
-    `keep_raw` : filtre optionnel sur les résultats bruts, appliqué AVANT
-    Place Details (appel payant).
+    Filtres optionnels :
+      - keep_raw      : sur le résultat brut, AVANT Place Details (appel payant) ;
+      - keep_prospect : sur la fiche complète ; un prospect écarté ne compte pas
+                        dans l'objectif, le suivant prend sa place.
     """
     target = config.max_results_per_keyword
     location = location or config.search_location
@@ -267,6 +272,8 @@ def search_prospects(
             break
         prospect = build_prospect(raw, keyword, location=location)
         if not prospect:
+            continue
+        if keep_prospect is not None and not keep_prospect(prospect):
             continue
         prospects.append(prospect)
         logger.debug("  ✅ %s | site=%s | tél=%s",

@@ -4,11 +4,12 @@ filters.py — Critères de sélection des prospects.
 Trois moments de filtrage, du moins cher au plus cher :
   1. raw_exclusion_reason()       → résultat brut Google Maps (Text Search), AVANT
                                     l'appel payant Place Details : fermé, note, nb d'avis
-  2. prospect_exclusion_reason()  → prospect construit (toutes sources) : site web, téléphone
-  3. post_analysis_reason()       → après l'analyse du site : email trouvé
+  2. prospect_exclusion_reason()  → fiche Google Maps complète : site web, téléphone
+  3. post_analysis_reason()       → après l'analyse du site, toutes sources : email trouvé
 
-Les sources hors Google Maps (Sirène, Pages Jaunes…) n'ont ni note ni avis :
-les critères 1 ne s'appliquent qu'à Google Maps.
+Les critères 1 et 2 ne s'appliquent qu'à Google Maps : les autres sources
+(Sirène, Pages Jaunes, LinkedIn…) n'ont pas de note, et leur site/téléphone est
+souvent absent même quand il existe — filtrer dessus exclurait à tort.
 
 Les franchises sont gérées à part (services/franchises.py) et le seuil de score
 par le pipeline, car son sens dépend du service (score_direction).
@@ -78,6 +79,14 @@ class FilterCriteria:
         known = {f.name for f in fields(cls)}
         return cls(**{k: v for k, v in (data or {}).items() if k in known})
 
+    def uses_maps_only_filters(self) -> bool:
+        """True si un critère réservé à Google Maps est plus strict que la valeur par défaut."""
+        return (
+            self.min_rating > 0 or self.max_rating < 5 or self.min_reviews > 0
+            or self.max_reviews is not None or self.website != WEBSITE_ANY
+            or self.phone != PHONE_ANY or self.exclude_closed
+        )
+
     def summary(self) -> str:
         """Résumé lisible pour les logs, limité aux critères actifs."""
         parts = [f"note {self.min_rating:g}–{self.max_rating:g}"]
@@ -96,11 +105,15 @@ class FilterCriteria:
 
 
 def is_mobile(phone: Optional[str]) -> bool:
+    """Mobile français (06/07), quel que soit le format : 06…, +33 6…, 0033 6…, +33 (0)6…"""
     if not phone:
         return False
-    num = phone.replace(" ", "").replace(".", "").replace("-", "")
-    if num.startswith("+33"):
-        num = "0" + num[3:]
+    num = phone.replace("(0)", "")
+    num = "".join(c for c in num if c.isdigit() or c == "+")
+    for prefix in ("+33", "0033"):
+        if num.startswith(prefix):
+            num = "0" + num[len(prefix):]
+            break
     return num.startswith("06") or num.startswith("07")
 
 

@@ -206,13 +206,22 @@ def run() -> None:
     all_prospects: List[Prospect] = []
     seen_place_ids: set[str] = set()
 
-    # 1. COLLECTE — Google Places pour chaque ville × mot-clé.
-    # Note, avis et fermés sont écartés avant Place Details (appel payant).
+    # 1. COLLECTE — Google Places pour chaque ville × mot-clé, avec les critères
+    # de sélection. Doublons, note, avis et fermés sont écartés AVANT Place Details
+    # (appel payant) ; site et téléphone juste après, sans entamer l'objectif.
     excluded: dict = {}
-    keep_raw = lambda raw: not count_reason(excluded, raw_exclusion_reason(raw, criteria))  # noqa: E731
+
+    def keep_raw(raw: dict) -> bool:
+        if raw.get("place_id") in seen_place_ids:
+            return False
+        return not count_reason(excluded, raw_exclusion_reason(raw, criteria))
+
+    def keep_prospect(p: Prospect) -> bool:
+        return not count_reason(excluded, prospect_exclusion_reason(p, criteria))
+
     for location in config.search_locations:
         for keyword in config.search_keywords:
-            for p in search_prospects(keyword, location, keep_raw=keep_raw):
+            for p in search_prospects(keyword, location, keep_raw=keep_raw, keep_prospect=keep_prospect):
                 if p.place_id not in seen_place_ids:
                     seen_place_ids.add(p.place_id)
                     all_prospects.append(p)
@@ -224,11 +233,6 @@ def run() -> None:
         logger.warning("Aucun prospect trouvé. Vérifiez vos critères de recherche.")
         sys.exit(0)
 
-    # 1b. CRITÈRES DE SÉLECTION (site web, téléphone)
-    all_prospects = [
-        p for p in all_prospects
-        if not count_reason(excluded, prospect_exclusion_reason(p, criteria))
-    ]
     if excluded:
         logger.info("🎯 Exclus par les critères : %s", format_exclusions(excluded))
 

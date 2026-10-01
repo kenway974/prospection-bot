@@ -58,6 +58,28 @@ class TestFilterCriteria(unittest.TestCase):
         self.assertIn("email obligatoire", s)
 
 
+class TestConfigVilles(unittest.TestCase):
+
+    def _config(self, value):
+        from unittest.mock import patch
+        from config import Config
+        with patch.dict(os.environ, {"SEARCH_LOCATION": value}):
+            return Config()
+
+    def test_plusieurs_villes_sans_doublon(self):
+        c = self._config("Lyon, France; Bron ;Lyon, France")
+        self.assertEqual(c.search_locations, ["Lyon, France", "Bron"])
+        self.assertEqual(c.search_location, "Lyon, France")
+
+    def test_vide_retombe_sur_la_ville_par_defaut(self):
+        self.assertEqual(self._config("").search_locations, ["Lyon, France"])
+
+    def test_affecter_search_location(self):
+        c = self._config("Lyon")
+        c.search_location = "Annecy"
+        self.assertEqual(c.search_locations, ["Annecy"])
+
+
 class TestRawExclusion(unittest.TestCase):
     """Critères appliqués au résultat brut Google Maps, avant Place Details."""
 
@@ -111,6 +133,9 @@ class TestHelpers(unittest.TestCase):
     def test_is_mobile(self):
         self.assertTrue(is_mobile("06 12 34 56 78"))
         self.assertTrue(is_mobile("+33 7 12 34 56 78"))
+        self.assertTrue(is_mobile("0033612345678"))
+        self.assertTrue(is_mobile("+33 (0)6 12 34 56 78"))
+        self.assertTrue(is_mobile("06.12.34.56.78"))
         self.assertFalse(is_mobile("04 78 00 00 00"))
         self.assertFalse(is_mobile(None))
 

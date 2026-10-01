@@ -67,7 +67,7 @@ class TestRunProspectionSelection(unittest.TestCase):
         p.issues = ["Pas de site web"]
         return p
 
-    def _run(self, criteria):
+    def _run(self, criteria, sources=("google_maps",)):
         params = {
             "google_key": "x", "notion_key": "", "brevo_key": "",
             "location": "Lyon", "locations": ["Lyon", "Bron"],
@@ -76,7 +76,7 @@ class TestRunProspectionSelection(unittest.TestCase):
             "filters": criteria, "contact_score_threshold": 85,
             "send_emails": False, "gmail_address": "", "gmail_password": "", "send_sms": False,
             "find_dirigeants": False, "exclude_franchises": True, "user_franchises": [],
-            "source_types": ["google_maps"], "analysis_workers": 2,
+            "source_types": list(sources), "analysis_workers": 2,
         }
         log_q, results = queue.Queue(), []
         from pipeline import run_prospection
@@ -119,6 +119,25 @@ class TestRunProspectionSelection(unittest.TestCase):
         results, _ = self._run(None)  # min_rating 3.0 par défaut
         self.assertNotIn("mal_note", self.details_calls)
         self.assertIn("avec_site", {p.place_id for p in results})  # pas de filtre site web
+
+    def test_tout_exclu_par_les_criteres_est_explique(self):
+        """Si les critères écartent tout, le log le dit (et pas « tous déjà contactés »)."""
+        results, logs = self._run(FilterCriteria(min_rating=4.9))
+        self.assertEqual(results, [])
+        self.assertEqual(self.details_calls, [])  # aucun appel payant
+        self.assertTrue(any("exclus par les critères" in l and "note < 4.9" in l for l in logs), logs)
+        self.assertFalse(any("tous déjà contactés" in l for l in logs))
+
+    def test_criteres_maps_non_appliques_aux_autres_sources(self):
+        """Sirène n'a ni site ni téléphone : le filtre téléphone ne doit pas tout exclure."""
+        from filters import PHONE_REQUIRED
+        sirene = [Prospect("siren_1", "Menuiserie Durand", "", None, None, None, 0, "menuisier")]
+        params_sources = ["sirene"]
+        with patch("services.sources.search_sirene", lambda kw, loc, n: [Prospect(**vars(x)) for x in sirene]):
+            results, logs = self._run(FilterCriteria(phone=PHONE_REQUIRED), sources=params_sources)
+        self.assertEqual([p.place_id for p in results], ["siren_1"])
+        self.assertEqual(results[0].location, "Lyon")
+        self.assertTrue(any("Google Maps uniquement" in l for l in logs))
 
 
 if __name__ == "__main__":

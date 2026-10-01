@@ -538,7 +538,8 @@ def page_prospection():
         options=[t.id for t in TARGET_SEGMENTS if t.id != selected_target_id],
         format_func=lambda tid: f"{_tgt_by_id[tid].emoji} {_tgt_by_id[tid].name}",
         placeholder="Cuisinistes, Piscinistes, Paysagistes…",
-        help="Leurs mots-clés s'ajoutent à ceux de la cible principale (sans doublon).",
+        help="Leurs mots-clés s'ajoutent à ceux de la cible principale (sans doublon). "
+             "Attention : changer les cibles réinitialise la liste de mots-clés ci-dessous.",
     )
     _target_keywords = merge_keywords(
         selected_target.keywords, *(_tgt_by_id[t].keywords for t in extra_target_ids)
@@ -776,8 +777,9 @@ def page_prospection():
 
     with st.expander("🎯 Critères de sélection des prospects", expanded=False):
         st.caption(
-            "Note, avis et établissements fermés : Google Maps uniquement (les autres sources "
-            "n'ont pas ces données). Ils sont appliqués avant l'appel payant Place Details."
+            "Note, avis, site, téléphone et fermés : Google Maps uniquement (les autres sources "
+            "n'ont pas ces données de façon fiable). Note, avis et fermés sont vérifiés avant "
+            "l'appel payant Place Details. L'email obligatoire s'applique à toutes les sources."
         )
         _fc1, _fc2, _fc3 = st.columns(3)
         with _fc1:
@@ -879,6 +881,9 @@ def page_prospection():
             _launch_disabled = True
         if not keywords and not ("linkedin_csv" in source_types and len(source_types) == 1):
             _launch_disabled = _launch_disabled or not keywords or not location
+        # Toute source par mot-clé a besoin d'au moins une ville
+        if any(s_ != "linkedin_csv" for s_ in source_types) and not locations:
+            _launch_disabled = True
 
         launch = st.button("🚀 Lancer la prospection", disabled=_launch_disabled)
 
@@ -890,6 +895,8 @@ def page_prospection():
         st.info("⚙️ Renseigne tes identifiants France Travail dans ⚙️ Réglages.")
     if "linkedin_csv" in source_types and not linkedin_content:
         st.info("👆 Importe un fichier CSV LinkedIn ci-dessus pour commencer.")
+    if any(s_ != "linkedin_csv" for s_ in source_types) and not locations:
+        st.info("📌 Indique au moins une ville pour lancer la recherche.")
 
     # ---------------------------------------------------------------------------
     # Démarrage du thread

@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 from dotenv import load_dotenv
 
+from filters import parse_locations
+
 load_dotenv()
 
 
@@ -79,6 +81,9 @@ def env_optional_int(name: str) -> Optional[int]:
     return int(raw) if raw else None
 
 
+DEFAULT_LOCATION = "Lyon, France"
+
+
 @dataclass
 class Config:
 
@@ -99,12 +104,9 @@ class Config:
         for k in os.getenv("SEARCH_KEYWORDS", "restaurant,boulangerie").split(",")
         if k.strip()
     ])
-    search_location: str = field(
-        default_factory=lambda: os.getenv("SEARCH_LOCATION", "Lyon, France")
-    )
-    # Plusieurs villes séparées par des « ; » — la 1re sert de zone par défaut
+    # Une ou plusieurs villes séparées par des « ; » (sans doublon). Vide → Lyon.
     search_locations: List[str] = field(
-        default_factory=lambda: env_list("SEARCH_LOCATION", "Lyon, France", sep=";")
+        default_factory=lambda: parse_locations(os.getenv("SEARCH_LOCATION", "") or DEFAULT_LOCATION)
     )
     search_radius: int = field(
         default_factory=lambda: int(os.getenv("SEARCH_RADIUS", "10000"))
@@ -145,9 +147,14 @@ class Config:
         default_factory=lambda: int(os.getenv("FOLLOWUP_DELAY_DAYS", "5"))
     )
 
-    def __post_init__(self) -> None:
-        if self.search_locations:
-            self.search_location = self.search_locations[0]
+    @property
+    def search_location(self) -> str:
+        """Zone par défaut : la première ville de la liste."""
+        return self.search_locations[0]
+
+    @search_location.setter
+    def search_location(self, value: str) -> None:
+        self.search_locations = parse_locations(value) or [DEFAULT_LOCATION]
 
     def validate(self) -> None:
         """Vérifie que la config minimale est présente. Lève ValueError sinon."""

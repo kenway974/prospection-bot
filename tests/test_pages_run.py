@@ -121,6 +121,13 @@ class TestChaquePageSExecute(unittest.TestCase):
         launch = next(b for b in at.button if "Lancer" in b.label)
         self.assertTrue(launch.disabled)
 
+    def test_prospection_sans_ville_bloque_le_lancement(self):
+        at = self._run_page("page_prospection", interactive=True)
+        next(t for t in at.text_area if t.label.startswith("📌")).set_value("  \n ").run()
+        launch = next(b for b in at.button if "Lancer" in b.label)
+        self.assertTrue(launch.disabled)
+        self.assertTrue(any("au moins une ville" in i.value for i in at.info))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
