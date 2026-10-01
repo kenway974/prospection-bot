@@ -444,6 +444,14 @@ def run_prospection(
                             _verified.append(_p)
                     candidates = _verified
 
+                # ── Site absent de la fiche Google : on le cherche (domaines devinés).
+                if trade is not None and params.get("find_missing_sites", True):
+                    from services.site_finder import complete_website as _complete_website
+                    _batch = candidates[:target_per_kw * 3]
+                    if _batch:
+                        with ThreadPoolExecutor(max_workers=min(workers, len(_batch))) as _ex:
+                            list(_ex.map(_complete_website, _batch))
+
                 # ── Phase 3+4 : Analyse + filtre score (commun toutes sources) ──
                 kw_qualified = _analyse_and_filter(candidates, kw_label)[:target_per_kw]
                 log_q.put(f"[--] {'✅' if len(kw_qualified) >= target_per_kw else '⚠️ '} {len(kw_qualified)}/{target_per_kw} qualifiés pour '{kw_label}'.")
