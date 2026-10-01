@@ -6,7 +6,8 @@ Script Python + interface web pour trouver des prospects locaux, analyser leur p
 
 ## Ce que ça fait
 
-1. **Recherche** des commerces et entreprises via Google Places (par mots-clés + ville)
+1. **Recherche** des commerces et entreprises via Google Places (par cible/mots-clés × une ou plusieurs villes)
+1. **Sélection** selon tes critères : note et nombre d'avis, avec/sans site, téléphone/mobile, établissements fermés, email trouvé, franchises exclues
 2. **Analyse** automatique de leur site web (SEO, HTTPS, mobile, tracking, formulaires…)
 3. **Scrape** leur email de contact directement sur leur site
 4. **Génère** un cold email personnalisé selon ce qui a été détecté
@@ -61,6 +62,8 @@ prospection/
 ├── profiles.py             → 10 profils de prospection prédéfinis
 ├── profile_manager.py      → Sauvegarde/chargement des profils custom
 ├── history_manager.py      → Historique des campagnes
+├── target_segments.py      → Cibles par secteur (dont Habitat : cuisinistes, piscinistes…)
+├── filters.py              → Critères de sélection des prospects
 ├── requirements.txt
 ├── .env.example            → Modèle de config à copier en .env
 │
@@ -151,9 +154,14 @@ GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
 
 # Critères par défaut (modifiables dans l'UI)
 SEARCH_KEYWORDS=restaurant,boulangerie,garage
-SEARCH_LOCATION=Lyon, France
+SEARCH_LOCATION=Lyon, France            # plusieurs villes : Lyon, France;Bron, France
 SEARCH_RADIUS=10000
 MAX_RESULTS_PER_KEYWORD=5
+# Critères de sélection (ligne de commande — voir .env.example)
+MIN_RATING=3.0
+MAX_REVIEWS=                             # vide = sans limite
+WEBSITE_FILTER=any                       # any / without / with
+PHONE_FILTER=any                         # any / required / mobile
 
 # Signature
 YOUR_NAME=Kenny

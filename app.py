@@ -262,8 +262,9 @@ from service_profiles import (
 )
 from target_segments import (
     TARGET_SEGMENTS, TARGET_SECTOR_LABELS, SIZE_LABELS,
-    get_target, list_targets,
+    get_target, list_targets, merge_keywords,
 )
+from filters import FilterCriteria, PHONE_LABELS, WEBSITE_LABELS, parse_locations
 
 
 def _linkedin_panel(row: dict, key_prefix: str) -> None:
@@ -531,6 +532,18 @@ def page_prospection():
     selected_target = _tgt_by_id[selected_target_id]
     st.caption(f"*{selected_target.description}*")
 
+    # Plusieurs cibles dans une même campagne (ex : cuisinistes + piscinistes)
+    extra_target_ids = st.multiselect(
+        "➕ Ajouter d'autres cibles à la campagne",
+        options=[t.id for t in TARGET_SEGMENTS if t.id != selected_target_id],
+        format_func=lambda tid: f"{_tgt_by_id[tid].emoji} {_tgt_by_id[tid].name}",
+        placeholder="Cuisinistes, Piscinistes, Paysagistes…",
+        help="Leurs mots-clés s'ajoutent à ceux de la cible principale (sans doublon).",
+    )
+    _target_keywords = merge_keywords(
+        selected_target.keywords, *(_tgt_by_id[t].keywords for t in extra_target_ids)
+    )
+
     st.markdown("---")
 
     # ---------------------------------------------------------------------------
@@ -541,18 +554,31 @@ def page_prospection():
     col1, col2 = st.columns([2, 1])
 
     with col1:
-        location = st.text_input(
-            "📌 Ville / Zone géographique",
-            value=selected_target.location_default or os.getenv("SEARCH_LOCATION", "Lyon, France"),
-            placeholder="Paris, France",
+        locations_raw = st.text_area(
+            "📌 Villes / zones géographiques (une par ligne)",
+            value=selected_target.location_default
+            or "\n".join(parse_locations(os.getenv("SEARCH_LOCATION", "Lyon, France"))),
+            height=80,
+            placeholder="Lyon, France\nVilleurbanne, France",
+            help="Chaque mot-clé est recherché dans chaque ville. Un même établissement n'est gardé qu'une fois.",
         )
+        locations = parse_locations(locations_raw)
+        location = locations[0] if locations else ""
         keywords_raw = st.text_area(
             "🔑 Mots-clés cibles (un par ligne)",
-            value="\n".join(selected_target.keywords),
+            value="\n".join(_target_keywords),
             height=150,
             placeholder="restaurant\nboulangerie\ncoiffeur",
         )
-        keywords = [k.strip() for k in keywords_raw.splitlines() if k.strip()]
+        keywords = merge_keywords(keywords_raw.splitlines())
+        _n_searches = len(keywords) * max(len(locations), 1)
+        if _n_searches > 30:
+            st.warning(
+                f"⚠️ {len(keywords)} mots-clés × {len(locations)} ville(s) = {_n_searches} recherches "
+                "— attention au quota et au coût Google."
+            )
+        else:
+            st.caption(f"{len(keywords)} mot(s)-clé(s) × {len(locations)} ville(s) = {_n_searches} recherche(s)")
 
         from services.mailer import EmailStyle, EMAIL_STYLE_LABELS, build_dynamic_email
         from services.google_maps import Prospect as _PreviewProspect
@@ -660,11 +686,6 @@ def page_prospection():
             help="Décrivez votre offre en 1-2 phrases",
         )
         max_results = st.slider("Prospects par mot-clé", 1, 20, 5)
-        min_rating = st.slider(
-            "Note Google minimum ⭐",
-            min_value=1.0, max_value=5.0, value=3.0, step=0.5,
-            help="Les établissements en dessous de cette note sont ignorés (probablement en difficulté)",
-        )
         _score_dir = selected_service.score_direction
         _score_default = (selected_target.score_threshold_override or selected_service.score_threshold_default)
         if selected_svc_cat == "freelance":
@@ -745,6 +766,77 @@ def page_prospection():
             help="Durée de validité : un site analysé il y a moins de X jours ne sera pas réanalysé.",
         )
 
+    # ---------------------------------------------------------------------------
+    # Critères de sélection — mémorisés d'une campagne à l'autre
+    # ---------------------------------------------------------------------------
+    try:
+        _saved_criteria = FilterCriteria.from_dict(_saved.get("selection_filters"))
+    except (TypeError, ValueError):
+        _saved_criteria = FilterCriteria()
+
+    with st.expander("🎯 Critères de sélection des prospects", expanded=False):
+        st.caption(
+            "Note, avis et établissements fermés : Google Maps uniquement (les autres sources "
+            "n'ont pas ces données). Ils sont appliqués avant l'appel payant Place Details."
+        )
+        _fc1, _fc2, _fc3 = st.columns(3)
+        with _fc1:
+            _rating_range = st.slider(
+                "Note Google ⭐",
+                min_value=0.0, max_value=5.0, step=0.1,
+                value=(float(_saved_criteria.min_rating), float(_saved_criteria.max_rating)),
+                help="Sous le minimum : probablement en difficulté. Les fiches sans note sont gardées.",
+            )
+            _min_reviews = st.number_input(
+                "Nombre d'avis minimum", min_value=0, step=5, value=_saved_criteria.min_reviews,
+                help="Peu d'avis = petite structure ou récente.",
+            )
+            _limit_reviews = st.checkbox(
+                "Limiter le nombre d'avis maximum",
+                value=_saved_criteria.max_reviews is not None,
+                help="Beaucoup d'avis = souvent une grosse enseigne déjà bien équipée.",
+            )
+            _max_reviews = None
+            if _limit_reviews:
+                _max_reviews = st.number_input(
+                    "Nombre d'avis maximum", min_value=0, step=10,
+                    value=_saved_criteria.max_reviews if _saved_criteria.max_reviews is not None else 200,
+                )
+        with _fc2:
+            _website = st.radio(
+                "🌐 Site web", options=list(WEBSITE_LABELS),
+                index=list(WEBSITE_LABELS).index(_saved_criteria.website),
+                format_func=WEBSITE_LABELS.get,
+            )
+            _phone = st.radio(
+                "📞 Téléphone", options=list(PHONE_LABELS),
+                index=list(PHONE_LABELS).index(_saved_criteria.phone),
+                format_func=PHONE_LABELS.get,
+            )
+        with _fc3:
+            _exclude_closed = st.checkbox(
+                "🚪 Exclure les établissements fermés", value=_saved_criteria.exclude_closed,
+            )
+            _require_email = st.checkbox(
+                "📧 Email trouvé obligatoire", value=_saved_criteria.require_email,
+                help="Écarte les prospects dont aucun email n'a été trouvé sur le site.",
+            )
+
+    try:
+        selection_filters: "FilterCriteria | None" = FilterCriteria(
+            min_rating=_rating_range[0],
+            max_rating=_rating_range[1],
+            min_reviews=int(_min_reviews),
+            max_reviews=int(_max_reviews) if _max_reviews is not None else None,
+            website=_website,
+            phone=_phone,
+            exclude_closed=_exclude_closed,
+            require_email=_require_email,
+        )
+    except ValueError as _filters_exc:
+        st.error(f"❌ Critères de sélection incohérents : {_filters_exc}")
+        selection_filters = None
+
     # LinkedIn CSV uploader (visible seulement si source linkedin_csv sélectionnée)
     linkedin_content = ""
     if "linkedin_csv" in source_types:
@@ -774,7 +866,7 @@ def page_prospection():
     # ---------------------------------------------------------------------------
     col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
     with col_btn2:
-        _launch_disabled = st.session_state.running
+        _launch_disabled = st.session_state.running or selection_filters is None
         if not source_types:
             _launch_disabled = True
         if ("google_maps" in source_types or "google_search" in source_types) and not google_key:
@@ -836,6 +928,7 @@ def page_prospection():
             "email_length":      _email_length,
             "email_salutation":  _email_salutation,
             "email_cta":         _email_cta,
+            "selection_filters": selection_filters.to_dict(),
         })
 
         result_container = []
@@ -848,6 +941,7 @@ def page_prospection():
             "crm_extra":  crm_extra,
             "brevo_key": brevo_key,
             "location": location,
+            "locations": locations,
             "keywords": keywords,
             "radius": radius,
             "max_results": max_results,
@@ -872,7 +966,8 @@ def page_prospection():
             "detection_keywords": selected_service.detection_keywords,
             "weight_overrides": selected_service.check_weight_overrides,
             "score_direction": selected_service.score_direction,
-            "min_rating": min_rating,
+            "filters": selection_filters,
+            "min_rating": selection_filters.min_rating,
             "contact_score_threshold": score_threshold,
             "analysis_workers": int(os.getenv("ANALYSIS_WORKERS", "5")),
             "send_emails": send_emails,
@@ -1105,7 +1200,7 @@ def page_prospection():
 
         with col_e2:
             csv_buffer = io.StringIO()
-            fieldnames = ["name", "dirigeant", "dirigeant_qualite", "keyword", "address", "phone",
+            fieldnames = ["name", "dirigeant", "dirigeant_qualite", "keyword", "location", "address", "phone",
                           "email", "website", "cms", "rating", "score", "issues_count",
                           "issues_summary", "maps_url"]
             writer = csv.DictWriter(csv_buffer, fieldnames=fieldnames)
@@ -1116,6 +1211,7 @@ def page_prospection():
                     "dirigeant": getattr(p, "dirigeant", "") or "",
                     "dirigeant_qualite": getattr(p, "dirigeant_qualite", "") or "",
                     "keyword": p.keyword,
+                    "location": getattr(p, "location", "") or "",
                     "address": p.address,
                     "phone": p.phone or "",
                     "email": p.email or "",
@@ -1215,9 +1311,9 @@ def page_prospection():
                 id=custom_id,
                 emoji="⭐",
                 name=save_name,
-                description=f"Profil personnalisé — {location}",
+                description=f"Profil personnalisé — {', '.join(locations)}",
                 keywords=keywords,
-                location=location,
+                location="\n".join(locations),
                 your_title=your_title,
                 your_offer=your_offer,
                 email_hook=email_hook,

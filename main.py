@@ -20,7 +20,13 @@ Mode relance :
   python main.py --followup   → génère les emails de relance pour les contacts sans réponse
 
 Variables d'environnement clés (dans .env) :
-  MIN_RATING               → note Google minimum (défaut : 3.0)
+  SEARCH_LOCATION          → une ou plusieurs villes séparées par « ; »
+  MIN_RATING / MAX_RATING  → fourchette de note Google (défaut : 3.0 → 5.0)
+  MIN_REVIEWS / MAX_REVIEWS→ fourchette du nombre d'avis (MAX_REVIEWS vide : sans limite)
+  WEBSITE_FILTER           → any / without / with
+  PHONE_FILTER             → any / required / mobile
+  EXCLUDE_CLOSED           → exclut les établissements fermés (défaut : true)
+  REQUIRE_EMAIL            → ne garde que les prospects dont l'email a été trouvé
   CONTACT_SCORE_THRESHOLD  → score max pour contacter (défaut : 70)
   ANALYSIS_WORKERS         → parallélisation (défaut : 5)
   FOLLOWUP_DELAY_DAYS      → délai avant relance en jours (défaut : 5)
@@ -38,6 +44,10 @@ from datetime import datetime
 from typing import List
 
 from config import config, logger
+from filters import (
+    FilterCriteria, count_reason, format_exclusions,
+    post_analysis_reason, prospect_exclusion_reason, raw_exclusion_reason,
+)
 from services.google_maps import Prospect, search_prospects
 from services.analyzer import analyze_prospect
 from services.mailer import enrich_with_email, enrich_with_followup
@@ -70,7 +80,7 @@ def save_csv(prospects: List[Prospect], path: str) -> None:
     if not prospects:
         return
     fieldnames = [
-        "name", "keyword", "address", "phone", "email", "website",
+        "name", "keyword", "location", "address", "phone", "email", "website",
         "rating", "user_ratings_total", "score",
         "issues_count", "issues_summary", "maps_url",
     ]
@@ -81,6 +91,7 @@ def save_csv(prospects: List[Prospect], path: str) -> None:
             writer.writerow({
                 "name": p.name,
                 "keyword": p.keyword,
+                "location": p.location,
                 "address": p.address,
                 "phone": p.phone or "",
                 "email": p.email or "",
@@ -160,32 +171,51 @@ def run_followup() -> None:
 # Workflow principal
 # ---------------------------------------------------------------------------
 
-def run() -> None:
-    logger.info("=" * 60)
-    logger.info("🚀 DÉMARRAGE — Prospection B2B automatisée")
-    logger.info("   Zone        : %s", config.search_location)
-    logger.info("   Mots-clés   : %s", ", ".join(config.search_keywords))
-    logger.info("   Max/kw      : %d résultats", config.max_results_per_keyword)
-    logger.info("   Note min    : %.1f/5", config.min_rating)
-    logger.info("   Seuil score : ≤ %d/100", config.contact_score_threshold)
-    logger.info("   Workers     : %d", config.analysis_workers)
-    logger.info("=" * 60)
+def criteria_from_config() -> FilterCriteria:
+    """Critères de sélection depuis le .env. Lève ValueError si une valeur est invalide."""
+    return FilterCriteria(
+        min_rating=config.min_rating,
+        max_rating=config.max_rating,
+        min_reviews=config.min_reviews,
+        max_reviews=config.max_reviews,
+        website=config.website_filter,
+        phone=config.phone_filter,
+        exclude_closed=config.exclude_closed,
+        require_email=config.require_email,
+    )
 
+
+def run() -> None:
     try:
         config.validate()
+        criteria = criteria_from_config()
     except ValueError as exc:
         logger.critical("❌ %s", exc)
         sys.exit(1)
 
+    logger.info("=" * 60)
+    logger.info("🚀 DÉMARRAGE — Prospection B2B automatisée")
+    logger.info("   Zone(s)     : %s", " | ".join(config.search_locations))
+    logger.info("   Mots-clés   : %s", ", ".join(config.search_keywords))
+    logger.info("   Max/kw      : %d résultats", config.max_results_per_keyword)
+    logger.info("   Critères    : %s", criteria.summary())
+    logger.info("   Seuil score : ≤ %d/100", config.contact_score_threshold)
+    logger.info("   Workers     : %d", config.analysis_workers)
+    logger.info("=" * 60)
+
     all_prospects: List[Prospect] = []
     seen_place_ids: set[str] = set()
 
-    # 1. COLLECTE — Google Places pour chaque mot-clé
-    for keyword in config.search_keywords:
-        for p in search_prospects(keyword):
-            if p.place_id not in seen_place_ids:
-                seen_place_ids.add(p.place_id)
-                all_prospects.append(p)
+    # 1. COLLECTE — Google Places pour chaque ville × mot-clé.
+    # Note, avis et fermés sont écartés avant Place Details (appel payant).
+    excluded: dict = {}
+    keep_raw = lambda raw: not count_reason(excluded, raw_exclusion_reason(raw, criteria))  # noqa: E731
+    for location in config.search_locations:
+        for keyword in config.search_keywords:
+            for p in search_prospects(keyword, location, keep_raw=keep_raw):
+                if p.place_id not in seen_place_ids:
+                    seen_place_ids.add(p.place_id)
+                    all_prospects.append(p)
 
     logger.info("")
     logger.info("📋 %d prospect(s) uniques collectés.", len(all_prospects))
@@ -194,15 +224,13 @@ def run() -> None:
         logger.warning("Aucun prospect trouvé. Vérifiez vos critères de recherche.")
         sys.exit(0)
 
-    # 1b. FILTRE NOTE GOOGLE
-    before = len(all_prospects)
+    # 1b. CRITÈRES DE SÉLECTION (site web, téléphone)
     all_prospects = [
         p for p in all_prospects
-        if p.rating is None or p.rating >= config.min_rating
+        if not count_reason(excluded, prospect_exclusion_reason(p, criteria))
     ]
-    excluded = before - len(all_prospects)
     if excluded:
-        logger.info("⭐ %d prospect(s) exclus (note < %.1f/5).", excluded, config.min_rating)
+        logger.info("🎯 Exclus par les critères : %s", format_exclusions(excluded))
 
     # 1c. DÉDUPLICATION inter-sessions
     already_contacted = load_contacted_ids()
@@ -230,8 +258,15 @@ def run() -> None:
                 logger.error("  ❌ Erreur analyse %s : %s", p.name, exc)
     all_prospects = analyzed
 
-    # 2b. FILTRAGE PAR SEUIL DE SCORE
+    # 2b. FILTRAGE PAR SEUIL DE SCORE (+ email obligatoire si demandé)
     threshold = config.contact_score_threshold
+    post_excluded: dict = {}
+    all_prospects = [
+        p for p in all_prospects
+        if not count_reason(post_excluded, post_analysis_reason(p, criteria))
+    ]
+    if post_excluded:
+        logger.info("🎯 Exclus après analyse : %s", format_exclusions(post_excluded))
     contactable = [p for p in all_prospects if p.score <= threshold]
     filtered_out = len(all_prospects) - len(contactable)
     if filtered_out:

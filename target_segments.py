@@ -28,6 +28,7 @@ TARGET_SECTOR_LABELS: Dict[str, str] = {
     "commerce":       "🛍️ Commerce & Retail",
     "sante_beaute":   "🏥 Santé & Beauté",
     "artisans_btp":   "🔨 Artisans & BTP",
+    "habitat":        "🏡 Habitat & Aménagement",
     "immo":           "🏠 Immobilier & Hôtellerie",
     "tourisme":       "🌴 Tourisme & Loisirs",
     "entreprises":    "💼 Entreprises & B2B",
@@ -134,6 +135,19 @@ TARGET_SEGMENTS: List[TargetSegment] = [
     ),
 
     TargetSegment(
+        id="fleuristes_meubles",
+        emoji="💐",
+        name="Fleuristes, Meubles & Commerces de proximité",
+        sector="commerce",
+        keywords=[
+            "fleuriste", "magasin de meubles", "literie", "magasin de décoration",
+            "cordonnerie", "animalerie",
+        ],
+        target_size="tpe",
+        description="Commerces indépendants — vitrine en ligne, click & collect et avis Google.",
+    ),
+
+    TargetSegment(
         id="pharmacies",
         emoji="💊",
         name="Pharmacies & Parapharmacies",
@@ -175,6 +189,31 @@ TARGET_SEGMENTS: List[TargetSegment] = [
         ],
         target_size="tpe",
         description="Cabinets médicaux libéraux — prise de RDV en ligne souvent absente ou mal configurée.",
+    ),
+
+    TargetSegment(
+        id="paramedical",
+        emoji="🦴",
+        name="Paramédical (podologues, orthophonistes…)",
+        sector="sante_beaute",
+        keywords=[
+            "podologue", "orthophoniste", "chiropracteur", "sage-femme",
+            "ergothérapeute", "psychomotricien",
+        ],
+        target_size="tpe",
+        description="Paramédical — prise de rendez-vous en ligne et référencement local essentiels.",
+    ),
+
+    TargetSegment(
+        id="opticiens_audio",
+        emoji="👓",
+        name="Opticiens, Audioprothésistes & Vétérinaires",
+        sector="sante_beaute",
+        keywords=[
+            "opticien", "audioprothésiste", "vétérinaire", "clinique vétérinaire",
+        ],
+        target_size="tpe",
+        description="Opticiens, audio et vétos — commerces de santé indépendants face aux grandes chaînes.",
     ),
 
     TargetSegment(
@@ -272,6 +311,102 @@ TARGET_SEGMENTS: List[TargetSegment] = [
         ],
         target_size="tpe",
         description="Garages et carrosseries — avis Google cruciaux, présence locale à renforcer.",
+    ),
+
+    TargetSegment(
+        id="energies_renouvelables",
+        emoji="☀️",
+        name="Énergies renouvelables & Isolation",
+        sector="artisans_btp",
+        keywords=[
+            "panneaux solaires", "installateur photovoltaïque", "isolation des combles",
+            "isolation thermique", "entreprise RGE", "borne de recharge électrique",
+        ],
+        target_size="tpe",
+        description="Installateurs solaires et isolation — gros paniers, forte concurrence en ligne pour les devis.",
+    ),
+
+    # -----------------------------------------------------------------------
+    # Habitat & Aménagement — paniers moyens élevés : un seul chantier
+    # gagné grâce au site rembourse largement la prestation.
+    # -----------------------------------------------------------------------
+
+    TargetSegment(
+        id="cuisinistes",
+        emoji="🍳",
+        name="Cuisinistes & Salles de bain",
+        sector="habitat",
+        keywords=[
+            "cuisiniste", "magasin de cuisine", "cuisine équipée", "cuisine sur mesure",
+            "salle de bain", "aménagement salle de bain", "dressing sur mesure",
+        ],
+        target_size="tpe",
+        description="Cuisinistes et salles de bain — projets à 10-30 k€, les clients comparent les réalisations en ligne.",
+    ),
+
+    TargetSegment(
+        id="piscinistes",
+        emoji="🏊",
+        name="Piscinistes & Spas",
+        sector="habitat",
+        keywords=[
+            "pisciniste", "construction piscine", "piscine coque", "entretien piscine",
+            "spa et jacuzzi", "abri de piscine", "local technique piscine",
+        ],
+        target_size="tpe",
+        description="Piscinistes — saison courte et gros paniers : il faut capter les demandes de devis dès l'hiver.",
+    ),
+
+    TargetSegment(
+        id="menuiseries_fermetures",
+        emoji="🪟",
+        name="Menuiseries, Fenêtres & Vérandas",
+        sector="habitat",
+        keywords=[
+            "menuiserie aluminium", "poseur de fenêtres", "véranda", "pergola",
+            "store et volet roulant", "porte de garage", "portail et clôture",
+        ],
+        target_size="tpe",
+        description="Menuiseries extérieures et fermetures — achats réfléchis, comparés sur Google avant tout appel.",
+    ),
+
+    TargetSegment(
+        id="paysagistes",
+        emoji="🌳",
+        name="Paysagistes & Jardins",
+        sector="habitat",
+        keywords=[
+            "paysagiste", "entretien de jardin", "élagueur", "création de jardin",
+            "arrosage automatique", "terrasse bois", "aménagement extérieur",
+        ],
+        target_size="tpe",
+        description="Paysagistes — une galerie de réalisations et un formulaire de devis font toute la différence.",
+    ),
+
+    TargetSegment(
+        id="renovation_deco",
+        emoji="🛋️",
+        name="Rénovation & Décoration intérieure",
+        sector="habitat",
+        keywords=[
+            "entreprise de rénovation", "architecte d'intérieur", "décorateur d'intérieur",
+            "parquet", "cheminée et poêle à bois", "home staging", "domotique",
+        ],
+        target_size="tpe",
+        description="Rénovation et déco — le visuel vend : site vitrine avec avant/après et prise de contact simple.",
+    ),
+
+    TargetSegment(
+        id="services_habitat",
+        emoji="📦",
+        name="Déménageurs & Services à domicile",
+        sector="habitat",
+        keywords=[
+            "déménageur", "entreprise de nettoyage", "dératisation", "ramonage",
+            "débarras", "aide à domicile",
+        ],
+        target_size="tpe",
+        description="Services à domicile — demandes urgentes ou ponctuelles : devis en ligne et visibilité locale.",
     ),
 
     # -----------------------------------------------------------------------
@@ -542,3 +677,16 @@ def get_target(target_id: str) -> Optional[TargetSegment]:
 
 def list_targets() -> List[TargetSegment]:
     return TARGET_SEGMENTS
+
+
+def merge_keywords(*groups) -> List[str]:
+    """Fusionne des listes de mots-clés : sans vide ni doublon (insensible à la casse), ordre conservé."""
+    seen: set = set()
+    merged: List[str] = []
+    for group in groups:
+        for kw in group:
+            kw = kw.strip()
+            if kw and kw.lower() not in seen:
+                seen.add(kw.lower())
+                merged.append(kw)
+    return merged

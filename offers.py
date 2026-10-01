@@ -47,6 +47,7 @@ SECTOR_BENEFITS: Dict[str, str] = {
     "commerce":     "mettre vos produits en valeur et capter les clients qui vous cherchent déjà en ligne",
     "sante_beaute": "permettre à vos clients de prendre rendez-vous en ligne 24h/24, sans appel à gérer",
     "artisans_btp": "recevoir des demandes de devis qualifiées directement dans votre boîte mail",
+    "habitat":      "montrer vos réalisations et recevoir des demandes de devis pour vos projets directement dans votre boîte mail",
     "immo":         "transformer vos visiteurs vendeurs en demandes d'estimation directement dans votre boîte mail",
     "tourisme":     "générer des réservations en direct et réduire votre dépendance aux plateformes",
     "entreprises":  "générer des prises de contact B2B qualifiées et crédibiliser votre expertise",

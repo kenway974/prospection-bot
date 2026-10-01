@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 import requests
 
@@ -35,6 +35,8 @@ class Prospect:
     user_ratings_total: int     # Nombre d'avis Google
     keyword: str                # Mot-clé ayant permis de trouver ce prospect
     maps_url: str = ""          # Lien Google Maps vers la fiche
+    location: str = ""          # Ville / zone de recherche ayant permis de trouver ce prospect
+    business_status: str = ""   # Google : OPERATIONAL / CLOSED_TEMPORARILY / CLOSED_PERMANENTLY
     # Remplis par analyzer.py
     issues: List[str] = field(default_factory=list)  # Problèmes détectés sur le site
     issue_keys: List[str] = field(default_factory=list)  # Clés normalisées des problèmes (pour personnalisation email)
@@ -74,6 +76,8 @@ class Prospect:
             "user_ratings_total": self.user_ratings_total,
             "keyword": self.keyword,
             "maps_url": self.maps_url,
+            "location": self.location,
+            "business_status": self.business_status,
             "issues": self.issues,
             "issue_keys": self.issue_keys,
             "score": self.score,
@@ -112,15 +116,18 @@ def _normalize_phone(raw: Optional[str]) -> Optional[str]:
 GOOGLE_MAX_RESULTS = 60
 
 
-def fetch_raw_candidates(keyword: str, max_raw: int = GOOGLE_MAX_RESULTS) -> List[dict]:
+def fetch_raw_candidates(
+    keyword: str, max_raw: int = GOOGLE_MAX_RESULTS, location: Optional[str] = None,
+) -> List[dict]:
     """
     Récupère jusqu'à `max_raw` résultats bruts via Google Places Text Search.
+    `location` cible une autre zone que config.search_location (campagnes multi-villes).
     Gère la pagination automatiquement (next_page_token).
     Retry exponentiel (2s, 4s, 8s) sur la première page uniquement.
     """
     url = f"{BASE_URL}/place/textsearch/json"
     params = {
-        "query": f"{keyword} {config.search_location}",
+        "query": f"{keyword} {location or config.search_location}",
         "radius": config.search_radius,
         "key": config.google_api_key,
         "language": "fr",
@@ -184,7 +191,7 @@ def fetch_raw_candidates(keyword: str, max_raw: int = GOOGLE_MAX_RESULTS) -> Lis
     return results[:max_raw]
 
 
-def build_prospect(raw: dict, keyword: str) -> Optional[Prospect]:
+def build_prospect(raw: dict, keyword: str, location: str = "") -> Optional[Prospect]:
     """
     Appelle Place Details pour un résultat brut Text Search et construit un Prospect.
     Retourne None si l'appel échoue.
@@ -196,7 +203,7 @@ def build_prospect(raw: dict, keyword: str) -> Optional[Prospect]:
     url = f"{BASE_URL}/place/details/json"
     params = {
         "place_id": place_id,
-        "fields": "name,formatted_address,formatted_phone_number,website,rating,user_ratings_total,url",
+        "fields": "name,formatted_address,formatted_phone_number,website,rating,user_ratings_total,url,business_status",
         "key": config.google_api_key,
         "language": "fr",
     }
@@ -229,18 +236,27 @@ def build_prospect(raw: dict, keyword: str) -> Optional[Prospect]:
         user_ratings_total=details.get("user_ratings_total", 0),
         keyword=keyword,
         maps_url=details.get("url", ""),
+        location=location,
+        business_status=details.get("business_status", raw.get("business_status", "")),
     )
 
 
-def search_prospects(keyword: str) -> List[Prospect]:
+def search_prospects(
+    keyword: str, location: Optional[str] = None, keep_raw: Optional[Callable[[dict], bool]] = None,
+) -> List[Prospect]:
     """
     Compatibilité main.py — recherche N prospects confirmés pour un mot-clé.
     Utilise fetch_raw_candidates + build_prospect en interne.
+    `keep_raw` : filtre optionnel sur les résultats bruts, appliqué AVANT
+    Place Details (appel payant).
     """
     target = config.max_results_per_keyword
-    logger.info("🔍 Recherche : '%s' autour de %s", keyword, config.search_location)
+    location = location or config.search_location
+    logger.info("🔍 Recherche : '%s' autour de %s", keyword, location)
 
-    raw_results = fetch_raw_candidates(keyword, max_raw=GOOGLE_MAX_RESULTS)
+    raw_results = fetch_raw_candidates(keyword, max_raw=GOOGLE_MAX_RESULTS, location=location)
+    if keep_raw is not None:
+        raw_results = [r for r in raw_results if keep_raw(r)]
     if not raw_results:
         logger.warning("Aucun résultat pour '%s'.", keyword)
         return []
@@ -249,7 +265,7 @@ def search_prospects(keyword: str) -> List[Prospect]:
     for raw in raw_results:
         if len(prospects) >= target:
             break
-        prospect = build_prospect(raw, keyword)
+        prospect = build_prospect(raw, keyword, location=location)
         if not prospect:
             continue
         prospects.append(prospect)
