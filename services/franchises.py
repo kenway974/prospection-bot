@@ -97,6 +97,9 @@ FRANCHISES: Set[str] = {
     # Déménagement & services à domicile
     "demeco", "les gentlemen du demenagement", "o2 care", "adhap",
     "senior compagnie", "domidom", "anacours", "acadomia",
+    "completude", "babilou", "people&baby", "petits chaperons rouges", "5 a sec", "5asec",
+    # Lavage auto
+    "elephant bleu", "total wash",
     # Animalerie & divers
     "maxi zoo", "animalis", "mondial relay", "chronopost", "la poste",
     "pole emploi", "france travail", "pharmabest", "pharmacie lafayette",
