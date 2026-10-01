@@ -167,6 +167,9 @@ class TestTrades(unittest.TestCase):
         self.assertEqual(category_verdict("Atelier X", ["restaurant"], t)[0], "exclure")
         self.assertEqual(category_verdict("Au Piano des Chefs", [], t)[0], "exclure")    # nom hors métier
         self.assertEqual(category_verdict("Société Martin", ["point_of_interest"], t)[0], "verifier")
+        self.assertEqual(category_verdict("Société Martin", ["electronics_store"], t)[0], "verifier")  # inconnue ≠ exclue
+        self.assertEqual(category_verdict("Boissons du Nord", [], find_trade("menuisier"))[0], "verifier")  # « bois » ≠ « Boissons »
+        self.assertEqual(category_verdict("Piscines & Spa", ["spa"], find_trade("pisciniste"))[0], "ok")
 
     def test_queries_sans_doublon_et_plafonnees(self):
         from trades import MAX_QUERIES_PER_KEYWORD, queries_for
@@ -222,10 +225,44 @@ class TestSiteFinder(unittest.TestCase):
         self.assertIsNone(page_confirms("Autre entreprise", "Etoile Cuisines", None, F.ADDR))
 
     def test_securite_hote(self):
-        from services.site_finder import _safe_host
-        self.assertFalse(_safe_host("http://127.0.0.1/admin"))
-        self.assertFalse(_safe_host("http://localhost:8501"))
-        self.assertTrue(_safe_host("https://etoile-cuisines.fr"))
+        from services import site_finder
+        public = [(2, 1, 6, "", ("93.184.216.34", 0))]
+        private = [(2, 1, 6, "", ("10.0.0.5", 0))]
+        metadata = [(2, 1, 6, "", ("169.254.169.254", 0))]
+        with patch.object(site_finder.socket, "getaddrinfo", lambda h, p: public):
+            self.assertTrue(site_finder._safe_host("https://etoile-cuisines.fr"))
+            self.assertFalse(site_finder._safe_host("https://etoile-cuisines.fr:8080"))   # port non standard
+            self.assertFalse(site_finder._safe_host("ftp://etoile-cuisines.fr"))          # schéma
+            self.assertFalse(site_finder._safe_host("http://127.0.0.1/admin"))            # IP littérale
+            self.assertFalse(site_finder._safe_host("http://localhost:8501"))
+        with patch.object(site_finder.socket, "getaddrinfo", lambda h, p: private):
+            self.assertFalse(site_finder._safe_host("https://piege.fr"))                  # DNS → réseau privé
+        with patch.object(site_finder.socket, "getaddrinfo", lambda h, p: metadata):
+            self.assertFalse(site_finder._safe_host("https://piege.fr"))                  # métadonnées cloud
+
+    def test_redirection_vers_reseau_interne_bloquee(self):
+        from services import site_finder
+
+        class Resp:
+            is_redirect, status_code, headers = True, 302, {"Location": "http://192.168.1.1/admin"}
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        calls = []
+        with patch.object(site_finder.socket, "getaddrinfo", lambda h, p: [(2, 1, 6, "", ("93.184.216.34", 0))]), \
+             patch.object(site_finder.requests, "get", lambda url, **k: calls.append(url) or Resp()):
+            text, _ = site_finder._fetch_text("piege.fr")
+        self.assertIsNone(text)
+        self.assertEqual(calls, ["https://piege.fr"])     # la 2e requête (interne) n'est jamais partie
+
+    def test_homonyme_non_adopte(self):
+        from services import site_finder
+        p = Prospect("x", "Cuisine Design", f"1 rue X, {F.ADDR}", None, None, 4.0, 0, "kw")
+        pages = {"cuisinedesign.fr": "<h1>Cuisine Design</h1> Bordeaux"}
+        with patch.object(site_finder, "_fetch_text", lambda d: (pages.get(d), f"https://{d}/")):
+            site_finder.complete_website(p)
+        self.assertIsNone(p.website)                      # pas d'audit ni d'email d'un homonyme
+        self.assertIn("à confirmer", p.flags[0])
 
     def test_site_trouve_complete_le_prospect(self):
         from services import site_finder

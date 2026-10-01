@@ -243,7 +243,12 @@ def run_prospection(
                     log_q.put(f"[--] ✅ {p.name} — score {p.score}/100")
                 else:
                     rejected_scores.append(p.score)
-                    _exclude_p(p, f"site déjà bon (qualité {p.score}/100, seuil {threshold})", "score")
+                    _exclude_p(
+                        p,
+                        f"score {p.score}/100 sous le minimum requis ({threshold})" if score_direction == "desc"
+                        else f"site déjà bon (qualité {p.score}/100, seuil {threshold})",
+                        "score",
+                    )
             # Funnel : on montre noir sur blanc où meurent les prospects
             if rejected_scores:
                 _op = "≥" if score_direction == "desc" else "≤"
@@ -327,7 +332,9 @@ def run_prospection(
                         skip_criteria: dict = {}
                         raw_to_build: list = []
                         for raw in raw_candidates:
-                            if len(raw_to_build) >= target_per_kw * 4:
+                            # Même plafond que le lot analysé : on ne paie jamais un
+                            # Place Details pour une fiche qui ne serait pas analysée.
+                            if len(raw_to_build) >= target_per_kw * 3:
                                 break
                             pid = raw.get("place_id", "")
                             if not pid:

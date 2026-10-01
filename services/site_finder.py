@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import socket
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional, Tuple
 from urllib.parse import urlparse
@@ -62,34 +63,68 @@ def is_foreign(url: str) -> bool:
     return tld_of(url) in FOREIGN_TLDS
 
 
+MAX_REDIRECTS = 3
+
+
 def _safe_host(url: str) -> bool:
-    """Refuse localhost et les adresses IP (une redirection ne doit pas viser le réseau local)."""
-    host = (urlparse(url).hostname or "").lower()
-    if not host or host == "localhost" or host.endswith(".local"):
+    """
+    Anti-SSRF : uniquement http(s) sur port standard, vers un nom de domaine public.
+    Refuse localhost, les IP littérales et tout nom qui se résout vers une adresse
+    privée, locale, de lien local (métadonnées cloud 169.254.x.x) ou réservée.
+    """
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme not in ("http", "https") or not host:
+        return False
+    try:
+        if parsed.port not in (None, 80, 443):
+            return False
+    except ValueError:
+        return False
+    if host == "localhost" or host.endswith((".local", ".localhost", ".internal")):
         return False
     try:
         ipaddress.ip_address(host)
-        return False
+        return False                      # IP littérale : jamais un domaine deviné
     except ValueError:
-        return True
+        pass
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        return False
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0].split("%")[0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+            return False
+    return True
 
 
 def _fetch_text(domain: str) -> Tuple[Optional[str], str]:
-    """(texte de la page ou None, URL finale). Lecture plafonnée, jamais d'exception."""
+    """
+    (texte de la page ou None, URL finale). Redirections suivies À LA MAIN (3 max),
+    chaque étape vérifiée par _safe_host avant la requête. Lecture plafonnée,
+    jamais d'exception.
+    """
     url = f"https://{domain}"
     try:
-        with requests.get(url, timeout=TIMEOUT_S, stream=True, allow_redirects=True,
-                          headers={"User-Agent": _USER_AGENT}) as resp:
-            if resp.status_code >= 400 or not _safe_host(resp.url):
+        for _ in range(MAX_REDIRECTS + 1):
+            if not _safe_host(url):
                 return None, url
-            if "html" not in resp.headers.get("Content-Type", "html"):
-                return None, url
-            body = b""
-            for chunk in resp.iter_content(16_384):
-                body += chunk
-                if len(body) >= MAX_BYTES:
-                    break
-            return body.decode(resp.encoding or "utf-8", errors="ignore"), resp.url
+            with requests.get(url, timeout=TIMEOUT_S, stream=True, allow_redirects=False,
+                              headers={"User-Agent": _USER_AGENT}) as resp:
+                if resp.is_redirect:
+                    location = resp.headers.get("Location", "")
+                    url = requests.compat.urljoin(url, location)
+                    continue
+                if resp.status_code >= 400 or "html" not in resp.headers.get("Content-Type", "html"):
+                    return None, url
+                body = b""
+                for chunk in resp.iter_content(16_384):
+                    body += chunk
+                    if len(body) >= MAX_BYTES:
+                        break
+                return body.decode(resp.encoding or "utf-8", errors="ignore"), url
+        return None, url                  # trop de redirections
     except requests.RequestException:
         return None, url
 
@@ -145,14 +180,17 @@ def complete_website(p) -> None:
     Complète un prospect : site retrouvé si la fiche Google n'en a pas, et drapeau
     si le site est sur un domaine étranger (activité probablement hors France).
     """
+    candidate = p.website if p.has_website() else None
     if not p.has_website():
         url, level = find_site(p.name, p.phone, p.address)
-        if url:
-            p.website = url
+        if url and level == "fort":
+            # Confirmation forte : on adopte le site (il sera audité, son email récupéré)
+            p.website = candidate = url
             p.website_source = "deviné"
-            if level == "fort":
-                p.flags.append(f"site absent de la fiche Google, retrouvé : {url}")
-            else:
-                p.flags.append(f"site probable (même nom, homonyme possible) — à confirmer : {url}")
-    if p.has_website() and is_foreign(p.website):
-        p.flags.append(f"site sur un domaine étranger (.{tld_of(p.website)}) — activité hors France ?")
+            p.flags.append(f"site absent de la fiche Google, retrouvé : {url}")
+        elif url:
+            # Homonyme possible : on NE l'adopte PAS (pas d'audit, pas d'email d'un tiers)
+            candidate = url
+            p.flags.append(f"site probable (même nom, homonyme possible) — à confirmer : {url}")
+    if candidate and is_foreign(candidate):
+        p.flags.append(f"site sur un domaine étranger (.{tld_of(candidate)}) — activité hors France ?")
