@@ -61,6 +61,14 @@ class Prospect:
     email_status: str = ""        # « valide » | « risque » | « invalide »
     email_status_reason: str = "" # explication lisible
 
+    def is_callable(self) -> bool:
+        """« Appelable » seulement avec un téléphone ; sinon la fiche est « à compléter »."""
+        return bool(self.phone and any(c.isdigit() for c in self.phone))
+
+    @property
+    def contact_status(self) -> str:
+        return "appelable" if self.is_callable() else "à compléter"
+
     def has_website(self) -> bool:
         """Retourne True si le prospect a un site web valide."""
         return bool(self.website and self.website.startswith("http"))
@@ -91,6 +99,7 @@ class Prospect:
             "website_source": self.website_source,
             "company": self.company,
             "opportunity": self.opportunity,
+            "contact_status": self.contact_status,
             "score_details": self.score_details,
             "issues": self.issues,
             "issue_keys": self.issue_keys,

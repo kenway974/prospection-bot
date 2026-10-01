@@ -1117,7 +1117,7 @@ def page_prospection():
         with col_f1:
             filter_opt = st.radio(
                 "Afficher :",
-                ["Tous", "Sans site uniquement", "Email trouvé", "Mobile trouvé", "Score < 40"],
+                ["Tous", "📞 Appelables", "🧩 À compléter", "Sans site uniquement", "Email trouvé", "Mobile trouvé", "Score < 40"],
                 horizontal=True,
             )
         with col_f2:
@@ -1125,7 +1125,11 @@ def page_prospection():
 
         # Application des filtres
         filtered = prospects
-        if filter_opt == "Sans site uniquement":
+        if filter_opt == "📞 Appelables":
+            filtered = [p for p in prospects if p.is_callable()]
+        elif filter_opt == "🧩 À compléter":
+            filtered = [p for p in prospects if not p.is_callable()]
+        elif filter_opt == "Sans site uniquement":
             filtered = [p for p in prospects if not p.has_website()]
         elif filter_opt == "Email trouvé":
             filtered = [p for p in prospects if p.email]
@@ -1165,7 +1169,7 @@ def page_prospection():
                 _flag_badge = f" — ⚠️ {len(p.flags)} à vérifier" if getattr(p, "flags", None) else ""
                 header = (
                     f"{_opp_emoji} **{p.name}** — Opportunité {_opp}/100 · site {p.score}/100 — "
-                    f"{email_badge} {phone_type}{_flag_badge}"
+                    f"{email_badge} {phone_type} {'📞 appelable' if p.is_callable() else '🧩 à compléter'}{_flag_badge}"
                 )
                 with st.expander(header):
                     c1, c2 = st.columns([1, 1])
