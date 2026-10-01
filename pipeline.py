@@ -46,8 +46,30 @@ class QueueLogger:
 # ---------------------------------------------------------------------------
 # Thread de prospection
 # ---------------------------------------------------------------------------
-def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
-    """Tourne dans un thread séparé pour ne pas bloquer l'UI."""
+def run_prospection(
+    params: dict, log_q: queue.Queue, result_container: list, excluded_container: list | None = None,
+):
+    """
+    Tourne dans un thread séparé pour ne pas bloquer l'UI.
+    excluded_container : rempli avec un dict par établissement écarté
+    ({name, reason, stage, place_id, maps_url, address}) — aucune exclusion silencieuse.
+    """
+    excluded = excluded_container if excluded_container is not None else []
+    _excluded_ids: set = set()
+
+    def _exclude(name: str, reason: str, stage: str, place_id: str = "", maps_url: str = "", address: str = "") -> None:
+        # Un même établissement peut revenir sur plusieurs requêtes / villes : une seule ligne.
+        if place_id and place_id in _excluded_ids:
+            return
+        _excluded_ids.add(place_id)
+        excluded.append({
+            "name": name, "reason": reason, "stage": stage,
+            "place_id": place_id, "maps_url": maps_url, "address": address,
+        })
+
+    def _exclude_p(p, reason: str, stage: str) -> None:
+        _exclude(p.name, reason, stage, p.place_id, getattr(p, "maps_url", ""), getattr(p, "address", ""))
+
     try:
         # Force les variables d'env AVANT tout import de config
         os.environ["GOOGLE_PLACES_API_KEY"] = params["google_key"]
@@ -109,6 +131,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         target_per_kw   = params["max_results"]
         # Critères de sélection : objet FilterCriteria, dict sauvegardé, ou à défaut
         # l'ancien paramètre min_rating seul (compatibilité).
+        from trades import category_verdict, find_trade
         from filters import (
             FilterCriteria, count_reason, format_exclusions,
             post_analysis_reason, prospect_exclusion_reason, raw_exclusion_reason,
@@ -191,7 +214,14 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                 ))
             # Critères post-analyse (email trouvé), communs à tous les modes
             _post_excl: dict = {}
-            analyzed = [p for p in analyzed if not count_reason(_post_excl, post_analysis_reason(p, criteria))]
+            _kept = []
+            for p in analyzed:
+                _r = post_analysis_reason(p, criteria)
+                if count_reason(_post_excl, _r):
+                    _exclude_p(p, _r, "après analyse")
+                else:
+                    _kept.append(p)
+            analyzed = _kept
             if _post_excl:
                 log_q.put(f"[--] 🎯 [{label}] exclus par les critères : {format_exclusions(_post_excl)}")
             # Mode candidature : aucune note, on garde toutes les cibles
@@ -208,6 +238,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                     log_q.put(f"[--] ✅ {p.name} — score {p.score}/100")
                 else:
                     rejected_scores.append(p.score)
+                    _exclude_p(p, f"site déjà bon (qualité {p.score}/100, seuil {threshold})", "score")
             # Funnel : on montre noir sur blanc où meurent les prospects
             if rejected_scores:
                 _op = "≥" if score_direction == "desc" else "≤"
@@ -229,6 +260,7 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                     _hit, _brand = _is_franchise(p.name, _user_franchises)
                     if _hit:
                         _franchise_hits.append((p.name, _brand))
+                        _exclude_p(p, f"franchise / chaîne ({_brand})", "liste noire")
                         continue
                 seen.add(p.place_id)
                 out.append(p)
@@ -252,6 +284,8 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             for loc, kw in ((loc, kw) for loc in locations for kw in params["keywords"]):
                 src_labels_str = " + ".join(SOURCE_LABELS.get(s, s) for s in kw_sources)
                 kw_label = f"{kw} @ {loc}" if len(locations) > 1 else kw
+                trade = find_trade(kw)
+                _category_flags: dict = {}
                 log_q.put(f"[--] 🔍 [{src_labels_str}] '{kw_label}' — objectif {target_per_kw}…")
 
                 candidates: list = []
@@ -282,18 +316,32 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                             if pid in seen:
                                 skip_seen += 1; continue
                             if pid in already_contacted:
-                                skip_contacted += 1; continue
+                                skip_contacted += 1
+                                _exclude(raw.get("name", ""), "déjà contacté (historique / CRM)", "historique", pid)
+                                continue
                             # Franchises écartées AVANT Place Details : on ne paie
                             # pas l'appel API pour un prospect qu'on jette ensuite.
                             if exclude_franchises:
                                 _is_fr, _brand = _is_franchise(raw.get("name", ""), _user_franchises)
                                 if _is_fr:
                                     skip_franchise.append((raw.get("name", ""), _brand))
+                                    _exclude(raw.get("name", ""), f"franchise / chaîne / distributeur ({_brand})", "liste noire", pid)
                                     continue
                             # Note, nb d'avis, fermé : connus dès la Text Search → écartés
                             # AVANT Place Details (appel payant).
-                            if count_reason(skip_criteria, raw_exclusion_reason(raw, criteria)):
+                            _r = raw_exclusion_reason(raw, criteria)
+                            if count_reason(skip_criteria, _r):
+                                _exclude(raw.get("name", ""), _r, "critères", pid)
                                 continue
+                            # Catégorie : l'établissement fait-il vraiment ce métier ?
+                            if trade is not None:
+                                _verdict, _why = category_verdict(raw.get("name", ""), raw.get("types", []), trade)
+                                if _verdict == "exclure":
+                                    count_reason(skip_criteria, "hors métier")
+                                    _exclude(raw.get("name", ""), _why, "catégorie", pid)
+                                    continue
+                                if _verdict == "verifier":
+                                    _category_flags[pid] = _why
                             seen.add(pid)
                             raw_to_build.append(raw)
 
@@ -307,8 +355,11 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                                 if p is None:
                                     skip_api += 1
                                 elif count_reason(skip_criteria, prospect_exclusion_reason(p, criteria)):
+                                    _exclude_p(p, prospect_exclusion_reason(p, criteria), "critères")
                                     continue
                                 else:
+                                    if p.place_id in _category_flags:
+                                        p.flags.append(_category_flags[p.place_id])
                                     candidates.append(p)
 
                         # Bilan des exclusions — affiché même si tout a été écarté

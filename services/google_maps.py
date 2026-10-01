@@ -37,6 +37,14 @@ class Prospect:
     maps_url: str = ""          # Lien Google Maps vers la fiche
     location: str = ""          # Ville / zone de recherche ayant permis de trouver ce prospect
     business_status: str = ""   # Google : OPERATIONAL / CLOSED_TEMPORARILY / CLOSED_PERMANENTLY
+    types: List[str] = field(default_factory=list)  # Catégories Google Maps (ex. « home_goods_store »)
+    # Qualification (pipeline) : drapeaux « à vérifier », source du site, données Sirène
+    flags: List[str] = field(default_factory=list)  # Points à vérifier avant d'appeler
+    website_source: str = ""    # « maps » (fiche Google) ou « deviné » (domaine retrouvé)
+    company: dict = field(default_factory=dict)     # Sirène : etat, naf, date_creation, etablissements…
+    # Score d'opportunité explicable (rempli par services/opportunity.py)
+    opportunity: int = 0        # 0-100, PLUS HAUT = meilleure opportunité
+    score_details: List[list] = field(default_factory=list)  # [[libellé, points], …]
     # Remplis par analyzer.py
     issues: List[str] = field(default_factory=list)  # Problèmes détectés sur le site
     issue_keys: List[str] = field(default_factory=list)  # Clés normalisées des problèmes (pour personnalisation email)
@@ -78,6 +86,12 @@ class Prospect:
             "maps_url": self.maps_url,
             "location": self.location,
             "business_status": self.business_status,
+            "types": self.types,
+            "flags": self.flags,
+            "website_source": self.website_source,
+            "company": self.company,
+            "opportunity": self.opportunity,
+            "score_details": self.score_details,
             "issues": self.issues,
             "issue_keys": self.issue_keys,
             "score": self.score,
@@ -238,6 +252,8 @@ def build_prospect(raw: dict, keyword: str, location: str = "") -> Optional[Pros
         maps_url=details.get("url", ""),
         location=location,
         business_status=details.get("business_status", raw.get("business_status", "")),
+        types=list(raw.get("types") or []),
+        website_source="maps" if details.get("website") else "",
     )
 
 
