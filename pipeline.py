@@ -132,6 +132,7 @@ def run_prospection(
         # Critères de sélection : objet FilterCriteria, dict sauvegardé, ou à défaut
         # l'ancien paramètre min_rating seul (compatibilité).
         from trades import category_verdict, find_trade, queries_for
+        from services.opportunity import apply as _apply_opportunity
         from filters import (
             FilterCriteria, count_reason, format_exclusions,
             post_analysis_reason, prospect_exclusion_reason, raw_exclusion_reason,
@@ -234,6 +235,10 @@ def run_prospection(
             for p in analyzed:
                 qualifies = (p.score >= threshold if score_direction == "desc" else p.score <= threshold)
                 if qualifies:
+                    if score_direction == "desc":
+                        p.opportunity = p.score   # services où un score haut = bonne cible
+                    else:
+                        _apply_opportunity(p)
                     qualified.append(p)
                     log_q.put(f"[--] ✅ {p.name} — score {p.score}/100")
                 else:
@@ -453,7 +458,10 @@ def run_prospection(
                             list(_ex.map(_complete_website, _batch))
 
                 # ── Phase 3+4 : Analyse + filtre score (commun toutes sources) ──
-                kw_qualified = _analyse_and_filter(candidates, kw_label)[:target_per_kw]
+                # Les meilleures opportunités d'abord, PUIS on coupe à l'objectif
+                kw_qualified = sorted(
+                    _analyse_and_filter(candidates, kw_label), key=lambda p: p.opportunity, reverse=True,
+                )[:target_per_kw]
                 log_q.put(f"[--] {'✅' if len(kw_qualified) >= target_per_kw else '⚠️ '} {len(kw_qualified)}/{target_per_kw} qualifiés pour '{kw_label}'.")
                 all_qualified.extend(kw_qualified)
 
@@ -533,8 +541,8 @@ def run_prospection(
         all_prospects = list(all_prospects)
 
         # 4. Tri
-        reverse_sort = (score_direction == "desc")
-        all_prospects.sort(key=lambda p: p.score, reverse=reverse_sort)
+        # Meilleure opportunité d'abord (score explicable, voir services/opportunity.py)
+        all_prospects.sort(key=lambda p: p.opportunity, reverse=True)
 
         # Les prospects sont prêts pour l'affichage → on remplit le conteneur lu par
         # l'interface MAINTENANT, avant les étapes à risque (CRM, Gmail, SMS, historique).

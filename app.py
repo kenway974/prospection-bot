@@ -1121,7 +1121,7 @@ def page_prospection():
                 horizontal=True,
             )
         with col_f2:
-            sort_opt = st.selectbox("Trier par :", ["Opportunité (score ↑)", "Nom (A→Z)", "Note Google (↓)"])
+            sort_opt = st.selectbox("Trier par :", ["Opportunité (↓)", "Qualité du site (↑)", "Nom (A→Z)", "Note Google (↓)"])
 
         # Application des filtres
         filtered = prospects
@@ -1137,7 +1137,11 @@ def page_prospection():
         elif filter_opt == "Score < 40":
             filtered = [p for p in prospects if p.score < 40]
 
-        if sort_opt == "Nom (A→Z)":
+        if sort_opt == "Opportunité (↓)":
+            filtered = sorted(filtered, key=lambda p: getattr(p, "opportunity", 0), reverse=True)
+        elif sort_opt == "Qualité du site (↑)":
+            filtered = sorted(filtered, key=lambda p: p.score)
+        elif sort_opt == "Nom (A→Z)":
             filtered = sorted(filtered, key=lambda p: p.name)
         elif sort_opt == "Note Google (↓)":
             filtered = sorted(filtered, key=lambda p: p.rating or 0, reverse=True)
@@ -1150,14 +1154,19 @@ def page_prospection():
             st.markdown(f"### 🏆 {len(filtered)} prospect(s) — triés par {sort_opt.lower()}")
 
             for p in filtered:
-                score_emoji = "🟢" if p.score >= 70 else ("🟡" if p.score >= 40 else "🔴")
                 email_badge = "📧✅" if p.email else "📧❌"
                 phone_type = ""
                 if p.phone:
                     num = p.phone.replace(" ", "")
                     phone_type = "📱" if (num.startswith("06") or num.startswith("07")) else "☎️"
 
-                header = f"{score_emoji} **{p.name}** — Score {p.score}/100 — {email_badge} {phone_type}"
+                _opp = getattr(p, "opportunity", 0)
+                _opp_emoji = "🔥" if _opp >= 60 else ("👍" if _opp >= 30 else "🧊")
+                _flag_badge = f" — ⚠️ {len(p.flags)} à vérifier" if getattr(p, "flags", None) else ""
+                header = (
+                    f"{_opp_emoji} **{p.name}** — Opportunité {_opp}/100 · site {p.score}/100 — "
+                    f"{email_badge} {phone_type}{_flag_badge}"
+                )
                 with st.expander(header):
                     c1, c2 = st.columns([1, 1])
                     with c1:
@@ -1205,6 +1214,21 @@ def page_prospection():
                                 st.markdown(f"<span class='issue-chip'>⚠️ {short}</span>", unsafe_allow_html=True)
                         else:
                             st.markdown("✅ Aucun problème majeur détecté")
+
+                    if getattr(p, "score_details", None):
+                        st.markdown("**🧮 Détail du score d'opportunité :**")
+                        st.table([{"Composante": label, "Points": f"{pts:+d}"} for label, pts in p.score_details])
+                    if getattr(p, "flags", None):
+                        st.markdown("**⚠️ À vérifier avant d'appeler :**")
+                        for _f in p.flags:
+                            st.markdown(f"- {_f}")
+                    if getattr(p, "company", None):
+                        _c = p.company
+                        st.caption(
+                            f"Sirène : {_c.get('nom', '')} · SIREN {_c.get('siren', '')} · NAF {_c.get('naf', '')} · "
+                            f"créée le {_c.get('date_creation', '?')} · "
+                            f"{_c.get('etablissements_ouverts', '?')} établissement(s) ouvert(s)"
+                        )
 
                     st.markdown("**✉️ Brouillon cold email :**")
                     st.code(p.email_draft, language=None)
