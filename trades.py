@@ -40,6 +40,9 @@ OFF_TARGET_NAME_WORDS = (
     "restaurant", "traiteur", "brasserie", "pizzeria", "boulangerie",
 )
 
+# Coût Google : chaque requête = jusqu'à 3 pages Text Search (~0,032 $ / page).
+MAX_QUERIES_PER_KEYWORD = 3
+
 _BUILDING_TYPES = {"general_contractor", "home_goods_store", "furniture_store", "hardware_store"}
 
 
@@ -182,6 +185,6 @@ def queries_for(keyword: str) -> List[str]:
     trade = find_trade(keyword)
     out: List[str] = [keyword]
     for q in (trade.queries if trade else ()):
-        if normalize(q) not in {normalize(x) for x in out}:
+        if _singular(normalize(q)) not in {_singular(normalize(x)) for x in out}:
             out.append(q)
-    return out
+    return out[:MAX_QUERIES_PER_KEYWORD]

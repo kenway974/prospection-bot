@@ -131,7 +131,7 @@ def run_prospection(
         target_per_kw   = params["max_results"]
         # Critères de sélection : objet FilterCriteria, dict sauvegardé, ou à défaut
         # l'ancien paramètre min_rating seul (compatibilité).
-        from trades import category_verdict, find_trade
+        from trades import category_verdict, find_trade, queries_for
         from filters import (
             FilterCriteria, count_reason, format_exclusions,
             post_analysis_reason, prospect_exclusion_reason, raw_exclusion_reason,
@@ -296,8 +296,22 @@ def run_prospection(
                         # On ne récupère que ce qui est utile (≈ objectif × 3, plafonné à 60) :
                         # évite de paginer inutilement quand l'objectif est petit.
                         _max_raw = max(20, min(target_per_kw * 3, 60))
-                        raw_candidates = fetch_raw_candidates(kw, max_raw=_max_raw, location=loc)
-                        _maps_text_calls += 1
+                        # Métier reconnu : synonymes + pagination complète (60 résultats max
+                        # par requête) pour ne pas rater les indépendants mal référencés.
+                        raw_candidates = []
+                        _raw_ids: set = set()
+                        _queries = queries_for(kw) if trade is not None else [kw]
+                        for _q in _queries:
+                            for _r in fetch_raw_candidates(_q, max_raw=60 if trade else _max_raw, location=loc):
+                                if _r.get("place_id") not in _raw_ids:
+                                    _raw_ids.add(_r.get("place_id"))
+                                    raw_candidates.append(_r)
+                            _maps_text_calls += 1
+                        if len(_queries) > 1:
+                            log_q.put(
+                                f"[--] 🔎 '{kw_label}' : {len(_queries)} requêtes ({', '.join(_queries)}) "
+                                f"→ {len(raw_candidates)} établissement(s) uniques."
+                            )
                         _funnel_raw += len(raw_candidates)
                         if not raw_candidates:
                             log_q.put(f"[--] ❌ Aucun résultat Google Maps pour '{kw_label}'.")
