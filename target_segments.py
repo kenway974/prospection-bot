@@ -142,6 +142,7 @@ TARGET_SEGMENTS: List[TargetSegment] = [
         keywords=[
             "fleuriste", "magasin de meubles", "literie", "magasin de décoration",
             "cordonnerie", "animalerie",
+            "librairie", "magasin de jouets", "quincaillerie",
         ],
         target_size="tpe",
         description="Commerces indépendants — vitrine en ligne, click & collect et avis Google.",
@@ -163,11 +164,12 @@ TARGET_SEGMENTS: List[TargetSegment] = [
     TargetSegment(
         id="epiceries_cavistes",
         emoji="🍷",
-        name="Épiceries fines & Cavistes",
+        name="Épiceries fines, Cavistes & Métiers de bouche",
         sector="commerce",
         keywords=[
             "épicerie fine", "cave à vins", "fromagerie", "confiserie",
             "caviste", "épicerie bio", "torréfacteur", "primeur", "chocolaterie",
+            "boucherie", "charcuterie", "poissonnerie",
         ],
         target_size="tpe",
         description="Épiceries fines, cavistes et fromagers — produits à fort potentiel e-commerce.",
@@ -239,6 +241,7 @@ TARGET_SEGMENTS: List[TargetSegment] = [
             "spa", "institut de beauté", "salon esthétique", "onglerie",
             "centre de bien-être", "salon de massage", "centre d'épilation",
             "centre d'amincissement",
+            "esthéticienne", "salon de tatouage",
         ],
         target_size="tpe",
         description="Spas et instituts de beauté — réservation en ligne, photos professionnelles.",
@@ -269,6 +272,7 @@ TARGET_SEGMENTS: List[TargetSegment] = [
         keywords=[
             "artisan", "maçon", "carreleur", "peintre en bâtiment", "plâtrier",
             "menuisier", "couvreur", "charpentier", "façadier", "plaquiste",
+            "vitrier", "terrassement", "constructeur maison individuelle",
         ],
         target_size="tpe",
         description="Artisans du bâtiment — souvent sans site ou avec un site très basique.",
@@ -365,6 +369,7 @@ TARGET_SEGMENTS: List[TargetSegment] = [
         keywords=[
             "menuiserie aluminium", "poseur de fenêtres", "véranda", "pergola",
             "store et volet roulant", "porte de garage", "portail et clôture",
+            "ébéniste",
         ],
         target_size="tpe",
         description="Menuiseries extérieures et fermetures — achats réfléchis, comparés sur Google avant tout appel.",
@@ -378,6 +383,7 @@ TARGET_SEGMENTS: List[TargetSegment] = [
         keywords=[
             "paysagiste", "entretien de jardin", "élagueur", "création de jardin",
             "arrosage automatique", "terrasse bois", "aménagement extérieur",
+            "jardinier", "abri de jardin",
         ],
         target_size="tpe",
         description="Paysagistes — une galerie de réalisations et un formulaire de devis font toute la différence.",
@@ -404,6 +410,7 @@ TARGET_SEGMENTS: List[TargetSegment] = [
         keywords=[
             "déménageur", "entreprise de nettoyage", "dératisation", "ramonage",
             "débarras", "aide à domicile",
+            "pressing",
         ],
         target_size="tpe",
         description="Services à domicile — demandes urgentes ou ponctuelles : devis en ligne et visibilité locale.",
@@ -412,6 +419,19 @@ TARGET_SEGMENTS: List[TargetSegment] = [
     # -----------------------------------------------------------------------
     # Immobilier & Hôtellerie
     # -----------------------------------------------------------------------
+
+    TargetSegment(
+        id="auto_moto_velo",
+        emoji="🏍️",
+        name="Concessions, Motos, Vélos & Lavage auto",
+        sector="artisans_btp",
+        keywords=[
+            "concessionnaire automobile", "garage moto", "concessionnaire moto",
+            "magasin de vélo électrique", "réparation vélo", "lavage auto", "station de lavage",
+        ],
+        target_size="tpe",
+        description="Commerces auto/moto/vélo indépendants — stock en ligne, prise de rendez-vous atelier, avis Google.",
+    ),
 
     TargetSegment(
         id="agences_immo",
@@ -466,6 +486,7 @@ TARGET_SEGMENTS: List[TargetSegment] = [
         keywords=[
             "activité touristique", "escape game", "accrobranche", "parc loisirs",
             "laser game", "bowling", "karting", "mini-golf", "parc d'attractions",
+            "agence de voyage",
         ],
         target_size="tpe",
         description="Activités touristiques et de loisirs — réservation en ligne, avis Google, SEO local.",
@@ -482,6 +503,19 @@ TARGET_SEGMENTS: List[TargetSegment] = [
         ],
         target_size="all",
         description="Salles de mariage et domaines — photos et vidéos cruciales, forte valeur par contrat.",
+    ),
+
+    TargetSegment(
+        id="prestataires_evenementiels",
+        emoji="🎉",
+        name="Prestataires événementiels",
+        sector="tourisme",
+        keywords=[
+            "wedding planner", "photographe de mariage", "DJ mariage",
+            "location de matériel événementiel", "location de tente de réception", "animateur événementiel",
+        ],
+        target_size="tpe",
+        description="Wedding planners, photographes, DJ, loueurs — le portfolio en ligne déclenche les demandes de devis.",
     ),
 
     TargetSegment(
@@ -624,6 +658,19 @@ TARGET_SEGMENTS: List[TargetSegment] = [
     # -----------------------------------------------------------------------
 
     TargetSegment(
+        id="courtiers_assurances_diag",
+        emoji="📑",
+        name="Courtiers, Assurances & Diagnostics",
+        sector="liberales",
+        keywords=[
+            "courtier en crédit immobilier", "courtier en assurance", "agent général d'assurance",
+            "géomètre-expert", "diagnostiqueur immobilier", "conseiller en gestion de patrimoine",
+        ],
+        target_size="tpe",
+        description="Indépendants du conseil financier et immobilier — la confiance se gagne en ligne avant le 1er rendez-vous.",
+    ),
+
+    TargetSegment(
         id="ecoles_lycees",
         emoji="🏫",
         name="Écoles & Lycées",
@@ -653,6 +700,19 @@ TARGET_SEGMENTS: List[TargetSegment] = [
     # -----------------------------------------------------------------------
     # Professions libérales
     # -----------------------------------------------------------------------
+
+    TargetSegment(
+        id="soutien_scolaire_garde",
+        emoji="🧒",
+        name="Soutien scolaire & Garde d'enfants",
+        sector="education",
+        keywords=[
+            "cours particuliers", "soutien scolaire", "garde d'enfants",
+            "micro-crèche", "crèche privée", "centre de loisirs",
+        ],
+        target_size="tpe",
+        description="Soutien scolaire, micro-crèches, garde d'enfants — les parents choisissent sur Google et les avis.",
+    ),
 
     TargetSegment(
         id="professions_liberales",

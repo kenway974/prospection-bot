@@ -21,7 +21,8 @@ class TestDetection(unittest.TestCase):
         """Chaînes des segments Habitat : cuisines, piscines, fermetures."""
         for nom in ["Mobalpa Lyon", "Cuisinella Bron", "Schmidt", "Piscines Desjoyaux",
                     "Ixina Villeurbanne", "Monsieur Store", "KparK Lyon",
-                    "Art & Fenêtres Lyon", "L’Esprit Piscine"]:
+                    "Art & Fenêtres Lyon", "L’Esprit Piscine",
+                    "5 à sec Bron", "Éléphant Bleu Vénissieux", "Babilou Lyon 3"]:
             with self.subTest(nom=nom):
                 self.assertTrue(is_franchise(nom)[0])
 

@@ -166,6 +166,13 @@ class TestNouveauxSegments(unittest.TestCase):
         self.assertIn("pisciniste", get_target("piscinistes").keywords)
         self.assertEqual(get_target("cuisinistes").sector, "habitat")
 
+    def test_metiers_ajoutes_depuis_l_ancien_catalogue(self):
+        all_kw = {k for t in TARGET_SEGMENTS for k in t.keywords}
+        for kw in ["boucherie", "vitrier", "ébéniste", "wedding planner", "cours particuliers",
+                   "pressing", "lavage auto", "diagnostiqueur immobilier", "salon de tatouage"]:
+            with self.subTest(kw=kw):
+                self.assertIn(kw, all_kw)
+
     def test_pas_de_mot_cle_en_double_dans_un_segment(self):
         for t in TARGET_SEGMENTS:
             kws = [k.lower() for k in t.keywords]
