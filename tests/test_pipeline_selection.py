@@ -76,7 +76,7 @@ class TestRunProspectionSelection(unittest.TestCase):
             "filters": criteria, "contact_score_threshold": 85,
             "send_emails": False, "gmail_address": "", "gmail_password": "", "send_sms": False,
             "find_dirigeants": False, "exclude_franchises": True, "user_franchises": [],
-            "source_types": list(sources), "analysis_workers": 2,
+            "source_types": list(sources), "analysis_workers": 2, "verify_company": False, "find_missing_sites": False,
         }
         log_q, results = queue.Queue(), []
         from pipeline import run_prospection
@@ -96,7 +96,10 @@ class TestRunProspectionSelection(unittest.TestCase):
         self.assertFalse([l for l in logs if "Erreur critique" in l], logs)
 
         # Chaque ville interrogée
-        self.assertEqual(self.text_search_calls, [("cuisiniste", "Lyon"), ("cuisiniste", "Bron")])
+        # Chaque ville interrogée, avec les synonymes du métier (3 requêtes max)
+        self.assertEqual({loc for _, loc in self.text_search_calls}, {"Lyon", "Bron"})
+        self.assertEqual([q for q, loc in self.text_search_calls if loc == "Lyon"][0], "cuisiniste")
+        self.assertEqual(len(self.text_search_calls), 6)
         # Note trop basse, fermé et franchise écartés AVANT Place Details (pas d'appel payant)
         self.assertNotIn("mal_note", self.details_calls)
         self.assertNotIn("ferme", self.details_calls)

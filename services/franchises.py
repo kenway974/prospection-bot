@@ -94,6 +94,12 @@ FRANCHISES: Set[str] = {
     # Menuiseries, fermetures & énergie
     "tryba", "k par k", "kpark", "monsieur store", "art et fenetres", "art & fenetres", "franciaflex",
     "solabaie", "effy", "hellio",
+    # Distributeurs & négoces du bâtiment (fournisseurs des artisans, pas des cibles)
+    "cedeo", "brossette", "richardson", "dispano", "gedimat", "bigmat", "big mat",
+    "tout faire materiaux", "la plateforme du batiment", "frans bonhomme", "rexel",
+    "sonepar", "yesss electrique", "cged", "chausson materiaux", "vm materiaux",
+    "partedis", "espace aubade", "aubade", "hygena", "envie de salle de bain",
+    "distriboutique", "anconetti",
     # Déménagement & services à domicile
     "demeco", "les gentlemen du demenagement", "o2 care", "adhap",
     "senior compagnie", "domidom", "anacours", "acadomia",

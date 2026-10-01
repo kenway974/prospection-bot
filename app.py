@@ -267,6 +267,20 @@ from target_segments import (
 from filters import FilterCriteria, PHONE_LABELS, WEBSITE_LABELS, parse_locations
 
 
+def _render_excluded(excluded: list) -> None:
+    """Onglet « Exclus » : chaque établissement écarté, avec sa raison. Rien n'est silencieux."""
+    if not excluded:
+        st.caption("Aucun établissement écarté sur cette campagne.")
+        return
+    by_stage: dict = {}
+    for row in excluded:
+        by_stage[row.get("stage", "?")] = by_stage.get(row.get("stage", "?"), 0) + 1
+    st.caption(" · ".join(f"{stage} : {n}" for stage, n in sorted(by_stage.items(), key=lambda x: -x[1])))
+    for row in excluded:
+        _link = f" — [Maps]({row['maps_url']})" if row.get("maps_url") else ""
+        st.markdown(f"- **{row.get('name') or '?'}** — {row.get('reason', '')} `{row.get('stage', '')}`{_link}")
+
+
 def _linkedin_panel(row: dict, key_prefix: str) -> None:
     """
     Panneau LinkedIn ASSISTÉ pour un prospect : lien vers le bon profil,
@@ -939,6 +953,8 @@ def page_prospection():
         })
 
         result_container = []
+        excluded_container: list = []
+        st.session_state.excluded = []
 
         params = {
             "google_key": google_key,
@@ -999,12 +1015,13 @@ def page_prospection():
 
         thread = threading.Thread(
             target=run_prospection,
-            args=(params, st.session_state.log_queue, result_container),
+            args=(params, st.session_state.log_queue, result_container, excluded_container),
             daemon=True,
         )
         thread.start()
         st.session_state._thread = thread
         st.session_state._results = result_container
+        st.session_state._excluded = excluded_container
 
     # ---------------------------------------------------------------------------
     # Affichage live des logs
@@ -1038,6 +1055,7 @@ def page_prospection():
             st.session_state.run_done = True
             if hasattr(st.session_state, "_results"):
                 st.session_state.prospects = list(st.session_state._results)
+                st.session_state.excluded = list(getattr(st.session_state, "_excluded", []))
 
         # Affiche les logs
         log_html = "<div class='log-box'>" + "<br>".join(
@@ -1099,15 +1117,19 @@ def page_prospection():
         with col_f1:
             filter_opt = st.radio(
                 "Afficher :",
-                ["Tous", "Sans site uniquement", "Email trouvé", "Mobile trouvé", "Score < 40"],
+                ["Tous", "📞 Appelables", "🧩 À compléter", "Sans site uniquement", "Email trouvé", "Mobile trouvé", "Score < 40"],
                 horizontal=True,
             )
         with col_f2:
-            sort_opt = st.selectbox("Trier par :", ["Opportunité (score ↑)", "Nom (A→Z)", "Note Google (↓)"])
+            sort_opt = st.selectbox("Trier par :", ["Opportunité (↓)", "Qualité du site (↑)", "Nom (A→Z)", "Note Google (↓)"])
 
         # Application des filtres
         filtered = prospects
-        if filter_opt == "Sans site uniquement":
+        if filter_opt == "📞 Appelables":
+            filtered = [p for p in prospects if p.is_callable()]
+        elif filter_opt == "🧩 À compléter":
+            filtered = [p for p in prospects if not p.is_callable()]
+        elif filter_opt == "Sans site uniquement":
             filtered = [p for p in prospects if not p.has_website()]
         elif filter_opt == "Email trouvé":
             filtered = [p for p in prospects if p.email]
@@ -1119,72 +1141,101 @@ def page_prospection():
         elif filter_opt == "Score < 40":
             filtered = [p for p in prospects if p.score < 40]
 
-        if sort_opt == "Nom (A→Z)":
+        if sort_opt == "Opportunité (↓)":
+            filtered = sorted(filtered, key=lambda p: getattr(p, "opportunity", 0), reverse=True)
+        elif sort_opt == "Qualité du site (↑)":
+            filtered = sorted(filtered, key=lambda p: p.score)
+        elif sort_opt == "Nom (A→Z)":
             filtered = sorted(filtered, key=lambda p: p.name)
         elif sort_opt == "Note Google (↓)":
             filtered = sorted(filtered, key=lambda p: p.rating or 0, reverse=True)
 
-        st.markdown(f"### 🏆 {len(filtered)} prospect(s) — triés par {sort_opt.lower()}")
+        _excluded = st.session_state.get("excluded", [])
+        tab_ok, tab_excl = st.tabs([f"✅ Prospects ({len(filtered)})", f"🚫 Exclus ({len(_excluded)})"])
+        with tab_excl:
+            _render_excluded(_excluded)
+        with tab_ok:
+            st.markdown(f"### 🏆 {len(filtered)} prospect(s) — triés par {sort_opt.lower()}")
 
-        for p in filtered:
-            score_emoji = "🟢" if p.score >= 70 else ("🟡" if p.score >= 40 else "🔴")
-            email_badge = "📧✅" if p.email else "📧❌"
-            phone_type = ""
-            if p.phone:
-                num = p.phone.replace(" ", "")
-                phone_type = "📱" if (num.startswith("06") or num.startswith("07")) else "☎️"
+            for p in filtered:
+                email_badge = "📧✅" if p.email else "📧❌"
+                phone_type = ""
+                if p.phone:
+                    num = p.phone.replace(" ", "")
+                    phone_type = "📱" if (num.startswith("06") or num.startswith("07")) else "☎️"
 
-            header = f"{score_emoji} **{p.name}** — Score {p.score}/100 — {email_badge} {phone_type}"
-            with st.expander(header):
-                c1, c2 = st.columns([1, 1])
-                with c1:
-                    if getattr(p, "dirigeant", ""):
-                        _pq = f" — {p.dirigeant_qualite}" if p.dirigeant_qualite else ""
-                        st.markdown(f"**👤 Dirigeant :** {p.dirigeant}{_pq}")
-                    st.markdown(f"**📍 Adresse :** {p.address}")
-                    # Téléphone avec badge mobile/fixe
-                    if p.phone:
-                        num = p.phone.replace(" ", "")
-                        is_mobile = num.startswith("06") or num.startswith("07")
-                        badge = "📱 Mobile" if is_mobile else "☎️ Fixe"
-                        st.markdown(f"**Téléphone :** {p.phone} — `{badge}`")
-                    else:
-                        st.markdown("**Téléphone :** —")
+                _opp = getattr(p, "opportunity", 0)
+                _opp_emoji = "🔥" if _opp >= 60 else ("👍" if _opp >= 30 else "🧊")
+                _flag_badge = f" — ⚠️ {len(p.flags)} à vérifier" if getattr(p, "flags", None) else ""
+                header = (
+                    f"{_opp_emoji} **{p.name}** — Opportunité {_opp}/100 · site {p.score}/100 — "
+                    f"{email_badge} {phone_type} {'📞 appelable' if p.is_callable() else '🧩 à compléter'}{_flag_badge}"
+                )
+                with st.expander(header):
+                    c1, c2 = st.columns([1, 1])
+                    with c1:
+                        if getattr(p, "dirigeant", ""):
+                            _pq = f" — {p.dirigeant_qualite}" if p.dirigeant_qualite else ""
+                            st.markdown(f"**👤 Dirigeant :** {p.dirigeant}{_pq}")
+                        st.markdown(f"**📍 Adresse :** {p.address}")
+                        # Téléphone avec badge mobile/fixe
+                        if p.phone:
+                            num = p.phone.replace(" ", "")
+                            is_mobile = num.startswith("06") or num.startswith("07")
+                            badge = "📱 Mobile" if is_mobile else "☎️ Fixe"
+                            st.markdown(f"**Téléphone :** {p.phone} — `{badge}`")
+                        else:
+                            st.markdown("**Téléphone :** —")
 
-                    # Email avec statut
-                    if p.email:
-                        from services.email_check import STATUS_BADGES as _EB
-                        _st = getattr(p, "email_status", "") or ""
-                        _badge = f" {_EB.get(_st, '')} _{p.email_status_reason}_" if _st else ""
-                        st.markdown(f"**📧 Email trouvé :** `{p.email}`{_badge}")
-                    else:
-                        st.markdown("**📧 Email :** non trouvé sur le site")
+                        # Email avec statut
+                        if p.email:
+                            from services.email_check import STATUS_BADGES as _EB
+                            _st = getattr(p, "email_status", "") or ""
+                            _badge = f" {_EB.get(_st, '')} _{p.email_status_reason}_" if _st else ""
+                            st.markdown(f"**📧 Email trouvé :** `{p.email}`{_badge}")
+                        else:
+                            st.markdown("**📧 Email :** non trouvé sur le site")
 
-                    # Site web + CMS détecté
-                    if p.website:
-                        cms_badge = f" `{p.cms}`" if p.cms else ""
-                        st.markdown(f"**🌐 Site :** [{p.website}]({p.website}){cms_badge}")
-                    else:
-                        st.markdown("**🌐 Site :** ❌ Aucun site web")
+                        # Site web + CMS détecté
+                        if p.website:
+                            cms_badge = f" `{p.cms}`" if p.cms else ""
+                            st.markdown(f"**🌐 Site :** [{p.website}]({p.website}){cms_badge}")
+                        else:
+                            st.markdown("**🌐 Site :** ❌ Aucun site web")
 
-                    st.markdown(f"**🔑 Mot-clé :** `{p.keyword}`")
-                    if p.rating:
-                        stars = "⭐" * round(p.rating)
-                        st.markdown(f"**Note Google :** {stars} {p.rating}/5 ({p.user_ratings_total} avis)")
-                    if p.maps_url:
-                        st.markdown(f"[📌 Voir sur Google Maps]({p.maps_url})")
+                        st.markdown(f"**🔑 Mot-clé :** `{p.keyword}`")
+                        if p.rating:
+                            stars = "⭐" * round(p.rating)
+                            st.markdown(f"**Note Google :** {stars} {p.rating}/5 ({p.user_ratings_total} avis)")
+                        if p.maps_url:
+                            st.markdown(f"[📌 Voir sur Google Maps]({p.maps_url})")
 
-                with c2:
-                    st.markdown("**🔬 Problèmes détectés :**")
-                    if p.issues:
-                        for issue in p.issues:
-                            short = issue.split("→")[0].strip()
-                            st.markdown(f"<span class='issue-chip'>⚠️ {short}</span>", unsafe_allow_html=True)
-                    else:
-                        st.markdown("✅ Aucun problème majeur détecté")
+                    with c2:
+                        st.markdown("**🔬 Problèmes détectés :**")
+                        if p.issues:
+                            for issue in p.issues:
+                                short = issue.split("→")[0].strip()
+                                st.markdown(f"<span class='issue-chip'>⚠️ {short}</span>", unsafe_allow_html=True)
+                        else:
+                            st.markdown("✅ Aucun problème majeur détecté")
 
-                st.markdown("**✉️ Brouillon cold email :**")
-                st.code(p.email_draft, language=None)
+                    if getattr(p, "score_details", None):
+                        st.markdown("**🧮 Détail du score d'opportunité :**")
+                        st.table([{"Composante": label, "Points": f"{pts:+d}"} for label, pts in p.score_details])
+                    if getattr(p, "flags", None):
+                        st.markdown("**⚠️ À vérifier avant d'appeler :**")
+                        for _f in p.flags:
+                            st.markdown(f"- {_f}")
+                    if getattr(p, "company", None):
+                        _c = p.company
+                        st.caption(
+                            f"Sirène : {_c.get('nom', '')} · SIREN {_c.get('siren', '')} · NAF {_c.get('naf', '')} · "
+                            f"créée le {_c.get('date_creation', '?')} · "
+                            f"{_c.get('etablissements_ouverts', '?')} établissement(s) ouvert(s)"
+                        )
+
+                    st.markdown("**✉️ Brouillon cold email :**")
+                    st.code(p.email_draft, language=None)
 
         # ---------------------------------------------------------------------------
         # Export
