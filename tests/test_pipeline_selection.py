@@ -76,7 +76,7 @@ class TestRunProspectionSelection(unittest.TestCase):
             "filters": criteria, "contact_score_threshold": 85,
             "send_emails": False, "gmail_address": "", "gmail_password": "", "send_sms": False,
             "find_dirigeants": False, "exclude_franchises": True, "user_franchises": [],
-            "source_types": list(sources), "analysis_workers": 2,
+            "source_types": list(sources), "analysis_workers": 2, "verify_company": False,
         }
         log_q, results = queue.Queue(), []
         from pipeline import run_prospection

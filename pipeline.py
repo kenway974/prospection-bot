@@ -431,6 +431,19 @@ def run_prospection(
 
                 _funnel_candidates += len(candidates)
 
+                # ── Vérification Sirène (métiers du bâtiment) : entreprise active,
+                # NAF cohérent, pas une chaîne. Uniquement sur ce qui sera analysé.
+                if trade is not None and params.get("verify_company", True):
+                    from services.company_check import check_prospect as _check_company
+                    _verified = []
+                    for _p in candidates[:target_per_kw * 3]:
+                        _why = _check_company(_p, trade)
+                        if _why:
+                            _exclude_p(_p, _why, "Sirène")
+                        else:
+                            _verified.append(_p)
+                    candidates = _verified
+
                 # ── Phase 3+4 : Analyse + filtre score (commun toutes sources) ──
                 kw_qualified = _analyse_and_filter(candidates, kw_label)[:target_per_kw]
                 log_q.put(f"[--] {'✅' if len(kw_qualified) >= target_per_kw else '⚠️ '} {len(kw_qualified)}/{target_per_kw} qualifiés pour '{kw_label}'.")

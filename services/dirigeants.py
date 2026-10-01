@@ -155,7 +155,8 @@ def _throttle() -> None:
     _last_call = time.time()
 
 
-def _search(name: str, postal_code: str) -> List[dict]:
+def _search(name: str, postal_code: str, raise_errors: bool = False) -> List[dict]:
+    """Recherche Sirène. raise_errors=True : une panne réseau lève l'erreur au lieu de renvoyer []."""
     params = {"q": name, "per_page": 5, "page": 1}
     if postal_code:
         params["code_postal"] = postal_code
@@ -169,6 +170,8 @@ def _search(name: str, postal_code: str) -> List[dict]:
         return resp.json().get("results", []) or []
     except (requests.RequestException, ValueError) as exc:
         logger.debug("  Sirène dirigeant indisponible pour %s : %s", name, exc)
+        if raise_errors:
+            raise
         return []
 
 
