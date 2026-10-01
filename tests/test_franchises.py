@@ -17,6 +17,21 @@ from services.franchises import is_franchise, filter_franchises, _normalize
 
 class TestDetection(unittest.TestCase):
 
+    def test_enseignes_habitat(self):
+        """Chaînes des segments Habitat : cuisines, piscines, fermetures."""
+        for nom in ["Mobalpa Lyon", "Cuisinella Bron", "Schmidt", "Piscines Desjoyaux",
+                    "Ixina Villeurbanne", "Monsieur Store", "KparK Lyon",
+                    "Art & Fenêtres Lyon", "L’Esprit Piscine"]:
+            with self.subTest(nom=nom):
+                self.assertTrue(is_franchise(nom)[0])
+
+    def test_independants_habitat_gardes(self):
+        """Noms de famille / noms courants : un indépendant ne doit pas être exclu."""
+        for nom in ["Plomberie Schmidt", "Cuisines Dupont", "Restaurant Shiva", "Piscines Martin",
+                    "Le Carré Bleu", "Traiteur Cuisine Plus"]:
+            with self.subTest(nom=nom):
+                self.assertFalse(is_franchise(nom)[0])
+
     def test_franchises_evidentes(self):
         for nom in [
             "Fitness Park Saint-Denis",

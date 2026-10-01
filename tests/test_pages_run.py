@@ -69,7 +69,8 @@ class TestChaquePageSExecute(unittest.TestCase):
         os.chdir(cls.old_cwd)
         shutil.rmtree(cls.workdir, ignore_errors=True)
 
-    def _run_page(self, page_fn: str):
+    def _run_page(self, page_fn: str, interactive: bool = False):
+        """interactive=True : garde le fichier jusqu'à la fin du test, pour pouvoir relancer la page."""
         # Rend la page ciblée « par défaut » pour l'ouvrir directement
         s = self.src.replace('url_path="ma-journee", default=True)', 'url_path="ma-journee")')
         s, n = re.subn(r"(st\.Page\(" + page_fn + r",[^)]*?)\)", r"\1, default=True)", s, count=1)
@@ -77,6 +78,9 @@ class TestChaquePageSExecute(unittest.TestCase):
         tmp = os.path.join(ROOT, f"_apptest_{page_fn}.py")
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(s)
+        if interactive:
+            self.addCleanup(os.remove, tmp)
+            return AppTest.from_file(tmp, default_timeout=120).run()
         try:
             at = AppTest.from_file(tmp, default_timeout=120)
             at.run()
@@ -96,6 +100,33 @@ class TestChaquePageSExecute(unittest.TestCase):
         text = " ".join(m.value for m in at.markdown)
         self.assertIn("ESN Alpha", text)
         self.assertIn("Jean Dupont", text)     # dirigeant visible
+
+    def test_prospection_cibles_combinees_et_criteres(self):
+        at = self._run_page("page_prospection", interactive=True)
+        at.radio(key="tgt_sector_radio").set_value("habitat").run()
+        at.selectbox(key="target_selectbox").set_value("cuisinistes").run()
+        extra = next(m for m in at.multiselect if m.label.startswith("➕"))
+        extra.set_value(["piscinistes"]).run()
+        self.assertEqual([str(e.value)[:300] for e in at.exception], [])
+
+        keywords = next(t for t in at.text_area if t.label.startswith("🔑")).value
+        self.assertIn("cuisiniste", keywords)
+        self.assertIn("pisciniste", keywords)
+
+        # Critères incohérents → message d'erreur et lancement impossible
+        next(c for c in at.checkbox if c.label.startswith("Limiter")).check().run()
+        next(n for n in at.number_input if n.label == "Nombre d'avis minimum").set_value(500).run()
+        next(n for n in at.number_input if n.label == "Nombre d'avis maximum").set_value(10).run()
+        self.assertTrue(any("incohérents" in e.value for e in at.error))
+        launch = next(b for b in at.button if "Lancer" in b.label)
+        self.assertTrue(launch.disabled)
+
+    def test_prospection_sans_ville_bloque_le_lancement(self):
+        at = self._run_page("page_prospection", interactive=True)
+        next(t for t in at.text_area if t.label.startswith("📌")).set_value("  \n ").run()
+        launch = next(b for b in at.button if "Lancer" in b.label)
+        self.assertTrue(launch.disabled)
+        self.assertTrue(any("au moins une ville" in i.value for i in at.info))
 
 
 if __name__ == "__main__":

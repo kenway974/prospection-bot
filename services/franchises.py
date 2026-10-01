@@ -83,6 +83,20 @@ FRANCHISES: Set[str] = {
     # Équipement maison / électro
     "darty", "fnac", "boulanger", "conforama", "ikea", "maisons du monde",
     "alinea", "but ", "centrakor", "delamaison",
+    # Cuisines & salles de bain
+    "mobalpa", "cuisinella", "cuisines schmidt", "schmidt cuisines", "ixina", "socooc",
+    "arthur bonnet", "cuisines references", "vogica", "aviva cuisines",
+    "lapeyre", "sobrico",
+    # Piscines & spas
+    "desjoyaux", "diffazur", "piscinelle", "everblue", "magiline", "waterair",
+    "esprit piscine", "cash piscines", "irrijardin", "mondial piscine", "hydro sud",
+    "aquilus", "abrisud",
+    # Menuiseries, fermetures & énergie
+    "tryba", "k par k", "kpark", "monsieur store", "art et fenetres", "art & fenetres", "franciaflex",
+    "solabaie", "effy", "hellio",
+    # Déménagement & services à domicile
+    "demeco", "les gentlemen du demenagement", "o2 care", "adhap",
+    "senior compagnie", "domidom", "anacours", "acadomia",
     # Animalerie & divers
     "maxi zoo", "animalis", "mondial relay", "chronopost", "la poste",
     "pole emploi", "france travail", "pharmabest", "pharmacie lafayette",
@@ -108,6 +122,7 @@ FRANCHISES: Set[str] = {
 AMBIGUOUS: Set[str] = {
     "paul", "ange", "atol", "vog", "quick", "casino", "orange", "free",
     "louise", "action", "but", "courir", "leader price", "carrefour city",
+    "schmidt", "shiva", "cuisine plus", "carre bleu",
 }
 
 

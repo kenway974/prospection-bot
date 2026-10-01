@@ -9,8 +9,10 @@ Expose aussi le logger global `logger`.
 import os
 import logging
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 from dotenv import load_dotenv
+
+from filters import parse_locations
 
 load_dotenv()
 
@@ -57,6 +59,31 @@ logger = setup_logger()
 # Les valeurs par défaut s'appliquent si la variable est absente du .env.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Lecture des variables d'environnement
+# ---------------------------------------------------------------------------
+
+_TRUE_VALUES = ("1", "true", "yes", "oui")
+
+
+def env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    return raw in _TRUE_VALUES if raw else default
+
+
+def env_list(name: str, default: str = "", sep: str = ",") -> List[str]:
+    return [item.strip() for item in os.getenv(name, default).split(sep) if item.strip()]
+
+
+def env_optional_int(name: str) -> Optional[int]:
+    """Entier, ou None si la variable est absente ou vide."""
+    raw = os.getenv(name, "").strip()
+    return int(raw) if raw else None
+
+
+DEFAULT_LOCATION = "Lyon, France"
+
+
 @dataclass
 class Config:
 
@@ -77,8 +104,9 @@ class Config:
         for k in os.getenv("SEARCH_KEYWORDS", "restaurant,boulangerie").split(",")
         if k.strip()
     ])
-    search_location: str = field(
-        default_factory=lambda: os.getenv("SEARCH_LOCATION", "Lyon, France")
+    # Une ou plusieurs villes séparées par des « ; » (sans doublon). Vide → Lyon.
+    search_locations: List[str] = field(
+        default_factory=lambda: parse_locations(os.getenv("SEARCH_LOCATION", "") or DEFAULT_LOCATION)
     )
     search_radius: int = field(
         default_factory=lambda: int(os.getenv("SEARCH_RADIUS", "10000"))
@@ -100,6 +128,14 @@ class Config:
     contact_score_threshold: int = field(
         default_factory=lambda: int(os.getenv("CONTACT_SCORE_THRESHOLD", "70"))
     )
+    # Critères de sélection (voir filters.py)
+    max_rating: float = field(default_factory=lambda: float(os.getenv("MAX_RATING", "5.0")))
+    min_reviews: int = field(default_factory=lambda: int(os.getenv("MIN_REVIEWS", "0")))
+    max_reviews: Optional[int] = field(default_factory=lambda: env_optional_int("MAX_REVIEWS"))  # vide = sans limite
+    website_filter: str = field(default_factory=lambda: os.getenv("WEBSITE_FILTER", "any"))  # any / without / with
+    phone_filter: str = field(default_factory=lambda: os.getenv("PHONE_FILTER", "any"))      # any / required / mobile
+    exclude_closed: bool = field(default_factory=lambda: env_bool("EXCLUDE_CLOSED", True))
+    require_email: bool = field(default_factory=lambda: env_bool("REQUIRE_EMAIL", False))
 
     # --- Paramètres techniques ---
     request_timeout: int = 10
@@ -110,6 +146,15 @@ class Config:
     followup_delay_days: int = field(
         default_factory=lambda: int(os.getenv("FOLLOWUP_DELAY_DAYS", "5"))
     )
+
+    @property
+    def search_location(self) -> str:
+        """Zone par défaut : la première ville de la liste."""
+        return self.search_locations[0]
+
+    @search_location.setter
+    def search_location(self, value: str) -> None:
+        self.search_locations = parse_locations(value) or [DEFAULT_LOCATION]
 
     def validate(self) -> None:
         """Vérifie que la config minimale est présente. Lève ValueError sinon."""
