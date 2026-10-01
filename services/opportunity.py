@@ -21,12 +21,14 @@ FEW_REVIEWS = ((10, 20, "très peu d'avis Google"), (30, 10, "peu d'avis Google"
 MANY_REVIEWS = (100, -10, "beaucoup d'avis Google")
 SOLID_PRESENCE_POINTS = -40    # bon site + beaucoup d'avis bien notés + réseaux sociaux
 SOLID_MIN_REVIEWS, SOLID_MIN_RATING = 50, 4.5
+NO_PHONE_POINTS = -25          # pas de téléphone : fiche « à compléter », pas appelable
 
 # Drapeaux « à vérifier » qui rendent l'opportunité douteuse (début du libellé → points)
 FLAG_PENALTIES = (
     ("site sur un domaine étranger", -30),
     ("chiffre d'affaires déclaré 0", -20),
     ("établissements ouverts (chaîne", -20),
+    ("introuvable dans Sirène", -15),
     ("code NAF", -10),
     ("métier « ", -5),
 )
@@ -68,6 +70,9 @@ def compute(p) -> Tuple[int, List[list]]:
 
     if _has_solid_presence(p, keys):
         details.append(["présence déjà solide (bon site, avis, réseaux sociaux)", SOLID_PRESENCE_POINTS])
+
+    if not p.is_callable():
+        details.append(["pas de téléphone (fiche à compléter)", NO_PHONE_POINTS])
 
     for flag in getattr(p, "flags", []) or []:
         for prefix, points in FLAG_PENALTIES:
