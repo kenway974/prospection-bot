@@ -46,7 +46,7 @@ from services.analyzer import analyze_prospect
 from services.mailer import enrich_with_email, enrich_with_followup
 from services.notion_sync import sync_all
 from services.sms import send_all_sms
-from optout_manager import OptOutFileError, add_optout, filter_opted_out, is_opted_out
+from optout_manager import OptOutFileError, add_optout, filter_opted_out
 from history_manager import (
     HistoryFileError,
     load_contacted_ids,
@@ -147,9 +147,6 @@ def run_followup() -> None:
             keyword="",
             email=contact.get("email") or None,
         )
-        if is_opted_out(p):
-            logger.info("  🚫 %s a demandé à ne plus être contacté → pas de relance", p.name)
-            continue
         p = enrich_with_followup(p)
 
         safe_name = "".join(c if c.isalnum() or c in " _-" else "_" for c in p.name)

@@ -201,7 +201,8 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # Titre principal
 # ---------------------------------------------------------------------------
-from profiles import PROFILES, get_profile
+from profiles import get_profile
+from profile_manager import get_all_profiles
 
 st.markdown("# 🎯 Prospection B2B Automatisée")
 st.markdown("Trouve des prospects locaux, analyse leur besoin et génère des cold emails/SMS en un clic.")
@@ -212,7 +213,7 @@ st.markdown("---")
 # ---------------------------------------------------------------------------
 st.markdown("### 🧩 Choisissez votre profil")
 
-profile_options = {f"{p.emoji} {p.name}": p for p in PROFILES}
+profile_options = {f"{p.emoji} {p.name}": p for p in get_all_profiles()}
 selected_label = st.selectbox(
     "Profil de prospection",
     options=list(profile_options.keys()),

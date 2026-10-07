@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, List
 
 if TYPE_CHECKING:
@@ -125,8 +126,12 @@ def get_due_followups(delay_days: int = 5) -> List[dict]:
     - n'ont pas répondu
     - relance pas encore envoyée
 
+    - n'ont pas demandé à ne plus être contactés (STOP, voir optout_manager)
+
     Chaque entrée retournée contient le place_id + toutes les infos.
     """
+    from optout_manager import filter_opted_out  # import local : évite une dépendance au chargement
+
     data = _load_contacted_data()
     cutoff = datetime.now() - timedelta(days=delay_days)
     due = []
@@ -144,7 +149,11 @@ def get_due_followups(delay_days: int = 5) -> List[dict]:
                 due.append({"place_id": place_id, **info})
         except ValueError:
             continue
-    return due
+
+    # Les refus (par email ou par fiche Google) ne sont jamais relancés
+    contacts = [SimpleNamespace(place_id=d["place_id"], email=d.get("email")) for d in due]
+    kept_ids = {c.place_id for c in filter_opted_out(contacts)[0]}
+    return [d for d in due if d["place_id"] in kept_ids]
 
 
 def mark_as_responded(place_id: str) -> None:

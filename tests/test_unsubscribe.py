@@ -218,3 +218,39 @@ def test_un_fichier_de_refus_illisible_arrete_la_prospection(web):
 
     assert exc.value.code == 1
     assert names_in_output() == []
+
+
+# ------------------------------------------------------------------ interface : onglet Relances
+
+def _due_contact(place_id="p_due", email="due@exemple.fr"):
+    history_manager._save_contacted_data({
+        place_id: {"name": "Chez Due", "email": email, "first_contact_date": "2000-01-01",
+                   "responded": False, "followup_sent": False}
+    })
+
+
+class TestFollowupsExcludeOptOut:
+    def test_la_liste_des_relances_exclut_un_refus_par_email(self):
+        _due_contact()
+        optout_manager.add_optout(email="DUE@exemple.fr")
+        assert history_manager.get_due_followups(5) == []
+
+    def test_la_liste_des_relances_exclut_un_refus_par_fiche_google(self):
+        _due_contact()
+        optout_manager.add_optout(place_id="p_due")
+        assert history_manager.get_due_followups(5) == []
+
+    def test_sans_refus_la_relance_est_proposee(self):
+        _due_contact()
+        assert [d["place_id"] for d in history_manager.get_due_followups(5)] == ["p_due"]
+
+    def test_l_interface_ne_propose_pas_de_relancer_un_refus(self):
+        from streamlit.testing.v1 import AppTest
+        _due_contact()
+        optout_manager.add_optout(email="due@exemple.fr")
+
+        at = AppTest.from_file(os.path.join(os.path.dirname(__file__), "..", "app.py"),
+                               default_timeout=30).run()
+
+        assert not at.exception
+        assert any("Aucun contact à relancer" in s.value for s in at.success)
