@@ -2,6 +2,9 @@
 
 Script Python + interface web pour trouver des prospects locaux, analyser leur présence en ligne et envoyer des cold emails/SMS personnalisés — le tout en un clic.
 
+> 📖 **Manuel complet : [MANUEL.md](MANUEL.md)** — où modifier quoi (clés API, messages, secteurs, score),
+> désinscription, relances, tests et méthode TDD, dépannage.
+
 ---
 
 ## Ce que ça fait
@@ -12,6 +15,7 @@ Script Python + interface web pour trouver des prospects locaux, analyser leur p
 4. **Génère** un cold email personnalisé selon ce qui a été détecté
 5. **Synchronise** les prospects dans ta base Notion
 6. **Envoie** les emails via Gmail et/ou les SMS via Brevo (optionnel)
+7. **Respecte les refus** : chaque mail explique comment répondre STOP, et `python main.py --optout adresse@exemple.fr` exclut une personne pour toujours
 
 ---
 
@@ -60,7 +64,9 @@ prospection/
 ├── config.py               → Config centralisée + logger
 ├── profiles.py             → 10 profils de prospection prédéfinis
 ├── profile_manager.py      → Sauvegarde/chargement des profils custom
-├── history_manager.py      → Historique des campagnes
+├── history_manager.py      → Historique des campagnes + suivi des relances
+├── optout_manager.py       → Liste des refus (STOP)
+├── MANUEL.md               → Manuel d'utilisation complet
 ├── requirements.txt
 ├── .env.example            → Modèle de config à copier en .env
 │
@@ -107,10 +113,10 @@ Chaque profil est modifiable depuis l'interface et sauvegardable sous un nom per
 | HTTPS | Site non sécurisé |
 | Viewport | Site non responsive (mobile) |
 | Title / Meta description | SEO de base absent |
-| Favicon | Manque de professionnalisme |
 | Formulaire | Pas de capture de lead |
 | Tracking | Pas de Google Analytics / GTM / Pixel |
 | Vitesse | Temps de réponse > 3s |
+| Site obsolète | Copyright vieux de 3 ans ou plus |
 | Builder gratuit | Wix, Jimdo, Weebly… |
 | Réseaux sociaux | Aucun lien social |
 | Email | Scraping mailto + page /contact |
@@ -166,19 +172,24 @@ YOUR_WEBSITE=https://kennydev.fr
 
 ## Tests
 
-### Tests unitaires (rapides, sans API)
+### Tous les tests sans réseau (rapides)
 
-Vérifient le bon fonctionnement de l'analyzer, du mailer et des profils — aucune clé API requise.
+Aucune clé API requise : Google, les sites, Notion, Brevo et Gmail sont simulés.
 
 ```bash
-python run_tests.py --unit
+pip install -r requirements-dev.txt
+python run_tests.py
 ```
 
-75 tests couvrent :
-- Tous les checks du site web (HTTPS, mobile, SEO, tracking, formulaires…)
-- La cohérence des emails générés (sujet singulier/pluriel, accroche selon le diagnostic, CTA adapté au score)
-- La validité des 10 profils prédéfinis (keywords, hooks, SMS ≤ 160 chars…)
-- La sauvegarde/chargement/suppression des profils custom
+Ils couvrent :
+- Les checks du site web et le score
+- Les mails (sujet, accroche, mention STOP) et le lien entre les messages d'analyse et l'accroche
+- Le parcours complet `python main.py` et celui de l'interface (filtres, tri, fichiers, Notion, SMS, Gmail)
+- La désinscription : refus exclus de la recherche, de l'envoi, des SMS et des relances
+- Les fichiers abîmés (le programme s'arrête au lieu de tout recontacter)
+- Les profils (prédéfinis et sauvegardés) et l'interface Streamlit
+
+Méthode et fichiers de tests : voir [MANUEL.md §11](MANUEL.md#11-tests-et-méthode-tdd).
 
 ### Tests d'intégration multi-villes (avec API)
 
