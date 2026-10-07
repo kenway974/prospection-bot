@@ -5,8 +5,6 @@ Google Places, Gmail (SMTP), Notion, Brevo et le scraping d'emails,
 avec de faux serveurs. Vérifie ce qui sort, pas comment c'est codé.
 """
 
-import smtplib
-
 import pytest
 import requests
 
@@ -15,7 +13,7 @@ from services import gmail, google_maps, notion_sync, sms
 from services.analyzer import analyze_prospect
 from services.google_maps import Prospect
 from services.mailer import enrich_with_email
-from tests.fakes import FakeSMTP, make_response
+from tests.fakes import make_response
 
 
 def prospect(**kw) -> Prospect:

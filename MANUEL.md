@@ -358,6 +358,7 @@ python run_tests.py --campaign               # VRAIE API Google, consomme des cr
   `web.add_place("boulangerie", "p1", "Chez Zoé", website="https://zoe.fr", html=GOOD_SITE)`.
 - `smtp` : faux serveur Gmail ; les mails envoyés sont dans `smtp.sent`.
 - `clean_config` : valeurs de config fixes, indépendantes de ton `.env`.
+- `app_module` : importe `app.py` (l'interface) et remet à la fin du test tout ce que `run_prospection` modifie.
 - Chaque test tourne dans un dossier temporaire : `output/` n'est jamais touché. `time.sleep` est neutralisé.
 
 ### Boucle de travail pour toute nouvelle fonctionnalité

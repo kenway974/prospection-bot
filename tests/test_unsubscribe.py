@@ -23,7 +23,7 @@ from services import gmail, sms
 from services.google_maps import Prospect
 from services.mailer import draft_email, draft_followup_email
 from tests.fakes import BAD_SITE
-from tests.test_app_pipeline import app_module, run as run_app  # noqa: F401
+from tests.test_app_pipeline import run as run_app
 
 
 def prospect(**kw) -> Prospect:

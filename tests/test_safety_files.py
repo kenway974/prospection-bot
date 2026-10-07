@@ -14,7 +14,7 @@ import pytest
 import history_manager
 import main
 from tests.fakes import BAD_SITE
-from tests.test_app_pipeline import app_module, run as run_app  # noqa: F401
+from tests.test_app_pipeline import run as run_app
 
 
 def corrupt(path):

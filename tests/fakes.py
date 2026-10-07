@@ -34,7 +34,6 @@ class FakeWeb:
     - places      : liste de dicts {place_id, name, address} renvoyés par la Text Search
     - details     : {place_id: dict de détails} renvoyés par Place Details
     - sites       : {url: html} ; une URL absente = site injoignable (ConnectionError)
-    - slow_sites  : {url: secondes} → pas utilisé (le temps est mesuré, pas simulé)
     - notion_existing_names : noms déjà présents dans le CRM Notion
     """
 

@@ -19,14 +19,6 @@ PERFECT = """<!doctype html><html><head><title>T</title>
 <a href="https://facebook.com/x">fb</a><footer>© 2026</footer></body></html>"""
 
 
-def site(**removed):
-    """Un site parfait auquel on retire une seule chose."""
-    html = PERFECT
-    for needle in removed.values():
-        html = html.replace(needle, "")
-    return html
-
-
 CASES = [
     # (description, url, html, mot attendu dans l'accroche)
     ("HTTPS manquant", "http://x.fr", PERFECT, "HTTP"),

@@ -67,3 +67,33 @@ def smtp(monkeypatch):
     monkeypatch.setattr("smtplib.SMTP", FakeSMTP)
     yield FakeSMTP
     FakeSMTP.reset()
+
+
+@pytest.fixture
+def app_module(monkeypatch):
+    """Importe app.py et restaure tout l'état global que run_prospection modifie."""
+    import config as cfg
+    import app
+    import services.google_maps as gm
+    import services.analyzer as an
+    import services.mailer as ma
+    import services.notion_sync as no
+    import services.sms as sm
+    import services.gmail as gm_mail
+
+    for mod, names in [
+        (cfg, ["config", "logger"]),
+        (gm, ["config", "logger"]),
+        (an, ["config", "logger"]),
+        (ma, ["config", "logger"]),
+        (no, ["config", "logger"]),
+        (sm, ["config", "logger"]),
+        (gm_mail, ["config", "logger"]),
+    ]:
+        for n in names:
+            monkeypatch.setattr(mod, n, getattr(mod, n))
+    for var in ("GOOGLE_PLACES_API_KEY", "NOTION_API_KEY", "BREVO_API_KEY", "SEARCH_LOCATION",
+                "SEARCH_KEYWORDS", "SEARCH_RADIUS", "MAX_RESULTS_PER_KEYWORD", "YOUR_NAME",
+                "YOUR_TITLE", "YOUR_EMAIL", "YOUR_WEBSITE", "YOUR_OFFER", "EMAIL_HOOK", "SMS_HOOK"):
+        monkeypatch.setenv(var, "")
+    return app

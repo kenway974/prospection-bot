@@ -5,8 +5,7 @@ Dans app.py, la config est rechargée à chaque lancement. Ces tests vérifient 
 modules (mailer, SMS…) lisent bien les valeurs du formulaire, pas celles du .env de départ.
 """
 
-from tests.fakes import BAD_SITE
-from tests.test_app_pipeline import app_module, base_params, run, scenario  # noqa: F401
+from tests.test_app_pipeline import run
 
 
 def test_la_signature_du_mail_utilise_les_champs_de_l_interface(web, app_module):
