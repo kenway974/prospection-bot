@@ -347,15 +347,15 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         import services.analyzer as an_mod
         import services.mailer as ma_mod
         import services.notion_sync as no_mod
-        gm_mod.logger = ui_logger
-        an_mod.logger = ui_logger
-        ma_mod.logger = ui_logger
-        no_mod.logger = ui_logger
+        import services.sms as sms_mod
+        import services.gmail as gmail_mod
 
-        # Recharge aussi le config dans chaque module
-        gm_mod.config = c
-        an_mod.config = c
-        no_mod.config = c
+        # Chaque service lit la config et le logger au niveau du module : il faut les
+        # remplacer TOUS, sinon un service garde les valeurs du .env au lieu de celles
+        # saisies dans l'interface (signature des mails, clé Brevo…).
+        for service_mod in (gm_mod, an_mod, ma_mod, no_mod, sms_mod, gmail_mod):
+            service_mod.config = c
+            service_mod.logger = ui_logger
 
         from services.google_maps import search_prospects
         from services.analyzer import analyze_prospect

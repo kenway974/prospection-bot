@@ -25,6 +25,7 @@ def app_module(monkeypatch):
     import services.mailer as ma
     import services.notion_sync as no
     import services.sms as sm
+    import services.gmail as gm_mail
 
     for mod, names in [
         (cfg, ["config", "logger"]),
@@ -33,6 +34,7 @@ def app_module(monkeypatch):
         (ma, ["config", "logger"]),
         (no, ["config", "logger"]),
         (sm, ["config", "logger"]),
+        (gm_mail, ["config", "logger"]),
     ]:
         for n in names:
             monkeypatch.setattr(mod, n, getattr(mod, n))
