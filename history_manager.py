@@ -40,6 +40,10 @@ HISTORY_FILE   = os.path.join("output", "history.json")
 CONTACTED_FILE = os.path.join("output", "contacted_place_ids.json")
 
 
+class HistoryFileError(RuntimeError):
+    """Le fichier des contacts existe mais est illisible : on s'arrête plutôt que de tout recontacter."""
+
+
 def _ensure_output() -> None:
     os.makedirs("output", exist_ok=True)
 
@@ -72,8 +76,12 @@ def _load_contacted_data() -> dict:
                 for pid in data
             }
         return data
-    except Exception:
-        return {}
+    except (OSError, ValueError) as exc:
+        raise HistoryFileError(
+            f"Fichier des contacts illisible ({CONTACTED_FILE}) : {exc}. "
+            "Le fichier n'a pas été modifié. Réparez-le (ou restaurez une copie) puis relancez : "
+            "sinon tous les prospects déjà contactés seraient recontactés."
+        ) from exc
 
 
 def _save_contacted_data(data: dict) -> None:
@@ -170,7 +178,7 @@ def load_history() -> List[dict]:
     try:
         with open(HISTORY_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except (OSError, ValueError):
         return []
 
 
@@ -187,6 +195,13 @@ def save_run(
     """Enregistre les statistiques d'un run terminé (max 50 entrées conservées)."""
     _ensure_output()
     history = load_history()
+    if not history and os.path.exists(HISTORY_FILE) and os.path.getsize(HISTORY_FILE) > 0:
+        # Fichier présent mais illisible : on le met de côté au lieu de l'écraser
+        try:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                json.load(f)
+        except (OSError, ValueError):
+            os.replace(HISTORY_FILE, HISTORY_FILE + ".corrupt")
     history.insert(0, {
         "date": datetime.now().strftime("%d/%m/%Y %H:%M"),
         "profile": profile_name,

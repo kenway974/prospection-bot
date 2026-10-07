@@ -357,6 +357,12 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
             service_mod.config = c
             service_mod.logger = ui_logger
 
+        # Fichiers de refus et de contacts lisibles ? Sinon on s'arrête avant tout appel payant.
+        from history_manager import load_contacted_ids as _check_contacts
+        from optout_manager import filter_opted_out as _check_optout
+        _check_optout([])
+        _check_contacts()
+
         from services.google_maps import search_prospects
         from services.analyzer import analyze_prospect
         from services.mailer import enrich_with_email

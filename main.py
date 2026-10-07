@@ -48,6 +48,7 @@ from services.notion_sync import sync_all
 from services.sms import send_all_sms
 from optout_manager import OptOutFileError, add_optout, filter_opted_out, is_opted_out
 from history_manager import (
+    HistoryFileError,
     load_contacted_ids,
     mark_as_contacted,
     get_due_followups,
@@ -185,10 +186,11 @@ def run() -> None:
         logger.critical("❌ %s", exc)
         sys.exit(1)
 
-    # Fichier de refus lisible ? Sinon on s'arrête avant d'appeler quoi que ce soit.
+    # Fichiers de refus et de contacts lisibles ? Sinon on s'arrête avant d'appeler quoi que ce soit.
     try:
         filter_opted_out([])
-    except OptOutFileError as exc:
+        load_contacted_ids()
+    except (OptOutFileError, HistoryFileError) as exc:
         logger.critical("❌ %s", exc)
         sys.exit(1)
 
@@ -345,7 +347,7 @@ def main(argv: List[str] | None = None) -> None:
     elif args.followup:
         try:
             run_followup()
-        except OptOutFileError as exc:
+        except (OptOutFileError, HistoryFileError) as exc:
             logger.critical("❌ %s", exc)
             sys.exit(1)
     else:

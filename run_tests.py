@@ -2,7 +2,7 @@
 run_tests.py — Lance tous les tests du projet et affiche un rapport.
 
 Usage :
-  python run_tests.py           → tests unitaires uniquement (rapides, sans API)
+  python run_tests.py           → tous les tests sans réseau (rapides, sans API)
   python run_tests.py --all     → unitaires + campagnes multi-villes (avec API)
   python run_tests.py --unit    → unitaires seulement
   python run_tests.py --campaign → campagnes seulement
@@ -11,7 +11,6 @@ Usage :
 
 import sys
 import os
-import unittest
 import argparse
 import time
 
@@ -19,29 +18,26 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 
 def run_unit_tests() -> bool:
-    """Lance les tests unitaires (analyzer, mailer, profiles). Retourne True si tout passe."""
+    """
+    Lance TOUS les tests sans réseau (unitaires + comportement + désinscription + sécurité)
+    via pytest. Le test_campaign.py (vraie API Google) est exclu : voir --campaign.
+    Retourne True si tout passe.
+    """
+    import subprocess
+
     print("\n" + "=" * 60)
-    print("🧪 TESTS UNITAIRES")
+    print("🧪 TESTS (unitaires + comportement, sans réseau)")
     print("=" * 60)
 
-    loader = unittest.TestLoader()
-    suite = unittest.TestSuite()
+    cmd = [sys.executable, "-m", "pytest", "tests", "-q", "--ignore=tests/test_campaign.py"]
+    try:
+        ok = subprocess.run(cmd, cwd=os.path.dirname(os.path.abspath(__file__))).returncode == 0
+    except FileNotFoundError:
+        print("❌ pytest introuvable. Installez-le : pip install -r requirements-dev.txt")
+        return False
 
-    # Charge les 3 modules de tests unitaires
-    for module in ["tests.test_analyzer", "tests.test_mailer", "tests.test_profiles"]:
-        try:
-            suite.addTests(loader.loadTestsFromName(module))
-        except Exception as e:
-            print(f"❌ Impossible de charger {module} : {e}")
-            return False
-
-    runner = unittest.TextTestRunner(verbosity=2, stream=sys.stdout)
-    result = runner.run(suite)
-
-    print(f"\n{'✅ TOUS LES TESTS PASSENT' if result.wasSuccessful() else '❌ DES TESTS ÉCHOUENT'}")
-    print(f"   Tests : {result.testsRun} | Échecs : {len(result.failures)} | Erreurs : {len(result.errors)}")
-
-    return result.wasSuccessful()
+    print(f"\n{'✅ TOUS LES TESTS PASSENT' if ok else '❌ DES TESTS ÉCHOUENT'}")
+    return ok
 
 
 def run_campaign_tests(max_results: int = 3, campagne_filter: str = None) -> None:
