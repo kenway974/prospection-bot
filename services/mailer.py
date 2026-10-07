@@ -41,7 +41,6 @@ def _build_subject(prospect: Prospect, n_issues: int) -> str:
         return f"{name} — une idée pour aller encore plus loin"
 
     if n_issues == 1:
-        issue_short = prospect.issues[0].split("→")[0].strip().lower()
         return f"{name} — un point à corriger sur votre site"
 
     if n_issues <= 3:
@@ -174,6 +173,25 @@ def _build_cta(prospect: Prospect) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Mention de désinscription + origine de l'adresse
+# ---------------------------------------------------------------------------
+
+DEFAULT_UNSUBSCRIBE_TEXT = (
+    "Je vous écris car vos coordonnées figurent publiquement sur votre site ou votre fiche "
+    "Google professionnelle. Si vous ne souhaitez plus recevoir de message de ma part, "
+    "répondez simplement « STOP » à ce mail et je ne vous contacterai plus."
+)
+
+
+def _build_footer() -> str:
+    """
+    Pied de mail : d'où vient l'adresse + comment refuser.
+    Personnalisable avec UNSUBSCRIBE_TEXT dans le .env.
+    """
+    return os.getenv("UNSUBSCRIBE_TEXT", "").strip() or DEFAULT_UNSUBSCRIBE_TEXT
+
+
+# ---------------------------------------------------------------------------
 # Construction finale
 # ---------------------------------------------------------------------------
 
@@ -207,6 +225,9 @@ def draft_email(prospect: Prospect) -> str:
         "Bonne journée,",
         "",
         signature,
+        "",
+        "--",
+        _build_footer(),
     ]
 
     return "\n".join(parts).strip()
@@ -259,6 +280,9 @@ def draft_followup_email(prospect: Prospect) -> str:
         "Bonne journée,",
         "",
         signature,
+        "",
+        "--",
+        _build_footer(),
     ]
     return "\n".join(parts).strip()
 

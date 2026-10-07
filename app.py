@@ -392,6 +392,12 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
         if skipped:
             log_q.put(f"[--] ⏭️  {skipped} prospect(s) déjà contacté(s) ignoré(s).")
 
+        # 1d. Refus (STOP) : jamais analysés ni contactés
+        from optout_manager import filter_opted_out
+        all_prospects, refused = filter_opted_out(all_prospects)
+        if refused:
+            log_q.put(f"[--] 🚫 {refused} prospect(s) exclu(s) (ont demandé à ne plus être contactés).")
+
         # 2. Analyse parallèle (avec poids spécifiques au profil actif)
         from concurrent.futures import ThreadPoolExecutor, as_completed
         weight_overrides = params.get("weight_overrides", {})
@@ -405,6 +411,11 @@ def run_prospection(params: dict, log_q: queue.Queue, result_container: list):
                 except Exception as exc:
                     log_q.put(f"[--] ❌ Erreur analyse : {exc}")
         all_prospects = analyzed
+
+        # 2a. Refus par email (connu seulement après le scraping du site)
+        all_prospects, refused = filter_opted_out(all_prospects)
+        if refused:
+            log_q.put(f"[--] 🚫 {refused} prospect(s) exclu(s) après analyse (email en liste de refus).")
 
         # 2b. Filtrage par seuil de score
         threshold = params.get("contact_score_threshold", 70)

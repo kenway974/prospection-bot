@@ -16,6 +16,7 @@ from email.mime.multipart import MIMEMultipart
 from typing import Optional
 
 from config import config, logger
+from optout_manager import is_opted_out
 from services.google_maps import Prospect
 
 
@@ -64,6 +65,8 @@ def send_email(
     msg["Subject"] = subject
     msg["From"] = gmail_address
     msg["To"] = to_address
+    # Bouton « Se désabonner » de Gmail : un clic envoie un mail « STOP » à l'expéditeur
+    msg["List-Unsubscribe"] = f"<mailto:{gmail_address}?subject=STOP>"
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
     try:
@@ -103,6 +106,11 @@ def send_all(
 
     for p in prospects:
         if not p.email_draft:
+            stats["skipped"] += 1
+            continue
+
+        if is_opted_out(p):
+            logger.info("    🚫 %s a demandé à ne plus être contacté → ignoré", p.name)
             stats["skipped"] += 1
             continue
 

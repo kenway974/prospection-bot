@@ -19,6 +19,9 @@ Workflow complet :
 Mode relance :
   python main.py --followup   → génère les emails de relance pour les contacts sans réponse
 
+Désinscription :
+  python main.py --optout adresse@exemple.fr   → cette personne ne sera plus jamais contactée
+
 Variables d'environnement clés (dans .env) :
   MIN_RATING               → note Google minimum (défaut : 3.0)
   CONTACT_SCORE_THRESHOLD  → score max pour contacter (défaut : 70)
@@ -43,6 +46,7 @@ from services.analyzer import analyze_prospect
 from services.mailer import enrich_with_email, enrich_with_followup
 from services.notion_sync import sync_all
 from services.sms import send_all_sms
+from optout_manager import OptOutFileError, add_optout, filter_opted_out, is_opted_out
 from history_manager import (
     load_contacted_ids,
     mark_as_contacted,
@@ -142,6 +146,9 @@ def run_followup() -> None:
             keyword="",
             email=contact.get("email") or None,
         )
+        if is_opted_out(p):
+            logger.info("  🚫 %s a demandé à ne plus être contacté → pas de relance", p.name)
+            continue
         p = enrich_with_followup(p)
 
         safe_name = "".join(c if c.isalnum() or c in " _-" else "_" for c in p.name)
@@ -153,7 +160,8 @@ def run_followup() -> None:
         logger.info("  🔄 Relance générée : %s", p.name)
 
     logger.info("")
-    logger.info("✅ %d email(s) de relance sauvegardés dans : %s/", len(due), followup_dir)
+    sent = len(os.listdir(followup_dir))
+    logger.info("✅ %d email(s) de relance sauvegardés dans : %s/", sent, followup_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +182,13 @@ def run() -> None:
     try:
         config.validate()
     except ValueError as exc:
+        logger.critical("❌ %s", exc)
+        sys.exit(1)
+
+    # Fichier de refus lisible ? Sinon on s'arrête avant d'appeler quoi que ce soit.
+    try:
+        filter_opted_out([])
+    except OptOutFileError as exc:
         logger.critical("❌ %s", exc)
         sys.exit(1)
 
@@ -212,6 +227,11 @@ def run() -> None:
     if skipped:
         logger.info("⏭️  %d prospect(s) déjà contacté(s) ignoré(s).", skipped)
 
+    # 1d. REFUS — les personnes qui ont dit STOP ne sont jamais analysées ni contactées
+    all_prospects, refused = filter_opted_out(all_prospects)
+    if refused:
+        logger.info("🚫 %d prospect(s) exclu(s) (ont demandé à ne plus être contactés).", refused)
+
     if not all_prospects:
         logger.warning("Aucun nouveau prospect à traiter. Élargissez votre recherche.")
         sys.exit(0)
@@ -229,6 +249,11 @@ def run() -> None:
                 p = futures[future]
                 logger.error("  ❌ Erreur analyse %s : %s", p.name, exc)
     all_prospects = analyzed
+
+    # 2a. REFUS par email — l'adresse n'est connue qu'après le scraping du site
+    all_prospects, refused = filter_opted_out(all_prospects)
+    if refused:
+        logger.info("🚫 %d prospect(s) exclu(s) après analyse (email en liste de refus).", refused)
 
     # 2b. FILTRAGE PAR SEUIL DE SCORE
     threshold = config.contact_score_threshold
@@ -296,16 +321,36 @@ def run() -> None:
             logger.info("     ↳ %s", p.issues[0].split("→")[0].strip())
 
 
-if __name__ == "__main__":
+def main(argv: List[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Prospection B2B automatisée")
     parser.add_argument(
         "--followup",
         action="store_true",
         help="Mode relance : génère les emails pour les contacts sans réponse",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--optout",
+        metavar="EMAIL",
+        help="Désinscription : cette adresse ne sera plus jamais contactée",
+    )
+    args = parser.parse_args(argv)
 
-    if args.followup:
-        run_followup()
+    if args.optout:
+        try:
+            add_optout(email=args.optout)
+        except (ValueError, OptOutFileError) as exc:
+            logger.critical("❌ %s", exc)
+            sys.exit(1)
+        logger.info("🚫 %s ne sera plus contacté(e).", args.optout.strip().lower())
+    elif args.followup:
+        try:
+            run_followup()
+        except OptOutFileError as exc:
+            logger.critical("❌ %s", exc)
+            sys.exit(1)
     else:
         run()
+
+
+if __name__ == "__main__":
+    main()
