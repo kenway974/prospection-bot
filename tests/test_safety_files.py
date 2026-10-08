@@ -277,3 +277,52 @@ class TestHistoriqueDesRuns:
 
         assert read(history_manager.HISTORY_FILE + ".corrupt") == "{pas du json"
         assert read(history_manager.HISTORY_FILE + ".corrupt.1") == "{deuxieme panne"
+
+
+class TestRefusJamaisPerdus:
+    """Un STOP enregistré ne doit jamais disparaître, même après une panne d'écriture."""
+
+    def test_une_coupure_pendant_l_ecriture_garde_les_refus_existants(self, monkeypatch):
+        import optout_manager
+        optout_manager.add_optout(email="refus@exemple.fr")
+
+        with monkeypatch.context() as mp:
+            crash_mid_dump(mp)
+            with pytest.raises(OSError):
+                optout_manager.add_optout(email="autre@exemple.fr")
+
+        assert optout_manager.is_opted_out(FakeProspect("x", email="refus@exemple.fr"))
+
+    def test_apres_deux_refus_le_bak_contient_la_version_precedente(self):
+        import optout_manager
+        optout_manager.add_optout(email="a@exemple.fr")
+        version_1 = read(optout_manager.OPTOUT_FILE)
+
+        optout_manager.add_optout(email="b@exemple.fr")
+
+        assert read(optout_manager.OPTOUT_FILE + ".bak") == version_1
+
+    def test_un_fichier_de_refus_illisible_est_restaure_depuis_le_bak(self, web):
+        import optout_manager
+        optout_manager.add_optout(place_id="p_nosite")
+        optout_manager.add_optout(email="b@exemple.fr")      # .bak = refus de p_nosite
+        corrupt(optout_manager.OPTOUT_FILE)
+        scenario(web)
+
+        main.run()                                            # ne s'arrête pas
+
+        produced = sorted(glob.glob("output/prospects_*.json"))
+        names = [p["name"] for p in __import__("json").load(open(produced[-1], encoding="utf-8"))]
+        assert "Chez Zoé" not in names                        # le refus du .bak est respecté
+        assert read(optout_manager.OPTOUT_FILE + ".corrupt") == "{pas du json"
+
+    def test_refus_et_bak_illisibles_arret_comme_avant(self):
+        import optout_manager
+        corrupt(optout_manager.OPTOUT_FILE)
+        corrupt(optout_manager.OPTOUT_FILE + ".bak")
+
+        with pytest.raises(optout_manager.OptOutFileError):
+            optout_manager.filter_opted_out([])
+
+        assert read(optout_manager.OPTOUT_FILE) == "{pas du json"
+        assert not os.path.exists(optout_manager.OPTOUT_FILE + ".corrupt")

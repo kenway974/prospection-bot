@@ -19,9 +19,10 @@ Fonctions exposées :
 
 from __future__ import annotations
 
-import json
 import os
 from typing import Iterable, List, Optional, Tuple
+
+from safe_files import read_json_with_recovery, write_json_atomic
 
 OPTOUT_FILE = os.path.join("output", "optout.json")
 
@@ -38,8 +39,8 @@ def _load() -> dict:
     if not os.path.exists(OPTOUT_FILE):
         return {"emails": [], "place_ids": []}
     try:
-        with open(OPTOUT_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        # Illisible + .bak lisible → restauré automatiquement (voir safe_files)
+        data = read_json_with_recovery(OPTOUT_FILE, "Fichier de refus (STOP)")
         return {
             "emails": [_normalize_email(e) for e in data.get("emails", [])],
             "place_ids": list(data.get("place_ids", [])),
@@ -47,15 +48,16 @@ def _load() -> dict:
     except (OSError, ValueError, AttributeError, TypeError) as exc:
         raise OptOutFileError(
             f"Fichier de refus illisible ({OPTOUT_FILE}) : {exc}. "
-            "Réparez ou supprimez ce fichier (vérifiez d'abord son contenu), "
-            "puis relancez : aucun envoi n'a été fait."
+            f"Et aucune copie de secours lisible ({OPTOUT_FILE}.bak absent ou abîmé). "
+            "Aucun envoi n'a été fait. Réparez le JSON sans le supprimer (le supprimer "
+            "ferait recontacter des personnes qui ont dit STOP), puis relancez. "
+            "Marche à suivre : MANUEL.md, section « Fichier abîmé »."
         ) from exc
 
 
 def _save(data: dict) -> None:
-    os.makedirs(os.path.dirname(OPTOUT_FILE), exist_ok=True)
-    with open(OPTOUT_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    # Écriture atomique + copie de secours .bak : un refus n'est jamais perdu
+    write_json_atomic(OPTOUT_FILE, data)
 
 
 def add_optout(email: Optional[str] = None, place_id: Optional[str] = None) -> None:
