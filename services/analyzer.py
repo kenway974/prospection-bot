@@ -594,6 +594,14 @@ def _scrape_email(url: str, soup: BeautifulSoup) -> Optional[str]:
 # Fonction principale exportée
 # ---------------------------------------------------------------------------
 
+def _cache_key(url: str, weights: Dict[str, int], detection_keywords: Optional[List[str]]) -> str:
+    """URL + empreinte des réglages qui changent le résultat (poids, mots-clés métier)."""
+    import hashlib
+    import json as _json
+    settings = _json.dumps({"w": weights, "k": sorted(detection_keywords or [])}, sort_keys=True)
+    return f"{url}#{hashlib.sha1(settings.encode('utf-8')).hexdigest()[:12]}"
+
+
 def analyze_prospect(
     prospect: Prospect,
     weight_overrides: Dict[str, int] | None = None,
@@ -651,8 +659,11 @@ def analyze_prospect(
 
     url = prospect.website
 
-    # Cache hit — évite de refaire fetch + checks pour un site déjà analysé (<30 j)
-    cached = _cache.get_cached(url)
+    # Cache hit — évite de refaire fetch + checks pour un site déjà analysé (<30 j).
+    # La clé inclut les poids et les mots-clés métier : un autre profil de service
+    # (poids différents) ne doit pas recevoir le score calculé pour un autre.
+    cache_key = _cache_key(url, weights, detection_keywords)
+    cached = _cache.get_cached(cache_key)
     if cached:
         prospect.issues = cached["issues"]
         prospect.score  = cached["score"]
@@ -741,6 +752,6 @@ def analyze_prospect(
         logger.debug("      %d. [-%d pts] %s", i, weight, msg)
 
     # Mise en cache du résultat (évite de refaire l'analyse dans les 30 prochains jours)
-    _cache.set_cached(url, prospect.issues, prospect.score, prospect.email, prospect.cms)
+    _cache.set_cached(cache_key, prospect.issues, prospect.score, prospect.email, prospect.cms)
 
     return prospect

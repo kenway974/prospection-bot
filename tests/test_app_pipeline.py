@@ -10,7 +10,7 @@ import json
 import queue
 
 import history_manager
-from tests.fakes import BAD_SITE, GOOD_SITE
+from tests.fakes import BAD_SITE, GOOD_SITE, MID_SITE
 
 
 def base_params(**over):
@@ -92,3 +92,12 @@ def test_le_parcours_ui_envoie_les_mails_et_marque_les_contacts(web, smtp, ui_pi
     # Seul Vieux Garage a un email trouvé ; Chez Zoé n'a pas de site donc pas d'adresse
     assert [m["to"] for m in smtp.sent] == ["contact@vieux-garage.fr"]
     assert history_manager.load_contacted_ids() == {"p_nosite", "p_bad"}
+def test_les_poids_du_profil_changent_le_score(web, ui_pipeline):
+    web.add_place("boulangerie", "p_mid", "Cabinet Martin",
+                  website="https://martin.fr", html=MID_SITE)
+
+    default, _ = run(ui_pipeline, contact_score_threshold=100)
+    boosted, _ = run(ui_pipeline, contact_score_threshold=100,
+                     weight_overrides={"social_links": 30})
+
+    assert boosted[0].score == default[0].score - 25  # 30 points au lieu de 5
