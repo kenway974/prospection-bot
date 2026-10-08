@@ -284,9 +284,10 @@ python main.py --optout adresse@exemple.fr
 La personne n'est plus jamais contactée, quelle que soit la fiche Google par laquelle elle serait retrouvée,
 tant que son adresse est la même.
 
-**Sécurité :** si `output/optout.json` ou `output/contacted_place_ids.json` est illisible, le programme **s'arrête**
-avant tout appel payant, dit pourquoi et ne touche pas au fichier. Il vaut mieux ne rien envoyer que recontacter
-quelqu'un qui a refusé.
+**Sécurité :** si `output/optout.json` ou `output/contacted_place_ids.json` est illisible, le programme restaure
+automatiquement sa copie de secours (`.bak`) et continue en le signalant. S'il n'existe aucune copie lisible, il
+**s'arrête** avant tout appel payant, dit pourquoi et ne touche à aucun fichier. Il vaut mieux ne rien envoyer que
+recontacter quelqu'un qui a refusé. Détails : §10, « Fichier abîmé ».
 
 **À savoir** — le bot ne lit pas ta boîte mail : c'est à toi d'enregistrer les STOP. Ce n'est pas un conseil
 juridique : pour la prospection B2B par mail, les règles (information de la personne, droit d'opposition) sont
@@ -317,11 +318,42 @@ Tout est dans `output/` (ignoré par git : **ce sont des données personnelles, 
 | `contacted_place_ids.json` | Qui a déjà été contacté, quand, réponse, relance |
 | `optout.json` | Les refus STOP |
 | `history.json` | 50 derniers lancements (stats) |
-| `history.json.corrupt` | Apparaît si l'historique était illisible : copie conservée |
+| `*.bak` (`contacted_place_ids.json.bak`, `optout.json.bak`, `history.json.bak`) | Copie de secours automatique : la version précédente, refaite avant chaque écriture |
+| `*.corrupt` (puis `.corrupt.1`, `.corrupt.2`…) | Fichier abîmé mis de côté, jamais supprimé ni écrasé |
 | `relances_<date>/` | Brouillons de relance |
 | `rapport_test_<date>.json` | Rapport des tests de campagne (API réelle) |
 
 Ne supprime jamais `contacted_place_ids.json` ni `optout.json` « pour repartir de zéro » : tu recontacterais tout le monde.
+
+### Fichier abîmé
+
+**Pourquoi un fichier peut s'abîmer :** une coupure (courant, plantage, disque plein) pendant son écriture, ou une
+modification à la main qui casse le JSON. Les écritures du bot sont **atomiques** (fichier temporaire puis
+remplacement d'un coup) : une coupure ne laisse plus de fichier à moitié écrit. Reste le cas d'une modification manuelle
+ou d'un disque défaillant.
+
+**Ce que fait le bot tout seul** (contacts, refus STOP, historique) :
+
+1. Avant chaque écriture, la version précédente lisible est copiée en `<fichier>.bak`.
+2. Au chargement, si `<fichier>` est illisible mais que `<fichier>.bak` est lisible : le fichier abîmé est renommé en
+   `<fichier>.corrupt`, le `.bak` le remplace, un avertissement `⚠️ … copie de secours restaurée` s'affiche (terminal
+   et interface), et le lancement continue. Personne présent dans la copie n'est recontacté.
+3. S'il n'y a **aucune** copie lisible (contacts ou refus) : arrêt avant tout appel Google, aucun fichier modifié.
+   Pour l'historique (simples statistiques), le fichier est mis de côté en `.corrupt` et l'historique repart de zéro.
+
+**Ce que tu dois faire :**
+
+- **Après une restauration automatique** : rien d'obligatoire. Le `.bak` est la version d'avant la **dernière
+  écriture** : ce que cette écriture avait ajouté peut manquer (en général, les contacts du dernier lancement, un
+  « a répondu » ou un STOP récent). Compare avec `<fichier>.corrupt` si besoin, et ré-enregistre un refus récent avec
+  `python main.py --optout adresse@exemple.fr`.
+- **Si le bot s'arrête** (« aucune copie de secours lisible ») :
+  1. Ne supprime pas le fichier (tu recontacterais tout le monde, y compris des STOP).
+  2. Ouvre `output/<fichier>` et `output/<fichier>.bak` dans un éditeur ; repère l'erreur JSON (souvent la fin
+     tronquée : accolade ou crochet manquant) avec un validateur JSON.
+  3. Corrige le fichier, ou remplace-le par une sauvegarde à toi.
+  4. Relance : si le fichier est lisible, le bot repart normalement.
+- Les fichiers `.corrupt` peuvent être supprimés à la main une fois que tu as vérifié qu'il ne manque rien.
 
 ---
 
@@ -347,7 +379,7 @@ python run_tests.py --campaign               # VRAIE API Google, consomme des cr
 | `test_app_pipeline.py`, `test_app_config.py` | **Comportement** : le parcours de l'interface |
 | `test_services_behavior.py` | Google, Gmail, Notion, SMS, scraping, historique |
 | `test_unsubscribe.py` | Désinscription partout |
-| `test_safety_files.py` | Fichiers illisibles : on s'arrête |
+| `test_safety_files.py` | Fichiers abîmés : écriture atomique, copie `.bak`, restauration automatique, arrêt s'il n'y a rien de fiable (contacts, refus STOP, historique) |
 | `test_mail_contract.py` | Lien entre messages d'analyse et accroche du mail |
 | `test_profiles_ui.py` | Interface Streamlit testée avec `AppTest` |
 | `test_campaign.py` | **Pas** un test automatique : script avec vraie API |
@@ -409,7 +441,8 @@ déploies, utilise un volume persistant ou garde une copie de `output/optout.jso
 | `BREVO_API_KEY manquante → SMS ignoré` | Clé Brevo absente |
 | SMS ignoré pour un prospect | Numéro fixe (04, 01…) : seuls 06/07 reçoivent un SMS |
 | Aucune fiche Notion créée | Base non partagée avec l'intégration, ou colonnes de noms différents (§4) |
-| `Fichier des contacts illisible` / `Fichier de refus illisible` | JSON corrompu : ouvrir le fichier, le réparer ou restaurer une copie, relancer. Rien n'a été envoyé |
+| `⚠️ … copie de secours restaurée automatiquement` | Fichier abîmé remplacé par son `.bak` : le lancement continue. Voir §10 « Fichier abîmé » |
+| `Fichier des contacts illisible` / `Fichier de refus illisible` … `aucune copie de secours lisible` | Ni le fichier ni son `.bak` ne sont lisibles : rien n'a été envoyé ni modifié. Réparer le JSON (§10 « Fichier abîmé »), relancer |
 | « Aucun nouveau prospect à traiter » | Tous déjà contactés, refusés ou exclus : élargir mots-clés ou zone |
 | « Aucun prospect sous le seuil » | Les sites trouvés sont trop bons : relever `CONTACT_SCORE_THRESHOLD` ou changer de secteur |
 
