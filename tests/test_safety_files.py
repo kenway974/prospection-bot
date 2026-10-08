@@ -189,3 +189,45 @@ class TestRestaurationAutomatique:
 
         assert [p.name for p in result] == ["Vieux Garage"]
         assert any("restaur" in line for line in logs), logs
+
+
+class TestRienDeFiable:
+    def _files(self):
+        return {name: read(os.path.join("output", name)) for name in sorted(os.listdir("output"))}
+
+    def test_principal_et_bak_illisibles_arret_sans_rien_toucher(self):
+        corrupt(history_manager.CONTACTED_FILE)
+        corrupt(history_manager.CONTACTED_FILE + ".bak")
+        before = self._files()
+
+        with pytest.raises(history_manager.HistoryFileError) as exc:
+            history_manager.load_contacted_ids()
+
+        assert self._files() == before                       # aucun fichier modifié, aucun .corrupt
+        msg = str(exc.value)
+        assert history_manager.CONTACTED_FILE in msg
+        assert history_manager.CONTACTED_FILE + ".bak" in msg   # dit où est la copie de secours
+        assert "aucune copie de secours lisible" in msg
+
+    def test_sans_bak_le_message_le_dit_et_explique_quoi_faire(self):
+        corrupt(history_manager.CONTACTED_FILE)
+
+        with pytest.raises(history_manager.HistoryFileError) as exc:
+            history_manager.load_contacted_ids()
+
+        msg = str(exc.value)
+        assert "aucune copie de secours lisible" in msg
+        assert "MANUEL.md" in msg                             # renvoie vers la marche à suivre
+
+    def test_main_s_arrete_avant_google_si_rien_de_fiable(self, web):
+        scenario(web)
+        corrupt(history_manager.CONTACTED_FILE)
+        corrupt(history_manager.CONTACTED_FILE + ".bak")
+        before = self._files()
+
+        with pytest.raises(SystemExit) as exc:
+            main.run()
+
+        assert exc.value.code == 1
+        assert web.calls == []
+        assert self._files() == before

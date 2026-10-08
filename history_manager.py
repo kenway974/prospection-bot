@@ -81,8 +81,11 @@ def _load_contacted_data() -> dict:
     except (OSError, ValueError) as exc:
         raise HistoryFileError(
             f"Fichier des contacts illisible ({CONTACTED_FILE}) : {exc}. "
-            "Le fichier n'a pas été modifié. Réparez-le (ou restaurez une copie) puis relancez : "
-            "sinon tous les prospects déjà contactés seraient recontactés."
+            f"Et aucune copie de secours lisible ({CONTACTED_FILE}.bak absent ou abîmé). "
+            "Le bot s'arrête pour ne recontacter personne, et aucun fichier n'a été modifié. "
+            "Que faire : ouvrez ces fichiers, réparez le JSON (ou remplacez le fichier par une "
+            "sauvegarde à vous), puis relancez. Marche à suivre détaillée : MANUEL.md, "
+            "section « Fichier abîmé »."
         ) from exc
 
 
