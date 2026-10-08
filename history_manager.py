@@ -92,19 +92,25 @@ def _load_contacted_data() -> dict:
     """
     Charge le dict complet des prospects contactés.
 
-    - fichier absent → personne n'a encore été contacté ({}) ;
+    - fichier absent → copie restaurée si elle existe, sinon personne n'a encore été contacté ({}) ;
     - fichier illisible mais copie de secours lisible → la copie est restaurée
       automatiquement (le fichier abîmé est gardé en .corrupt, un avertissement s'affiche) ;
     - fichier ET copie illisibles → HistoryFileError : on s'arrête plutôt que de tout
       recontacter, sans modifier aucun fichier.
     """
     _ensure_output()
-    if not os.path.exists(CONTACTED_FILE):
-        return {}
     try:
-        data = read_json_with_recovery(CONTACTED_FILE, "Fichier des contacts", backup=CONTACTED_BACKUP_FILE)
+        data = read_json_with_recovery(
+            CONTACTED_FILE, "Fichier des contacts", backup=CONTACTED_BACKUP_FILE, default={},
+        )
         return _migrate(data)
-    except (OSError, ValueError) as exc:
+    except OSError as exc:
+        raise HistoryFileError(
+            f"Impossible de lire le fichier des contacts ({CONTACTED_FILE}) : {exc}. Il est "
+            "peut-être verrouillé (antivirus, synchronisation) ou protégé. Aucun fichier n'a été "
+            "modifié : réessayez dans un instant."
+        ) from exc
+    except ValueError as exc:
         raise HistoryFileError(
             f"Fichier des contacts illisible ({CONTACTED_FILE}) : {exc}. "
             f"Et aucune copie de secours lisible ({CONTACTED_BACKUP_FILE} absent ou abîmé). "
@@ -246,11 +252,9 @@ def load_history() -> List[dict]:
     Retourne une liste vide si le fichier n'existe pas encore.
     """
     _ensure_output()
-    if not os.path.exists(HISTORY_FILE):
-        return []
     try:
-        # Illisible + copie lisible → restauré automatiquement (voir safe_files)
-        return read_json_with_recovery(HISTORY_FILE, "Historique des campagnes")
+        # Illisible ou absent + copie lisible → restauré automatiquement (voir safe_files)
+        return read_json_with_recovery(HISTORY_FILE, "Historique des campagnes", default=[])
     except (OSError, ValueError):
         return []
 

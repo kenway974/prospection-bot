@@ -293,3 +293,47 @@ class TestHistoriqueDesRuns:
 
         assert read(HISTORY + ".corrupt") == "{pas du json"
         assert read(HISTORY + ".corrupt.1") == "{deuxieme panne"
+
+
+# ---------------------------------------------------------------------------
+# Revue de code : cas limites
+# ---------------------------------------------------------------------------
+
+class TestCasLimites:
+    def test_un_fichier_supprime_avec_une_copie_lisible_est_restaure(self):
+        """Fichier principal supprimé (« pour repartir de zéro ») mais copie présente :
+        on restaure la copie au lieu de recontacter tout le monde."""
+        write_json(CONTACTS_BAK, DEJA_CONTACTE)
+
+        assert history_manager.load_contacted_ids() == {"p_nosite"}
+        assert json.loads(read(CONTACTS)) == DEJA_CONTACTE
+
+    def test_un_fichier_momentanement_inaccessible_n_est_pas_traite_comme_abime(self, monkeypatch):
+        """Verrou d'antivirus, droits… : ce n'est pas une corruption. Le bon fichier ne
+        doit jamais être remplacé par une copie plus ancienne."""
+        history_manager.mark_as_contacted([FakeProspect("p1")])
+        history_manager.mark_as_contacted([FakeProspect("p2")])     # copie = {p1}
+        before = output_files()
+        import builtins
+        real_open = builtins.open
+
+        def locked_open(path, *args, **kwargs):
+            if str(path).endswith("contacted_place_ids.json") and "r" in (args[0] if args else kwargs.get("mode", "r")):
+                raise PermissionError("fichier verrouillé")
+            return real_open(path, *args, **kwargs)
+
+        with monkeypatch.context() as mp:
+            mp.setattr(builtins, "open", locked_open)
+            with pytest.raises(history_manager.HistoryFileError):
+                history_manager.load_contacted_ids()
+
+        assert output_files() == before                          # rien de renommé ni restauré
+        assert history_manager.load_contacted_ids() == {"p1", "p2"}
+
+    def test_un_fichier_de_refus_supprime_avec_une_copie_lisible_est_restaure(self):
+        import optout_manager
+        optout_manager.add_optout(email="refus@exemple.fr")
+        optout_manager.add_optout(email="autre@exemple.fr")     # copie = [refus@]
+        os.remove(optout_manager.OPTOUT_FILE)
+
+        assert optout_manager.is_opted_out(FakeProspect("x", email="refus@exemple.fr"))

@@ -83,29 +83,53 @@ def set_aside(path: str) -> str:
     return target
 
 
-def read_json_with_recovery(path: str, label: str, backup: str | None = None):
-    """
-    Lit le JSON de `path`. S'il est illisible et que la copie de secours (`backup`,
-    par défaut `path`.bak) est lisible : le fichier abîmé est mis de côté (.corrupt, jamais supprimé), le .bak est
-    restauré à sa place, un avertissement est loggé, et le contenu du .bak est renvoyé.
+_MISSING = object()
 
-    S'il n'y a aucune copie fiable, l'erreur de lecture d'origine est relevée SANS
-    qu'aucun fichier n'ait été touché : c'est à l'appelant de s'arrêter.
+
+def _warn(message: str, *args) -> None:
+    import config  # import tardif : l'interface remplace config.logger pendant un run
+    config.logger.warning(message, *args)
+
+
+def read_json_with_recovery(path: str, label: str, backup: str | None = None, default=_MISSING):
     """
+    Lit le JSON de `path`, avec la copie de secours (`backup`, par défaut `path`.bak) :
+
+    - JSON illisible + copie lisible → le fichier abîmé est mis de côté (.corrupt, jamais
+      supprimé), la copie est restaurée à sa place, un avertissement est loggé ;
+    - fichier absent + copie lisible → la copie est restaurée (fichier supprimé par erreur) ;
+    - fichier absent sans copie → `default` (ou FileNotFoundError si aucun défaut) ;
+    - fichier présent mais impossible à LIRE (verrou, droits…) → l'erreur remonte telle
+      quelle : ce n'est pas une corruption, on ne remplace pas un bon fichier par une copie
+      plus ancienne ;
+    - aucune copie fiable → l'erreur d'origine remonte SANS qu'aucun fichier n'ait été
+      touché : c'est à l'appelant de s'arrêter.
+    """
+    bak = backup or backup_path(path)
+    if not os.path.exists(path):
+        if is_readable_json(bak):
+            with open(bak, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            _copy_atomic(bak, path)
+            _warn("⚠️  %s absent : copie de secours restaurée automatiquement (%s → %s).",
+                  label, bak, path)
+            return data
+        if default is not _MISSING:
+            return default
+        raise FileNotFoundError(path)
+
+    with open(path, "r", encoding="utf-8") as f:     # OSError (verrou, droits) : remonte
+        text = f.read()
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        bak = backup or backup_path(path)
+        return json.loads(text)
+    except ValueError:
         if not is_readable_json(bak):
             raise
         with open(bak, "r", encoding="utf-8") as f:
             data = json.load(f)
         set_aside_to = set_aside(path)
         _copy_atomic(bak, path)
-
-        import config  # import tardif : l'interface remplace config.logger pendant un run
-        config.logger.warning(
+        _warn(
             "⚠️  %s illisible : copie de secours restaurée automatiquement (%s → %s). "
             "Le fichier abîmé est conservé dans %s. Les données écrites depuis la dernière "
             "sauvegarde peuvent manquer : vérifiez-les si besoin.",

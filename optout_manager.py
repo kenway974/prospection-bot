@@ -36,16 +36,22 @@ def _normalize_email(email: Optional[str]) -> str:
 
 
 def _load() -> dict:
-    if not os.path.exists(OPTOUT_FILE):
-        return {"emails": [], "place_ids": []}
     try:
-        # Illisible + .bak lisible → restauré automatiquement (voir safe_files)
-        data = read_json_with_recovery(OPTOUT_FILE, "Fichier de refus (STOP)")
+        # Illisible ou absent + .bak lisible → restauré automatiquement (voir safe_files)
+        data = read_json_with_recovery(
+            OPTOUT_FILE, "Fichier de refus (STOP)", default={"emails": [], "place_ids": []},
+        )
         return {
             "emails": [_normalize_email(e) for e in data.get("emails", [])],
             "place_ids": list(data.get("place_ids", [])),
         }
-    except (OSError, ValueError, AttributeError, TypeError) as exc:
+    except OSError as exc:
+        raise OptOutFileError(
+            f"Impossible de lire le fichier de refus ({OPTOUT_FILE}) : {exc}. Il est peut-être "
+            "verrouillé (antivirus, synchronisation) ou protégé. Aucun fichier n'a été modifié "
+            "et aucun envoi n'a été fait : réessayez dans un instant."
+        ) from exc
+    except (ValueError, AttributeError, TypeError) as exc:
         raise OptOutFileError(
             f"Fichier de refus illisible ({OPTOUT_FILE}) : {exc}. "
             f"Et aucune copie de secours lisible ({OPTOUT_FILE}.bak absent ou abîmé). "
