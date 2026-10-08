@@ -28,10 +28,11 @@ Fonctions exposées :
 
 from __future__ import annotations
 
-import json
 import os
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Dict, List, Optional
+
+from safe_files import is_readable_json, read_json_with_recovery, set_aside, write_json_atomic
 
 if TYPE_CHECKING:
     from services.google_maps import Prospect
@@ -39,6 +40,10 @@ if TYPE_CHECKING:
 HISTORY_FILE          = os.path.join("output", "history.json")
 CONTACTED_FILE        = os.path.join("output", "contacted_place_ids.json")
 CONTACTED_BACKUP_FILE = os.path.join("output", "contacted_place_ids.bak.json")
+
+
+class HistoryFileError(RuntimeError):
+    """Le fichier des contacts ET sa copie sont illisibles : on s'arrête plutôt que de tout recontacter."""
 
 
 def _ensure_output() -> None:
@@ -85,32 +90,34 @@ def _followup_step(info: dict) -> int:
 def _load_contacted_data() -> dict:
     """
     Charge le dict complet des prospects contactés.
-    Si le fichier principal est manquant ou corrompu, restaure depuis la sauvegarde.
+
+    - fichier absent → personne n'a encore été contacté ({}) ;
+    - fichier illisible mais copie de secours lisible → la copie est restaurée
+      automatiquement (le fichier abîmé est gardé en .corrupt, un avertissement s'affiche) ;
+    - fichier ET copie illisibles → HistoryFileError : on s'arrête plutôt que de tout
+      recontacter, sans modifier aucun fichier.
     """
     _ensure_output()
-    for filepath in [CONTACTED_FILE, CONTACTED_BACKUP_FILE]:
-        if not os.path.exists(filepath):
-            continue
-        try:
-            with open(filepath, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return _migrate(data)
-        except Exception:
-            continue
-    return {}
+    if not os.path.exists(CONTACTED_FILE):
+        return {}
+    try:
+        data = read_json_with_recovery(CONTACTED_FILE, "Fichier des contacts", backup=CONTACTED_BACKUP_FILE)
+        return _migrate(data)
+    except (OSError, ValueError) as exc:
+        raise HistoryFileError(
+            f"Fichier des contacts illisible ({CONTACTED_FILE}) : {exc}. "
+            f"Et aucune copie de secours lisible ({CONTACTED_BACKUP_FILE} absent ou abîmé). "
+            "Le bot s'arrête pour ne recontacter personne, et aucun fichier n'a été modifié. "
+            "Que faire : ouvrez ces fichiers, réparez le JSON (ou remplacez le fichier par une "
+            "sauvegarde à vous), puis relancez. Marche à suivre détaillée : MANUEL.md, "
+            "section « Fichier abîmé »."
+        ) from exc
 
 
 def _save_contacted_data(data: dict) -> None:
+    """Écriture atomique ; la version précédente lisible est gardée dans CONTACTED_BACKUP_FILE."""
     _ensure_output()
-    import shutil
-    # Rotation : copie l'actuel en backup avant d'écraser
-    if os.path.exists(CONTACTED_FILE):
-        try:
-            shutil.copy2(CONTACTED_FILE, CONTACTED_BACKUP_FILE)
-        except OSError:
-            pass
-    with open(CONTACTED_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    write_json_atomic(CONTACTED_FILE, data, backup=CONTACTED_BACKUP_FILE)
 
 
 # ---------------------------------------------------------------------------
@@ -233,9 +240,9 @@ def load_history() -> List[dict]:
     if not os.path.exists(HISTORY_FILE):
         return []
     try:
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
+        # Illisible + copie lisible → restauré automatiquement (voir safe_files)
+        return read_json_with_recovery(HISTORY_FILE, "Historique des campagnes")
+    except (OSError, ValueError):
         return []
 
 
@@ -258,6 +265,11 @@ def save_run(
     """Enregistre les statistiques d'un run terminé (max 50 entrées conservées)."""
     _ensure_output()
     history = load_history()
+    if not history and os.path.exists(HISTORY_FILE) and os.path.getsize(HISTORY_FILE) > 0:
+        # Fichier présent, illisible et sans copie de secours : on le met de côté
+        # (.corrupt, .corrupt.1…) au lieu de l'écraser
+        if not is_readable_json(HISTORY_FILE):
+            set_aside(HISTORY_FILE)
     history.insert(0, {
         "date": datetime.now().strftime("%d/%m/%Y %H:%M"),
         "profile": profile_name,
@@ -276,5 +288,4 @@ def save_run(
         "fichier": output_file,
     })
     history = history[:50]
-    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
+    write_json_atomic(HISTORY_FILE, history)

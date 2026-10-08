@@ -54,6 +54,7 @@ from services.mailer import enrich_with_email, enrich_with_followup
 from services.notion_sync import sync_all
 from services.sms import send_all_sms
 from history_manager import (
+    HistoryFileError,
     load_contacted_ids,
     mark_as_contacted,
     get_due_followups,
@@ -190,6 +191,14 @@ def run() -> None:
         config.validate()
         criteria = criteria_from_config()
     except ValueError as exc:
+        logger.critical("❌ %s", exc)
+        sys.exit(1)
+
+    # Fichier des contacts lisible ? Sinon on s'arrête AVANT tout appel Google payant
+    # (une copie de secours lisible est restaurée automatiquement, voir history_manager).
+    try:
+        load_contacted_ids()
+    except HistoryFileError as exc:
         logger.critical("❌ %s", exc)
         sys.exit(1)
 
