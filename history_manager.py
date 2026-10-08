@@ -34,7 +34,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, List
 
-from safe_files import write_json_atomic
+from safe_files import read_json_with_recovery, write_json_atomic
 
 if TYPE_CHECKING:
     from services.google_maps import Prospect
@@ -64,8 +64,7 @@ def _load_contacted_data() -> dict:
     if not os.path.exists(CONTACTED_FILE):
         return {}
     try:
-        with open(CONTACTED_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        data = read_json_with_recovery(CONTACTED_FILE, "Fichier des contacts")
         # Migration depuis l'ancien format (liste de strings)
         if isinstance(data, list):
             return {

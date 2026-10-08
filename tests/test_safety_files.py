@@ -129,3 +129,63 @@ class TestCopieDeSecours:
         bak = history_manager.CONTACTED_FILE + ".bak"
         assert read(bak) == version_1
         assert history_manager.load_contacted_ids() == {"p1", "p2"}
+
+
+class RecordingLogger:
+    def __init__(self):
+        self.warnings = []
+
+    def warning(self, msg, *args):
+        self.warnings.append(msg % args if args else msg)
+
+    def __getattr__(self, _name):           # info, debug, error… : ignorés
+        return lambda *a, **k: None
+
+
+def write_backup(path, data):
+    import json
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".bak", "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+
+DEJA_CONTACTE = {"p_nosite": {"name": "Chez Zoé", "email": "", "first_contact_date": "2026-09-01",
+                              "responded": False, "followup_sent": False}}
+
+
+class TestRestaurationAutomatique:
+    def test_le_bak_est_restaure_et_le_fichier_abime_mis_de_cote(self, monkeypatch):
+        import config as cfg
+        log = RecordingLogger()
+        monkeypatch.setattr(cfg, "logger", log)
+        write_backup(history_manager.CONTACTED_FILE, DEJA_CONTACTE)
+        corrupt(history_manager.CONTACTED_FILE)
+
+        assert history_manager.load_contacted_ids() == {"p_nosite"}
+
+        assert read(history_manager.CONTACTED_FILE + ".corrupt") == "{pas du json"   # jamais supprimé
+        assert read(history_manager.CONTACTED_FILE) == read(history_manager.CONTACTED_FILE + ".bak")
+        assert any("restaur" in w and ".bak" in w for w in log.warnings), log.warnings
+
+    def test_main_continue_sans_recontacter_les_contacts_du_bak(self, web):
+        scenario(web)
+        write_backup(history_manager.CONTACTED_FILE, DEJA_CONTACTE)
+        corrupt(history_manager.CONTACTED_FILE)
+
+        main.run()                                   # ne s'arrête pas
+
+        assert web.calls                             # la prospection a bien eu lieu
+        produced = sorted(glob.glob("output/prospects_*.json"))
+        names = [p["name"] for p in __import__("json").load(open(produced[-1], encoding="utf-8"))]
+        assert "Chez Zoé" not in names               # présent dans le .bak → pas recontacté
+        assert "Vieux Garage" in names
+
+    def test_l_interface_previent_et_continue(self, web, app_module):
+        scenario(web)
+        write_backup(history_manager.CONTACTED_FILE, DEJA_CONTACTE)
+        corrupt(history_manager.CONTACTED_FILE)
+
+        result, logs = run_app(app_module)
+
+        assert [p.name for p in result] == ["Vieux Garage"]
+        assert any("restaur" in line for line in logs), logs

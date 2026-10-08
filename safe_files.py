@@ -67,3 +67,48 @@ def write_json_atomic(path: str, data) -> None:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
         raise
+
+
+CORRUPT_SUFFIX = ".corrupt"
+
+
+def _set_aside(path: str) -> str:
+    """Renomme le fichier abîmé en <fichier>.corrupt (ou .corrupt.1, .2… : on n'écrase jamais)."""
+    target = path + CORRUPT_SUFFIX
+    n = 1
+    while os.path.exists(target):
+        target = f"{path}{CORRUPT_SUFFIX}.{n}"
+        n += 1
+    os.replace(path, target)
+    return target
+
+
+def read_json_with_recovery(path: str, label: str):
+    """
+    Lit le JSON de `path`. S'il est illisible et que la copie de secours (.bak) est
+    lisible : le fichier abîmé est mis de côté (.corrupt, jamais supprimé), le .bak est
+    restauré à sa place, un avertissement est loggé, et le contenu du .bak est renvoyé.
+
+    S'il n'y a aucune copie fiable, l'erreur de lecture d'origine est relevée SANS
+    qu'aucun fichier n'ait été touché : c'est à l'appelant de s'arrêter.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        bak = backup_path(path)
+        if not is_readable_json(bak):
+            raise
+        with open(bak, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        set_aside = _set_aside(path)
+        _copy_atomic(bak, path)
+
+        import config  # import tardif : l'interface remplace config.logger pendant un run
+        config.logger.warning(
+            "⚠️  %s illisible : copie de secours restaurée automatiquement (%s → %s). "
+            "Le fichier abîmé est conservé dans %s. Les données écrites depuis la dernière "
+            "sauvegarde peuvent manquer : vérifiez-les si besoin.",
+            label, bak, path, set_aside,
+        )
+        return data
