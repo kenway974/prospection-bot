@@ -114,10 +114,13 @@ def get_stats() -> Dict[str, int]:
     queue = _load()
     now = time.time()
     sent = sum(1 for e in queue if e.get("sent"))
-    overdue = sum(1 for e in queue if not e.get("sent") and e.get("send_at", 0) <= now)
+    cancelled = sum(1 for e in queue if e.get("cancelled"))
+    overdue = sum(1 for e in queue
+                  if not e.get("sent") and not e.get("cancelled") and e.get("send_at", 0) <= now)
     return {
-        "pending": len(queue) - sent,
+        "pending": len(queue) - sent - cancelled,
         "sent": sent,
+        "cancelled": cancelled,
         "total": len(queue),
         "overdue": overdue,
     }
@@ -138,15 +141,23 @@ def process_due(force: bool = False) -> Dict[str, int]:
     `force=True` envoie aussi ceux programmés plus tard (bouton « envoyer maintenant »).
     """
     from services.gmail import send_email
-    stats = {"sent": 0, "failed": 0, "skipped_no_credentials": 0}
+    from optout_manager import is_opted_out
+    from types import SimpleNamespace
+    stats = {"sent": 0, "failed": 0, "skipped_no_credentials": 0, "skipped_optout": 0}
     with _lock:
         queue = _load()
     now = time.time()
     changed = False
     for entry in queue:
-        if entry.get("sent"):
+        if entry.get("sent") or entry.get("cancelled"):
             continue
         if not force and entry["send_at"] > now:
+            continue
+        # La personne a pu dire STOP entre la programmation et l'envoi : on ne l'envoie jamais
+        if is_opted_out(SimpleNamespace(email=entry.get("email"), place_id=entry.get("place_id", ""))):
+            entry["cancelled"] = "STOP"
+            stats["skipped_optout"] += 1
+            changed = True
             continue
         password = _gmail_password_for(entry.get("gmail_address", ""))
         if not password:

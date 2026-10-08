@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 from safe_files import is_readable_json, read_json_with_recovery, set_aside, write_json_atomic
@@ -183,7 +184,12 @@ def get_due_followups(delay_days: int = 5) -> List[dict]:
 
     Chaque entrée contient le place_id, toutes les infos, et `followup_step`
     (nombre de relances déjà envoyées) pour savoir quelle relance générer ensuite.
+
+    Les personnes qui ont dit STOP (par email ou par fiche Google, voir optout_manager)
+    ne sont jamais relancées.
     """
+    from optout_manager import filter_opted_out  # import local : évite une dépendance au chargement
+
     data = _load_contacted_data()
     cutoff = datetime.now() - timedelta(days=delay_days)
     due = []
@@ -205,7 +211,10 @@ def get_due_followups(delay_days: int = 5) -> List[dict]:
             entry = {"place_id": place_id, **info}
             entry["followup_step"] = step  # normalise (compat ancien format)
             due.append(entry)
-    return due
+
+    contacts = [SimpleNamespace(place_id=d["place_id"], email=d.get("email")) for d in due]
+    kept_ids = {c.place_id for c in filter_opted_out(contacts)[0]}
+    return [d for d in due if d["place_id"] in kept_ids]
 
 
 def mark_as_responded(place_id: str) -> None:

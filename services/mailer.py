@@ -426,6 +426,30 @@ _CANDIDACY_CTA = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Mention de désinscription + origine de l'adresse (en pied de CHAQUE mail)
+# ---------------------------------------------------------------------------
+
+DEFAULT_UNSUBSCRIBE_TEXT = (
+    "Je vous écris car vos coordonnées figurent publiquement sur votre site ou votre fiche "
+    "Google professionnelle. Si vous ne souhaitez plus recevoir de message de ma part, "
+    "répondez simplement « STOP » à ce mail et je ne vous contacterai plus."
+)
+
+
+def unsubscribe_footer() -> str:
+    """D'où vient l'adresse + comment refuser. Personnalisable avec UNSUBSCRIBE_TEXT (.env)."""
+    return os.getenv("UNSUBSCRIBE_TEXT", "").strip() or DEFAULT_UNSUBSCRIBE_TEXT
+
+
+def with_unsubscribe_footer(mail: str) -> str:
+    """Ajoute la mention de désinscription après la signature (une seule fois)."""
+    footer = unsubscribe_footer()
+    if footer in mail:
+        return mail
+    return f"{mail.rstrip()}\n\n--\n{footer}"
+
+
 def _build_candidacy_email(
     prospect: Prospect,
     style: EmailStyle,
@@ -495,9 +519,9 @@ def build_dynamic_email(
 
     # --- Cas spécial : candidature freelance (on ne vend pas un site) ---
     if service_category == "freelance":
-        return _build_candidacy_email(
+        return with_unsubscribe_footer(_build_candidacy_email(
             prospect, style, salutation, your_name, your_title, your_offer,
-        )
+        ))
 
     # --- Sélection du dictionnaire de copy principal ---
     if service_category == "creatif":
@@ -603,7 +627,7 @@ def build_dynamic_email(
     parts.append("")
     parts.append(signature)
 
-    return "\n".join(parts)
+    return with_unsubscribe_footer("\n".join(parts))
 
 
 # ---------------------------------------------------------------------------
@@ -900,7 +924,8 @@ def draft_email(
             target_sector=target_sector,
         )
     variant = get_template_variant(prospect.place_id)
-    return _draft_email_b(prospect) if variant == "B" else _draft_email_a(prospect)
+    mail = _draft_email_b(prospect) if variant == "B" else _draft_email_a(prospect)
+    return with_unsubscribe_footer(mail)
 
 
 def enrich_with_email(prospect: Prospect) -> Prospect:
@@ -1000,7 +1025,7 @@ def draft_followup_email(prospect: Prospect, step: int = 1) -> str:
         ]
 
     parts = [f"OBJET : {subject}", ""] + body + ["", "Bonne journée,", "", signature]
-    return "\n".join(parts).strip()
+    return with_unsubscribe_footer("\n".join(parts).strip())
 
 
 def enrich_with_followup(prospect: Prospect, step: int = 1) -> Prospect:
