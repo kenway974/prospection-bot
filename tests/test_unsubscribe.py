@@ -393,3 +393,83 @@ class TestPageRelances:
 
         assert not at.exception
         assert not any("Aucun contact à relancer" in s.value for s in at.success)
+
+
+# ------------------------------------------------------------------ revue de code
+
+class TestUneSeuleLectureDesRefus:
+    """La liste des refus est lue UNE fois par opération : cohérente du début à la fin,
+    et une panne du fichier en cours de route ne peut pas laisser un envoi à moitié fait."""
+
+    def _count_loads(self, monkeypatch):
+        calls = []
+        real = optout_manager._load
+        monkeypatch.setattr(optout_manager, "_load", lambda: calls.append(1) or real())
+        return calls
+
+    def test_l_envoi_gmail_lit_les_refus_une_seule_fois(self, smtp, monkeypatch):
+        prospects = []
+        for i in range(3):
+            p = prospect(place_id=str(i), email=f"p{i}@x.fr")
+            p.email_draft = "OBJET : S\n\nC"
+            prospects.append(p)
+        calls = self._count_loads(monkeypatch)
+
+        gmail.send_all(prospects, "moi@gmail.com", "pwd")
+
+        assert len(calls) == 1
+
+    def test_l_envoi_sms_lit_les_refus_une_seule_fois(self, web, clean_config, monkeypatch):
+        clean_config.brevo_api_key = "k"
+        calls = self._count_loads(monkeypatch)
+
+        sms.send_all_sms([prospect(place_id=str(i)) for i in range(3)])
+
+        assert len(calls) == 1
+
+    def test_le_parcours_interface_lit_les_refus_une_seule_fois(self, web, ui_pipeline, monkeypatch):
+        scenario(web)
+        calls = self._count_loads(monkeypatch)
+
+        run_ui(ui_pipeline)
+
+        assert len(calls) == 1
+
+    def test_un_fichier_de_refus_abime_en_cours_d_envoi_programme_ne_fait_rien_renvoyer(self, smtp, monkeypatch):
+        from services import scheduler
+        scheduler.remember_credentials("moi@gmail.com", "pwd")
+        for i in (1, 2):
+            scheduler.add_pending(place_id=f"p{i}", name=f"P{i}", email=f"p{i}@x.fr",
+                                  draft="OBJET : S\n\nC", gmail_address="moi@gmail.com",
+                                  gmail_password="pwd", send_at=0)
+        real_send = gmail.send_email
+
+        def send_then_break_optout(*a, **k):
+            ok = real_send(*a, **k)
+            corrupt(optout_manager.OPTOUT_FILE)      # le fichier de refus s'abîme pendant l'envoi
+            return ok
+        monkeypatch.setattr(gmail, "send_email", send_then_break_optout)
+
+        try:
+            scheduler.process_due()
+        except optout_manager.OptOutFileError:
+            pass
+        sent_first = [m["to"] for m in smtp.sent]
+        scheduler.process_due()                       # tour suivant de la boucle d'envoi
+
+        assert [m["to"] for m in smtp.sent] == sent_first          # rien n'est renvoyé
+        assert sorted(sent_first) == ["p1@x.fr", "p2@x.fr"]      # l'envoi en cours est allé au bout
+
+
+class TestOptOutCrmIndisponible:
+    def test_un_crm_indisponible_n_empeche_pas_d_enregistrer_le_refus(self, monkeypatch):
+        import sqlite3
+        import crm_store
+
+        def boom(*a, **k):
+            raise sqlite3.OperationalError("database is locked")
+        monkeypatch.setattr(crm_store, "place_ids_matching", boom)
+
+        main.main(["--optout", "refus@exemple.fr"])          # pas de plantage
+
+        assert optout_manager.is_opted_out(prospect(email="refus@exemple.fr"))

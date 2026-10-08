@@ -85,35 +85,60 @@ def add_optout(email: Optional[str] = None, place_id: Optional[str] = None) -> N
 
 
 def _blacklist_in_crm(email: str, place_id: Optional[str]) -> None:
-    """Passe en blacklist, dans le CRM local, les fiches qui correspondent au refus."""
-    import crm_store
-    for pid in crm_store.place_ids_matching(email=email, place_id=place_id):
-        crm_store.set_status(pid, crm_store.STATUS_BLACKLIST, note="A demandé à ne plus être contacté (STOP)")
-        crm_store.clear_next_action(pid)
+    """
+    Passe en blacklist, dans le CRM local, les fiches qui correspondent au refus.
+    Au mieux : le refus est déjà enregistré dans optout.json (qui fait foi partout) ;
+    un CRM indisponible ne doit pas faire croire qu'il ne l'a pas été.
+    """
+    try:
+        import crm_store
+        for pid in crm_store.place_ids_matching(email=email, place_id=place_id):
+            crm_store.set_status(pid, crm_store.STATUS_BLACKLIST, note="A demandé à ne plus être contacté (STOP)")
+            crm_store.clear_next_action(pid)
+    except Exception as exc:  # noqa: BLE001 — base SQLite verrouillée, schéma ancien…
+        import config
+        config.logger.warning(
+            "⚠️  Refus bien enregistré, mais le CRM n'a pas pu être mis à jour (%s). "
+            "Passe la fiche en « blacklist » à la main dans la page Pipeline.", exc,
+        )
+
+
+class OptOutList:
+    """
+    Instantané de la liste des refus, lu UNE fois puis interrogé en mémoire.
+    À charger au début d'une opération (recherche, envoi…) : la même liste sert du début
+    à la fin, et une panne du fichier en cours de route ne peut pas couper l'opération.
+    """
+
+    def __init__(self, data: dict):
+        self.emails = set(data["emails"])
+        self.place_ids = set(data["place_ids"])
+
+    def contains(self, prospect) -> bool:
+        email = _normalize_email(getattr(prospect, "email", None))
+        return bool(email and email in self.emails) or getattr(prospect, "place_id", "") in self.place_ids
+
+    def filter(self, prospects: Iterable) -> Tuple[List, int]:
+        prospects = list(prospects)
+        kept = [p for p in prospects if not self.contains(p)]
+        return kept, len(prospects) - len(kept)
+
+
+def load_optouts() -> OptOutList:
+    """Lit la liste des refus une fois. Lève OptOutFileError si elle est illisible sans copie fiable."""
+    return OptOutList(_load())
 
 
 def opted_out_place_ids() -> set:
     """place_id des fiches Google qui ont refusé (pour écarter un résultat brut avant tout appel)."""
-    return set(_load()["place_ids"])
+    return load_optouts().place_ids
 
 
 def is_opted_out(prospect) -> bool:
-    """True si l'email OU la fiche Google du prospect figure dans la liste de refus."""
-    data = _load()
-    email = _normalize_email(getattr(prospect, "email", None))
-    if email and email in data["emails"]:
-        return True
-    return getattr(prospect, "place_id", "") in data["place_ids"]
+    """True si l'email OU la fiche Google du prospect figure dans la liste de refus (lit le fichier)."""
+    return load_optouts().contains(prospect)
 
 
 def filter_opted_out(prospects: Iterable) -> Tuple[List, int]:
     """Retire les prospects qui ont refusé. Retourne (liste filtrée, nombre exclus)."""
-    prospects = list(prospects)
-    data = _load()
-    kept = []
-    for p in prospects:
-        email = _normalize_email(getattr(p, "email", None))
-        if (email and email in data["emails"]) or getattr(p, "place_id", "") in data["place_ids"]:
-            continue
-        kept.append(p)
-    return kept, len(prospects) - len(kept)
+    return load_optouts().filter(prospects)

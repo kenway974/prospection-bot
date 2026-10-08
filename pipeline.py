@@ -165,8 +165,8 @@ def run_prospection(
             )
         already_contacted = load_contacted_ids()
         # Refus STOP : fichier lisible (sinon OptOutFileError → arrêt avant tout appel payant)
-        from optout_manager import is_opted_out as _is_opted_out, opted_out_place_ids
-        _optout_place_ids = opted_out_place_ids()
+        from optout_manager import load_optouts
+        _optouts = load_optouts()          # lue UNE fois : la même liste pour tout le run
         _STOP_REASON = "a demandé à ne plus être contacté (STOP)"
         # La base CRM fait aussi foi : elle exclut en plus les clients, les
         # « pas intéressé » et la blacklist (pas seulement les déjà-contactés).
@@ -224,7 +224,7 @@ def run_prospection(
             _kept = []
             for p in analyzed:
                 # Refus STOP par email : l'adresse n'est connue qu'après l'analyse du site
-                _r = _STOP_REASON if _is_opted_out(p) else post_analysis_reason(p, criteria)
+                _r = _STOP_REASON if _optouts.contains(p) else post_analysis_reason(p, criteria)
                 if count_reason(_post_excl, _r):
                     _exclude_p(p, _r, "après analyse")
                 else:
@@ -273,7 +273,7 @@ def run_prospection(
             for p in candidates:
                 if p.place_id in seen or p.place_id in already_contacted:
                     continue
-                if _is_opted_out(p):
+                if _optouts.contains(p):
                     _exclude_p(p, _STOP_REASON, "refus STOP")
                     continue
                 if exclude_franchises:
@@ -357,7 +357,7 @@ def run_prospection(
                                 continue
                             # Refus STOP par fiche Google : écarté avant Place Details et
                             # avant toute visite de son site
-                            if pid in _optout_place_ids:
+                            if pid in _optouts.place_ids:
                                 _exclude(raw.get("name", ""), _STOP_REASON, "refus STOP", pid)
                                 continue
                             # Franchises écartées AVANT Place Details : on ne paie

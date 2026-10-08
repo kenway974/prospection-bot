@@ -103,9 +103,10 @@ def send_all(
     logger.info("")
     logger.info("📤 Envoi des cold emails…")
 
-    from optout_manager import is_opted_out
+    from optout_manager import load_optouts
+    optouts = load_optouts()          # lue une fois pour tout l'envoi
     for p in prospects:
-        if is_opted_out(p):
+        if optouts.contains(p):
             logger.info("    🚫 %s a demandé à ne plus être contacté → ignoré", p.name)
             stats["skipped"] += 1
             continue
