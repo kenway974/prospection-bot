@@ -117,3 +117,15 @@ class TestEcritureSure:
         assert history_manager.load_contacted_ids() == {"p_avant"}
         # Aucun fichier temporaire oublié dans output/
         assert sorted(os.listdir("output")) == ["contacted_place_ids.json"]
+
+
+class TestCopieDeSecours:
+    def test_apres_deux_ecritures_le_bak_contient_la_version_precedente(self):
+        history_manager.mark_as_contacted([FakeProspect("p1")])
+        version_1 = read(history_manager.CONTACTED_FILE)
+
+        history_manager.mark_as_contacted([FakeProspect("p2")])
+
+        bak = history_manager.CONTACTED_FILE + ".bak"
+        assert read(bak) == version_1
+        assert history_manager.load_contacted_ids() == {"p1", "p2"}
