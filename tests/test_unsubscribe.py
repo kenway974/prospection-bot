@@ -356,3 +356,40 @@ class TestFollowupsExcludeOptOut:
     def test_sans_refus_la_relance_est_proposee(self):
         _due_contact()
         assert [d["place_id"] for d in history_manager.get_due_followups(5)] == ["p_due"]
+
+
+class TestPageRelances:
+    """La page « Relances » de l'interface ne propose jamais de relancer un refus."""
+
+    def _open_page(self):
+        import re
+        from streamlit.testing.v1 import AppTest
+        root = os.path.join(os.path.dirname(__file__), "..")
+        src = open(os.path.join(root, "app.py"), encoding="utf-8").read()
+        src = src.replace('url_path="ma-journee", default=True)', 'url_path="ma-journee")')
+        src, n = re.subn(r"(st\.Page\(page_relances,[^)]*?)\)", r"\1, default=True)", src, count=1)
+        assert n == 1, "page Relances introuvable dans la navigation"
+        path = os.path.join(root, "_apptest_relances_optout.py")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(src)
+        try:
+            return AppTest.from_file(path, default_timeout=60).run()
+        finally:
+            os.remove(path)
+
+    def test_un_refus_n_apparait_pas_dans_les_relances(self):
+        _due_contact()
+        optout_manager.add_optout(email="due@exemple.fr")
+
+        at = self._open_page()
+
+        assert not at.exception
+        assert any("Aucun contact à relancer" in s.value for s in at.success)
+
+    def test_sans_refus_le_contact_est_propose(self):
+        _due_contact()
+
+        at = self._open_page()
+
+        assert not at.exception
+        assert not any("Aucun contact à relancer" in s.value for s in at.success)
