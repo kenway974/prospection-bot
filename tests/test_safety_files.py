@@ -231,3 +231,49 @@ class TestRienDeFiable:
         assert exc.value.code == 1
         assert web.calls == []
         assert self._files() == before
+
+
+def run_stats(n):
+    history_manager.save_run(f"profil {n}", "Lyon", ["k"], n, 0, 0, 0, f"f{n}.json")
+
+
+class TestHistoriqueDesRuns:
+    def test_une_coupure_pendant_l_ecriture_laisse_l_historique_intact(self, monkeypatch):
+        run_stats(1)
+        before = read(history_manager.HISTORY_FILE)
+
+        with monkeypatch.context() as mp:
+            crash_mid_dump(mp)
+            with pytest.raises(OSError):
+                run_stats(2)
+
+        assert read(history_manager.HISTORY_FILE) == before
+        assert [r["profile"] for r in history_manager.load_history()] == ["profil 1"]
+
+    def test_apres_deux_runs_le_bak_contient_la_version_precedente(self):
+        run_stats(1)
+        version_1 = read(history_manager.HISTORY_FILE)
+
+        run_stats(2)
+
+        assert read(history_manager.HISTORY_FILE + ".bak") == version_1
+
+    def test_un_historique_illisible_est_restaure_depuis_le_bak(self):
+        run_stats(1)
+        run_stats(2)                                   # .bak = [profil 1]
+        corrupt(history_manager.HISTORY_FILE)
+
+        assert [r["profile"] for r in history_manager.load_history()] == ["profil 1"]
+        assert read(history_manager.HISTORY_FILE + ".corrupt") == "{pas du json"
+
+    def test_un_ancien_corrupt_n_est_jamais_ecrase(self):
+        corrupt(history_manager.HISTORY_FILE)
+        run_stats(1)                                   # 1re mise de côté → .corrupt
+        assert not os.path.exists(history_manager.HISTORY_FILE + ".bak")   # pas de copie fiable
+        with open(history_manager.HISTORY_FILE, "w", encoding="utf-8") as f:
+            f.write("{deuxieme panne")
+
+        run_stats(2)                                   # 2e mise de côté : ne doit pas écraser la 1re
+
+        assert read(history_manager.HISTORY_FILE + ".corrupt") == "{pas du json"
+        assert read(history_manager.HISTORY_FILE + ".corrupt.1") == "{deuxieme panne"

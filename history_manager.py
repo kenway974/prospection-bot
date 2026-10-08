@@ -28,13 +28,12 @@ Fonctions exposées :
 
 from __future__ import annotations
 
-import json
 import os
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, List
 
-from safe_files import read_json_with_recovery, write_json_atomic
+from safe_files import is_readable_json, read_json_with_recovery, set_aside, write_json_atomic
 
 if TYPE_CHECKING:
     from services.google_maps import Prospect
@@ -188,8 +187,8 @@ def load_history() -> List[dict]:
     if not os.path.exists(HISTORY_FILE):
         return []
     try:
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        # Illisible + .bak lisible → restauré automatiquement (voir safe_files)
+        return read_json_with_recovery(HISTORY_FILE, "Historique des campagnes")
     except (OSError, ValueError):
         return []
 
@@ -208,12 +207,10 @@ def save_run(
     _ensure_output()
     history = load_history()
     if not history and os.path.exists(HISTORY_FILE) and os.path.getsize(HISTORY_FILE) > 0:
-        # Fichier présent mais illisible : on le met de côté au lieu de l'écraser
-        try:
-            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                json.load(f)
-        except (OSError, ValueError):
-            os.replace(HISTORY_FILE, HISTORY_FILE + ".corrupt")
+        # Fichier présent, illisible et sans copie de secours : on le met de côté
+        # (.corrupt, .corrupt.1…) au lieu de l'écraser
+        if not is_readable_json(HISTORY_FILE):
+            set_aside(HISTORY_FILE)
     history.insert(0, {
         "date": datetime.now().strftime("%d/%m/%Y %H:%M"),
         "profile": profile_name,
@@ -226,5 +223,4 @@ def save_run(
         "fichier": output_file,
     })
     history = history[:50]
-    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
+    write_json_atomic(HISTORY_FILE, history)

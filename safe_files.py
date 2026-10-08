@@ -72,7 +72,7 @@ def write_json_atomic(path: str, data) -> None:
 CORRUPT_SUFFIX = ".corrupt"
 
 
-def _set_aside(path: str) -> str:
+def set_aside(path: str) -> str:
     """Renomme le fichier abîmé en <fichier>.corrupt (ou .corrupt.1, .2… : on n'écrase jamais)."""
     target = path + CORRUPT_SUFFIX
     n = 1
@@ -101,7 +101,7 @@ def read_json_with_recovery(path: str, label: str):
             raise
         with open(bak, "r", encoding="utf-8") as f:
             data = json.load(f)
-        set_aside = _set_aside(path)
+        set_aside_to = set_aside(path)
         _copy_atomic(bak, path)
 
         import config  # import tardif : l'interface remplace config.logger pendant un run
@@ -109,6 +109,6 @@ def read_json_with_recovery(path: str, label: str):
             "⚠️  %s illisible : copie de secours restaurée automatiquement (%s → %s). "
             "Le fichier abîmé est conservé dans %s. Les données écrites depuis la dernière "
             "sauvegarde peuvent manquer : vérifiez-les si besoin.",
-            label, bak, path, set_aside,
+            label, bak, path, set_aside_to,
         )
         return data
