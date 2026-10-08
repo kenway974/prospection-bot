@@ -4,6 +4,8 @@ Script Python + interface web pour trouver des prospects locaux, analyser leur p
 
 ---
 
+Manuel complet (où modifier quoi, dépannage, tests) : [MANUEL.md](MANUEL.md).
+
 ## Ce que ça fait
 
 1. **Recherche** des commerces et entreprises via Google Places (par cible/mots-clés × une ou plusieurs villes)
@@ -174,19 +176,15 @@ YOUR_WEBSITE=https://kennydev.fr
 
 ## Tests
 
-### Tests unitaires (rapides, sans API)
-
-Vérifient le bon fonctionnement de l'analyzer, du mailer et des profils — aucune clé API requise.
+### Tous les tests, sans réseau (rapides, sans API)
 
 ```bash
-python run_tests.py --unit
+pip install -r requirements-dev.txt
+python run_tests.py
 ```
 
-75 tests couvrent :
-- Tous les checks du site web (HTTPS, mobile, SEO, tracking, formulaires…)
-- La cohérence des emails générés (sujet singulier/pluriel, accroche selon le diagnostic, CTA adapté au score)
-- La validité des 10 profils prédéfinis (keywords, hooks, SMS ≤ 160 chars…)
-- La sauvegarde/chargement/suppression des profils custom
+Ils lancent le vrai parcours (ligne de commande et interface) avec de faux Google, Sirène, sites, Gmail,
+Notion et Brevo : aucun crédit consommé. Détail des fichiers de tests et méthode TDD : [MANUEL.md](MANUEL.md), §9.
 
 ### Tests d'intégration multi-villes (avec API)
 
@@ -223,6 +221,13 @@ python run_tests.py --all
 ```
 
 ---
+
+## Désinscription (STOP) et fichiers de sécurité
+
+- Chaque mail dit d'où vient l'adresse et comment refuser ; `python main.py --optout adresse@exemple.fr`
+  enregistre un refus, respecté partout (recherche, envois immédiats et programmés, SMS, relances, CRM).
+- Les fichiers des contacts, des refus et de l'historique sont écrits de façon sûre, avec copie de secours et
+  restauration automatique. Marche à suivre en cas de fichier abîmé : [MANUEL.md](MANUEL.md), §8.
 
 ## Sécurité
 
