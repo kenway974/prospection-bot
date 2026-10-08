@@ -76,3 +76,44 @@ class TestRunHistoryFile:
 
         assert open(history_manager.HISTORY_FILE + ".corrupt", encoding="utf-8").read() == "{pas du json"
         assert len(history_manager.load_history()) == 1
+
+
+# ---------------------------------------------------------------------------
+# Le bot se rattrape tout seul quand c'est possible
+# ---------------------------------------------------------------------------
+
+def read(path):
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+class FakeProspect:
+    def __init__(self, place_id, name="X", email=""):
+        self.place_id, self.name, self.email = place_id, name, email
+
+
+def crash_mid_dump(mp):
+    """Simule une coupure en plein json.dump : une partie du JSON est écrite, puis plantage."""
+    import json
+
+    def boom(obj, fp, *args, **kwargs):
+        fp.write('{"coupure')
+        raise OSError("coupure de courant simulée")
+
+    mp.setattr(json, "dump", boom)
+
+
+class TestEcritureSure:
+    def test_une_coupure_pendant_l_ecriture_laisse_le_fichier_intact(self, monkeypatch):
+        history_manager.mark_as_contacted([FakeProspect("p_avant", "Avant")])
+        before = read(history_manager.CONTACTED_FILE)
+
+        with monkeypatch.context() as mp:
+            crash_mid_dump(mp)
+            with pytest.raises(OSError):
+                history_manager.mark_as_contacted([FakeProspect("p_nouveau", "Nouveau")])
+
+        assert read(history_manager.CONTACTED_FILE) == before
+        assert history_manager.load_contacted_ids() == {"p_avant"}
+        # Aucun fichier temporaire oublié dans output/
+        assert sorted(os.listdir("output")) == ["contacted_place_ids.json"]

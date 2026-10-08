@@ -34,6 +34,8 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, List
 
+from safe_files import write_json_atomic
+
 if TYPE_CHECKING:
     from services.google_maps import Prospect
 
@@ -87,8 +89,7 @@ def _load_contacted_data() -> dict:
 
 def _save_contacted_data(data: dict) -> None:
     _ensure_output()
-    with open(CONTACTED_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    write_json_atomic(CONTACTED_FILE, data)
 
 
 # ---------------------------------------------------------------------------
