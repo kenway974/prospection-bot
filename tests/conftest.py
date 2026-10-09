@@ -40,6 +40,18 @@ _MODULES_WITH_CONFIG = (
 
 
 @pytest.fixture(autouse=True)
+def no_real_dns(monkeypatch):
+    """Aucune vraie requête DNS : le DNS se comporte comme injoignable (timeout)."""
+    import dns.exception
+    import dns.resolver
+
+    def _unreachable(*_a, **_k):
+        raise dns.exception.Timeout()
+
+    monkeypatch.setattr(dns.resolver, "resolve", _unreachable)
+
+
+@pytest.fixture(autouse=True)
 def reset_module_configs(monkeypatch):
     """Chaque test repart de la config et du logger d'origine, même si un test précédent
     a lancé run_prospection() (qui les remplace dans plusieurs modules)."""
