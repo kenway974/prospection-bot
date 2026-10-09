@@ -473,3 +473,31 @@ class TestOptOutCrmIndisponible:
         main.main(["--optout", "refus@exemple.fr"])          # pas de plantage
 
         assert optout_manager.is_opted_out(prospect(email="refus@exemple.fr"))
+
+
+class TestRefusSimultanes:
+    def test_deux_refus_enregistres_en_meme_temps_sont_tous_les_deux_gardes(self, monkeypatch):
+        """Ex. : un STOP saisi dans l'interface pendant qu'un « --optout » tourne."""
+        import threading
+        barrier = threading.Barrier(2, timeout=0.5)
+        real_load = optout_manager._load
+
+        def load_then_wait():
+            data = real_load()
+            try:
+                barrier.wait()          # sans protection : les deux lisent AVANT que l'un n'écrive
+            except threading.BrokenBarrierError:
+                pass
+            return data
+        monkeypatch.setattr(optout_manager, "_load", load_then_wait)
+
+        threads = [threading.Thread(target=optout_manager.add_optout, kwargs={"email": e})
+                   for e in ("a@exemple.fr", "b@exemple.fr")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        monkeypatch.setattr(optout_manager, "_load", real_load)
+        assert optout_manager.is_opted_out(prospect(email="a@exemple.fr"))
+        assert optout_manager.is_opted_out(prospect(email="b@exemple.fr"))

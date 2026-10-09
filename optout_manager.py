@@ -22,7 +22,7 @@ from __future__ import annotations
 import os
 from typing import Iterable, List, Optional, Tuple
 
-from safe_files import read_json_with_recovery, write_json_atomic
+from safe_files import file_lock, read_json_with_recovery, write_json_atomic
 
 OPTOUT_FILE = os.path.join("output", "optout.json")
 
@@ -75,12 +75,13 @@ def add_optout(email: Optional[str] = None, place_id: Optional[str] = None) -> N
     email = _normalize_email(email)
     if not email and not place_id:
         raise ValueError("Il faut une adresse email ou un place_id.")
-    data = _load()
-    if email and email not in data["emails"]:
-        data["emails"].append(email)
-    if place_id and place_id not in data["place_ids"]:
-        data["place_ids"].append(place_id)
-    _save(data)
+    with file_lock(OPTOUT_FILE):          # deux refus simultanés : aucun n'est perdu
+        data = _load()
+        if email and email not in data["emails"]:
+            data["emails"].append(email)
+        if place_id and place_id not in data["place_ids"]:
+            data["place_ids"].append(place_id)
+        _save(data)
     _blacklist_in_crm(email, place_id)
 
 

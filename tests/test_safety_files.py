@@ -337,3 +337,29 @@ class TestCasLimites:
         os.remove(optout_manager.OPTOUT_FILE)
 
         assert optout_manager.is_opted_out(FakeProspect("x", email="refus@exemple.fr"))
+
+
+class TestEcrituresSimultanees:
+    def test_deux_marquages_simultanes_de_contacts_sont_tous_les_deux_gardes(self, monkeypatch):
+        import threading
+        barrier = threading.Barrier(2, timeout=0.5)
+        real_load = history_manager._load_contacted_data
+
+        def load_then_wait():
+            data = real_load()
+            try:
+                barrier.wait()
+            except threading.BrokenBarrierError:
+                pass
+            return data
+        monkeypatch.setattr(history_manager, "_load_contacted_data", load_then_wait)
+
+        threads = [threading.Thread(target=history_manager.mark_as_contacted, args=([FakeProspect(pid)],))
+                   for pid in ("p_a", "p_b")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        monkeypatch.setattr(history_manager, "_load_contacted_data", real_load)
+        assert history_manager.load_contacted_ids() == {"p_a", "p_b"}

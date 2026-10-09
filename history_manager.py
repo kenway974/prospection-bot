@@ -28,12 +28,13 @@ Fonctions exposées :
 
 from __future__ import annotations
 
+import functools
 import os
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Dict, List, Optional
 
-from safe_files import is_readable_json, read_json_with_recovery, set_aside, write_json_atomic
+from safe_files import file_lock, is_readable_json, read_json_with_recovery, set_aside, write_json_atomic
 
 if TYPE_CHECKING:
     from services.google_maps import Prospect
@@ -150,6 +151,16 @@ def get_ab_stats() -> Dict[str, Dict[str, int]]:
     return stats
 
 
+def _locked_contacts(func):
+    """Une seule modification du fichier des contacts à la fois (interface, CLI, envois programmés)."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        with file_lock(CONTACTED_FILE):
+            return func(*args, **kwargs)
+    return wrapper
+
+
+@_locked_contacts
 def mark_as_contacted(prospects: List[Prospect], notion_page_ids: Dict[str, str] | None = None) -> None:
     """
     Enregistre les prospects contactés avec leur date de premier contact.
@@ -223,6 +234,7 @@ def get_due_followups(delay_days: int = 5) -> List[dict]:
     return [d for d in due if d["place_id"] in kept_ids]
 
 
+@_locked_contacts
 def mark_as_responded(place_id: str) -> None:
     """Marque un prospect comme ayant répondu — il ne sera plus relancé."""
     data = _load_contacted_data()
@@ -231,6 +243,7 @@ def mark_as_responded(place_id: str) -> None:
         _save_contacted_data(data)
 
 
+@_locked_contacts
 def mark_followup_sent(place_id: str) -> None:
     """Incrémente l'étape de relance et enregistre la date du dernier message."""
     data = _load_contacted_data()

@@ -12,10 +12,13 @@ paramètre `backup`. Un fichier abîmé n'écrase jamais une bonne copie de seco
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
 import tempfile
+import threading
+import time
 
 BACKUP_SUFFIX = ".bak"
 
@@ -136,3 +139,51 @@ def read_json_with_recovery(path: str, label: str, backup: str | None = None, de
             label, bak, path, set_aside_to,
         )
         return data
+
+
+# ---------------------------------------------------------------------------
+# Verrou : une seule modification à la fois (lecture → modification → écriture)
+# ---------------------------------------------------------------------------
+
+LOCK_TIMEOUT_S = 15        # au-delà, on abandonne (TimeoutError) plutôt que d'écrire en double
+LOCK_STALE_S = 60          # un verrou plus vieux vient d'un programme planté : on le retire
+
+
+@contextlib.contextmanager
+def file_lock(path: str):
+    """
+    Verrou inter-processus (interface + ligne de commande) et inter-threads, sans
+    dépendance : création exclusive de <fichier>.lock. Sans lui, deux modifications
+    simultanées lisent la même version et la dernière écriture efface l'autre.
+    """
+    lock = path + ".lock"
+    os.makedirs(os.path.dirname(lock) or ".", exist_ok=True)
+    deadline = time.monotonic() + LOCK_TIMEOUT_S
+    while True:
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            break
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(lock) > LOCK_STALE_S:
+                    os.remove(lock)
+                    continue
+            except OSError:
+                continue
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"{path} est en cours de modification par un autre programme")
+            _wait_for_lock()
+    try:
+        yield
+    finally:
+        try:
+            os.remove(lock)
+        except OSError:
+            pass
+
+
+def _wait_for_lock() -> None:
+    # threading.Event().wait plutôt que time.sleep : reste une vraie attente même quand
+    # les tests neutralisent time.sleep.
+    threading.Event().wait(0.02)
