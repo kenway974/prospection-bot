@@ -366,6 +366,22 @@ from pipeline import run_prospection  # noqa: E402
 # https://docs.streamlit.io/develop/concepts/multipage-apps/page-and-navigation
 # ===========================================================================
 
+def _fichier_abime_message(page):
+    """Fichier des contacts ou des refus STOP abîmé : message clair au lieu d'un plantage."""
+    import functools
+    from history_manager import HistoryFileError
+    from optout_manager import OptOutFileError
+
+    @functools.wraps(page)
+    def wrapper():
+        try:
+            page()
+        except (HistoryFileError, OptOutFileError) as exc:
+            st.error(str(exc))
+    return wrapper
+
+
+@_fichier_abime_message
 def page_ma_journee():
     st.title("☀️ Ma journée")
     st.caption("Tes actions du jour : relances, rappels, maquettes à envoyer, messages LinkedIn.")
@@ -454,6 +470,7 @@ def page_ma_journee():
             with st.expander("💬 LinkedIn", expanded=_d["next_action"] == crm_store.ACTION_LINKEDIN):
                 _linkedin_panel(_d, key_prefix=f"mj_{_pid}")
 
+@_fichier_abime_message
 def page_prospection():
     st.title("🔍 Nouvelle campagne")
 
@@ -1383,6 +1400,7 @@ def page_prospection():
             save_custom_profile(new_profile)
             st.success(f"✅ Profil « {save_name} » sauvegardé ! Il apparaîtra dans la liste au prochain lancement.")
 
+@_fichier_abime_message
 def page_pipeline():
     # ---------------------------------------------------------------------------
     # 📋 Pipeline CRM — tous les prospects suivis, par statut
@@ -1496,6 +1514,7 @@ def page_pipeline():
                         for _e in _events:
                             st.caption(f"{_e['at'][:16].replace('T', ' ')} — **{_e['kind']}** {_e['detail']}")
 
+@_fichier_abime_message
 def page_relances():
     st.title("🔄 Relances")
     st.caption("Séquences de relance, emails programmés et suivi des réponses.")
@@ -1656,6 +1675,7 @@ def page_relances():
                                 NotionExporter(crm_key, crm_extra.get("database_id", "")).update_status(_np, "répondu")
                         st.rerun()
 
+@_fichier_abime_message
 def page_statistiques():
     st.title("📊 Statistiques")
     st.caption("Tes campagnes passées et leurs résultats.")
@@ -1819,6 +1839,7 @@ def page_statistiques():
                         st.caption("⚠️ Fichier de résultats introuvable (effacé lors d'un redéploiement).")
                 st.divider()
 
+@_fichier_abime_message
 def page_reglages():
     st.title("⚙️ Réglages")
     st.caption("Chaque champ est enregistré automatiquement dès que tu le modifies.")
