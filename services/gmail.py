@@ -64,6 +64,8 @@ def send_email(
     msg["Subject"] = subject
     msg["From"] = gmail_address
     msg["To"] = to_address
+    # Bouton « Se désabonner » de Gmail : un clic envoie un mail « STOP » à l'expéditeur
+    msg["List-Unsubscribe"] = f"<mailto:{gmail_address}?subject=STOP>"
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
     try:
@@ -101,7 +103,13 @@ def send_all(
     logger.info("")
     logger.info("📤 Envoi des cold emails…")
 
+    from optout_manager import load_optouts
+    optouts = load_optouts()          # lue une fois pour tout l'envoi
     for p in prospects:
+        if optouts.contains(p):
+            logger.info("    🚫 %s a demandé à ne plus être contacté → ignoré", p.name)
+            stats["skipped"] += 1
+            continue
         if not p.email_draft:
             stats["skipped"] += 1
             continue

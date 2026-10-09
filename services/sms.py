@@ -143,7 +143,13 @@ def send_all_sms(prospects: list[Prospect]) -> dict:
     logger.info("")
     logger.info("📱 Envoi des SMS via Brevo (%d prospects)…", len(prospects))
 
+    from optout_manager import load_optouts
+    optouts = load_optouts()          # lue une fois pour tout l'envoi
     for p in prospects:
+        if optouts.contains(p):
+            logger.info("    🚫 %s a demandé à ne plus être contacté → SMS ignoré", p.name)
+            stats["skipped"] += 1
+            continue
         result = send_sms(p)
         if result is True:
             stats["sent"] += 1

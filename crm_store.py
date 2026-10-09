@@ -467,6 +467,17 @@ def set_status(place_id: str, status: str, note: str = "") -> None:
         )
 
 
+def place_ids_matching(email: str = "", place_id: Optional[str] = None) -> List[str]:
+    """place_id des fiches du CRM dont l'email (insensible à la casse) ou le place_id correspond."""
+    init_db()
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT place_id FROM prospects WHERE place_id = ? OR (? != '' AND lower(trim(email)) = ?)",
+            (place_id or "", email or "", (email or "").strip().lower()),
+        ).fetchall()
+    return [r[0] for r in rows]
+
+
 def set_notes(place_id: str, notes: str) -> None:
     with _lock, _connect() as conn:
         conn.execute(

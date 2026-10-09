@@ -114,10 +114,13 @@ def get_stats() -> Dict[str, int]:
     queue = _load()
     now = time.time()
     sent = sum(1 for e in queue if e.get("sent"))
-    overdue = sum(1 for e in queue if not e.get("sent") and e.get("send_at", 0) <= now)
+    cancelled = sum(1 for e in queue if e.get("cancelled"))
+    overdue = sum(1 for e in queue
+                  if not e.get("sent") and not e.get("cancelled") and e.get("send_at", 0) <= now)
     return {
-        "pending": len(queue) - sent,
+        "pending": len(queue) - sent - cancelled,
         "sent": sent,
+        "cancelled": cancelled,
         "total": len(queue),
         "overdue": overdue,
     }
@@ -137,16 +140,33 @@ def process_due(force: bool = False) -> Dict[str, int]:
     Retourne {sent, failed, skipped_no_credentials}.
     `force=True` envoie aussi ceux programmés plus tard (bouton « envoyer maintenant »).
     """
-    from services.gmail import send_email
-    stats = {"sent": 0, "failed": 0, "skipped_no_credentials": 0}
+    from services import gmail
+    from optout_manager import OptOutFileError, load_optouts
+    from types import SimpleNamespace
+    stats = {"sent": 0, "failed": 0, "skipped_no_credentials": 0, "skipped_optout": 0}
+    # Liste des refus lue UNE fois avant d'envoyer quoi que ce soit : illisible → on n'envoie
+    # rien ce tour-ci (les mails restent en file, rien n'est perdu ni envoyé deux fois).
+    try:
+        optouts = load_optouts()
+    except OptOutFileError as exc:
+        import config as _cfg
+        _cfg.logger.error("❌ Envois programmés suspendus : %s", exc)
+        stats["blocked_optout_file"] = 1
+        return stats
     with _lock:
         queue = _load()
     now = time.time()
     changed = False
     for entry in queue:
-        if entry.get("sent"):
+        if entry.get("sent") or entry.get("cancelled"):
             continue
         if not force and entry["send_at"] > now:
+            continue
+        # La personne a pu dire STOP entre la programmation et l'envoi : on ne l'envoie jamais
+        if optouts.contains(SimpleNamespace(email=entry.get("email"), place_id=entry.get("place_id", ""))):
+            entry["cancelled"] = "STOP"
+            stats["skipped_optout"] += 1
+            changed = True
             continue
         password = _gmail_password_for(entry.get("gmail_address", ""))
         if not password:
@@ -154,7 +174,7 @@ def process_due(force: bool = False) -> Dict[str, int]:
             # on ne peut plus envoyer : on laisse l'email en file, sans le perdre.
             stats["skipped_no_credentials"] += 1
             continue
-        ok = send_email(
+        ok = gmail.send_email(
             to_address=entry["email"],
             draft=entry["draft"],
             gmail_address=entry["gmail_address"],

@@ -102,16 +102,18 @@ def run_prospection(
         import services.mailer as ma_mod
         import services.notion_sync as no_mod
         import services.crm.notion as crmno_mod
-        gm_mod.logger = ui_logger
-        an_mod.logger = ui_logger
-        ma_mod.logger = ui_logger
-        no_mod.logger = ui_logger
+        import services.sms as sms_mod
+        import services.gmail as gmail_mod
         crmno_mod.logger = ui_logger
 
-        # Recharge aussi le config dans chaque module
-        gm_mod.config = c
-        an_mod.config = c
-        no_mod.config = c
+        # Chaque module a importé SA référence à config/logger : il faut les remplacer
+        # TOUS, sinon un service garde les valeurs du .env au lieu de celles saisies
+        # dans l'interface (signature des mails, clé Brevo…).
+        for service_mod in (gm_mod, an_mod, ma_mod, no_mod, sms_mod, gmail_mod):
+            if hasattr(service_mod, "config"):
+                service_mod.config = c
+            if hasattr(service_mod, "logger"):
+                service_mod.logger = ui_logger
 
         from services.google_maps import fetch_raw_candidates, build_prospect
         from services.analyzer import analyze_prospect
@@ -162,6 +164,10 @@ def run_prospection(
                 "on récupère toutes les cibles + leur contact."
             )
         already_contacted = load_contacted_ids()
+        # Refus STOP : fichier lisible (sinon OptOutFileError → arrêt avant tout appel payant)
+        from optout_manager import load_optouts
+        _optouts = load_optouts()          # lue UNE fois : la même liste pour tout le run
+        _STOP_REASON = "a demandé à ne plus être contacté (STOP)"
         # La base CRM fait aussi foi : elle exclut en plus les clients, les
         # « pas intéressé » et la blacklist (pas seulement les déjà-contactés).
         try:
@@ -217,7 +223,8 @@ def run_prospection(
             _post_excl: dict = {}
             _kept = []
             for p in analyzed:
-                _r = post_analysis_reason(p, criteria)
+                # Refus STOP par email : l'adresse n'est connue qu'après l'analyse du site
+                _r = _STOP_REASON if _optouts.contains(p) else post_analysis_reason(p, criteria)
                 if count_reason(_post_excl, _r):
                     _exclude_p(p, _r, "après analyse")
                 else:
@@ -261,10 +268,13 @@ def run_prospection(
             return qualified
 
         def _dedup(candidates: list) -> list:
-            """Retire les déjà contactés, les doublons et les franchises."""
+            """Retire les déjà contactés, les doublons, les refus STOP et les franchises."""
             out = []
             for p in candidates:
                 if p.place_id in seen or p.place_id in already_contacted:
+                    continue
+                if _optouts.contains(p):
+                    _exclude_p(p, _STOP_REASON, "refus STOP")
                     continue
                 if exclude_franchises:
                     _hit, _brand = _is_franchise(p.name, _user_franchises)
@@ -344,6 +354,11 @@ def run_prospection(
                             if pid in already_contacted:
                                 skip_contacted += 1
                                 _exclude(raw.get("name", ""), "déjà contacté (historique / CRM)", "historique", pid)
+                                continue
+                            # Refus STOP par fiche Google : écarté avant Place Details et
+                            # avant toute visite de son site
+                            if pid in _optouts.place_ids:
+                                _exclude(raw.get("name", ""), _STOP_REASON, "refus STOP", pid)
                                 continue
                             # Franchises écartées AVANT Place Details : on ne paie
                             # pas l'appel API pour un prospect qu'on jette ensuite.

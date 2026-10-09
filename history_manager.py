@@ -28,10 +28,13 @@ Fonctions exposées :
 
 from __future__ import annotations
 
-import json
+import functools
 import os
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Dict, List, Optional
+
+from safe_files import file_lock, is_readable_json, read_json_with_recovery, set_aside, write_json_atomic
 
 if TYPE_CHECKING:
     from services.google_maps import Prospect
@@ -39,6 +42,10 @@ if TYPE_CHECKING:
 HISTORY_FILE          = os.path.join("output", "history.json")
 CONTACTED_FILE        = os.path.join("output", "contacted_place_ids.json")
 CONTACTED_BACKUP_FILE = os.path.join("output", "contacted_place_ids.bak.json")
+
+
+class HistoryFileError(RuntimeError):
+    """Le fichier des contacts ET sa copie sont illisibles : on s'arrête plutôt que de tout recontacter."""
 
 
 def _ensure_output() -> None:
@@ -85,32 +92,40 @@ def _followup_step(info: dict) -> int:
 def _load_contacted_data() -> dict:
     """
     Charge le dict complet des prospects contactés.
-    Si le fichier principal est manquant ou corrompu, restaure depuis la sauvegarde.
+
+    - fichier absent → copie restaurée si elle existe, sinon personne n'a encore été contacté ({}) ;
+    - fichier illisible mais copie de secours lisible → la copie est restaurée
+      automatiquement (le fichier abîmé est gardé en .corrupt, un avertissement s'affiche) ;
+    - fichier ET copie illisibles → HistoryFileError : on s'arrête plutôt que de tout
+      recontacter, sans modifier aucun fichier.
     """
     _ensure_output()
-    for filepath in [CONTACTED_FILE, CONTACTED_BACKUP_FILE]:
-        if not os.path.exists(filepath):
-            continue
-        try:
-            with open(filepath, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return _migrate(data)
-        except Exception:
-            continue
-    return {}
+    try:
+        data = read_json_with_recovery(
+            CONTACTED_FILE, "Fichier des contacts", backup=CONTACTED_BACKUP_FILE, default={},
+        )
+        return _migrate(data)
+    except OSError as exc:
+        raise HistoryFileError(
+            f"Impossible de lire le fichier des contacts ({CONTACTED_FILE}) : {exc}. Il est "
+            "peut-être verrouillé (antivirus, synchronisation) ou protégé. Aucun fichier n'a été "
+            "modifié : réessayez dans un instant."
+        ) from exc
+    except ValueError as exc:
+        raise HistoryFileError(
+            f"Fichier des contacts illisible ({CONTACTED_FILE}) : {exc}. "
+            f"Et aucune copie de secours lisible ({CONTACTED_BACKUP_FILE} absent ou abîmé). "
+            "Le bot s'arrête pour ne recontacter personne, et aucun fichier n'a été modifié. "
+            "Que faire : ouvrez ces fichiers, réparez le JSON (ou remplacez le fichier par une "
+            "sauvegarde à vous), puis relancez. Marche à suivre détaillée : MANUEL.md, "
+            "section « Fichier abîmé »."
+        ) from exc
 
 
 def _save_contacted_data(data: dict) -> None:
+    """Écriture atomique ; la version précédente lisible est gardée dans CONTACTED_BACKUP_FILE."""
     _ensure_output()
-    import shutil
-    # Rotation : copie l'actuel en backup avant d'écraser
-    if os.path.exists(CONTACTED_FILE):
-        try:
-            shutil.copy2(CONTACTED_FILE, CONTACTED_BACKUP_FILE)
-        except OSError:
-            pass
-    with open(CONTACTED_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    write_json_atomic(CONTACTED_FILE, data, backup=CONTACTED_BACKUP_FILE)
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +151,16 @@ def get_ab_stats() -> Dict[str, Dict[str, int]]:
     return stats
 
 
+def _locked_contacts(func):
+    """Une seule modification du fichier des contacts à la fois (interface, CLI, envois programmés)."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        with file_lock(CONTACTED_FILE):
+            return func(*args, **kwargs)
+    return wrapper
+
+
+@_locked_contacts
 def mark_as_contacted(prospects: List[Prospect], notion_page_ids: Dict[str, str] | None = None) -> None:
     """
     Enregistre les prospects contactés avec leur date de premier contact.
@@ -176,7 +201,12 @@ def get_due_followups(delay_days: int = 5) -> List[dict]:
 
     Chaque entrée contient le place_id, toutes les infos, et `followup_step`
     (nombre de relances déjà envoyées) pour savoir quelle relance générer ensuite.
+
+    Les personnes qui ont dit STOP (par email ou par fiche Google, voir optout_manager)
+    ne sont jamais relancées.
     """
+    from optout_manager import filter_opted_out  # import local : évite une dépendance au chargement
+
     data = _load_contacted_data()
     cutoff = datetime.now() - timedelta(days=delay_days)
     due = []
@@ -198,9 +228,13 @@ def get_due_followups(delay_days: int = 5) -> List[dict]:
             entry = {"place_id": place_id, **info}
             entry["followup_step"] = step  # normalise (compat ancien format)
             due.append(entry)
-    return due
+
+    contacts = [SimpleNamespace(place_id=d["place_id"], email=d.get("email")) for d in due]
+    kept_ids = {c.place_id for c in filter_opted_out(contacts)[0]}
+    return [d for d in due if d["place_id"] in kept_ids]
 
 
+@_locked_contacts
 def mark_as_responded(place_id: str) -> None:
     """Marque un prospect comme ayant répondu — il ne sera plus relancé."""
     data = _load_contacted_data()
@@ -209,6 +243,7 @@ def mark_as_responded(place_id: str) -> None:
         _save_contacted_data(data)
 
 
+@_locked_contacts
 def mark_followup_sent(place_id: str) -> None:
     """Incrémente l'étape de relance et enregistre la date du dernier message."""
     data = _load_contacted_data()
@@ -230,12 +265,10 @@ def load_history() -> List[dict]:
     Retourne une liste vide si le fichier n'existe pas encore.
     """
     _ensure_output()
-    if not os.path.exists(HISTORY_FILE):
-        return []
     try:
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
+        # Illisible ou absent + copie lisible → restauré automatiquement (voir safe_files)
+        return read_json_with_recovery(HISTORY_FILE, "Historique des campagnes", default=[])
+    except (OSError, ValueError):
         return []
 
 
@@ -258,6 +291,11 @@ def save_run(
     """Enregistre les statistiques d'un run terminé (max 50 entrées conservées)."""
     _ensure_output()
     history = load_history()
+    if not history and os.path.exists(HISTORY_FILE) and os.path.getsize(HISTORY_FILE) > 0:
+        # Fichier présent, illisible et sans copie de secours : on le met de côté
+        # (.corrupt, .corrupt.1…) au lieu de l'écraser
+        if not is_readable_json(HISTORY_FILE):
+            set_aside(HISTORY_FILE)
     history.insert(0, {
         "date": datetime.now().strftime("%d/%m/%Y %H:%M"),
         "profile": profile_name,
@@ -276,5 +314,4 @@ def save_run(
         "fichier": output_file,
     })
     history = history[:50]
-    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
+    write_json_atomic(HISTORY_FILE, history)
